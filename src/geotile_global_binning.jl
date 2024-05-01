@@ -1,0 +1,336 @@
+# load packages
+begin
+    using Arrow
+    using Altim
+    using DataFrames
+    using Extents
+    using GeoInterface
+    using Shapefile
+    using Rasters
+    using DimensionalData
+    using BinStatistics
+    using Statistics
+    using Dates
+    using Plots
+    using JLD2
+    using FileIO
+    using LsqFit
+
+    # run parameters
+    force_remake = false;
+    project_id = :v01;
+    geotile_width = 2;
+    #binning_method = "median"; # "meanmadnorm3"
+    binning_method = "meanmadnorm3";
+    dem_id = :best # [:rema_v2_10m]#[:cop30_v2]; #, :nasadem_v1, :rema_v2_10m, :arcticdem_v4_10m, :best]
+    curvature_correct = true;
+    max_canopy_height = 1;
+    warnings = false;
+
+    # bin method
+    if  curvature_correct
+        runid = "glacier_$(dem_id)_dh_cc_$(binning_method)_$(project_id)"
+    else
+        runid = "glacier_dh_$(dem_id)_$(binning_method)_$(project_id)"
+    end
+
+    # filter parameters
+    filt= (
+        dh_max = 200,
+    );
+
+    paths = project_paths(; project_id);
+    products = project_products(; project_id);
+    binned_folder = analysis_paths(; geotile_width).binned
+
+    # load geotile definitions with corresponding hypsometry
+    mask = :glacier
+    gt_file = joinpath(binned_folder, "geotile_$(mask)_hyps.arrow");
+    geotiles = DataFrame(Arrow.Table(gt_file));
+    geotiles.extent = Extent.(getindex.(geotiles.extent, 1));
+
+    # filter geotiles
+    geotiles = geotiles[(geotiles.glacier_frac.>0.0), :]
+
+    # funtion used for binning data
+    if binning_method == "meanmadnorm3"
+        binfun::Function = binfun(x) = mean(x[Altim.madnorm(x).<3])
+    elseif binning_method == "median"
+        binfun::Function = binfun(x) = median(x)
+    else
+        error("unrecognized binning method")
+    end
+
+    # open shapefiles
+    glacier_shp = Shapefile.Handle(Altim.pathlocal.glacier_shp);
+    #glacier_b10km_shp = Shapefile.Handle(Altim.pathlocal.glacier_b10km_shp);
+    #glacier_b1km_shp = Shapefile.Handle(Altim.pathlocal.glacier_b1km_shp);
+
+    # define model for curvature correction
+    model1::Function = model1(c, p)  = p[1] .+ p[2].*c .+ p[3].*c.^2 .+ p[4].*c.^3 .+ p[5].*c.^4
+    p1 = zeros(5)
+
+    # define date and hight binning ranges 
+    dd =  30;
+    date_range = DateTime(1990):Day(dd):now();
+    date_center = date_range[1:end-1] .+ Day(dd/2);
+
+    Δc = 0.1;
+    curvature_range = -1.0:Δc:1.0;
+    curvature_center = curvature_range[1:end-1] .+ Δc/2;
+
+    # DO NOT MODIFY: these need to match elevations in hypsometry
+    Δh = 100;
+    height_range = 0:100:10000;
+    height_center = height_range[1:end-1] .+ Δh/2;
+
+    out_file = joinpath(binned_folder, "$(runid).jld2");
+
+    # 3.2 hours for all glaciers, all missions/datasets on 96 threads
+    # 45 min for icesat and icesat-2 missions only
+    # 2.3 hours for hugonnet only
+    showplots = false;
+
+    # -------------------------------------- FOR TESTING -----------------------------------
+    #products = products[keys(products)[2:2]]
+    # --------------------------------------------------------------------------------------
+
+    # initialize dimensional arrays
+    dh_hyps = Dict();
+    nobs_hyps = Dict();
+    curvature_hyps = Dict()
+    ngeotile = nrow(geotiles)
+    ndate = length(date_center)
+    ncurvature = length(curvature_center);
+    for product in products
+        mission = String(product.mission)
+        push!(dh_hyps, String(mission) => DimArray(fill(NaN, ngeotile, ndate, length(height_center)), (geotile = geotiles.id, date=date_center, height = height_center)));
+        push!(nobs_hyps, String(mission) => DimArray(fill(0, ngeotile, ndate, length(height_center)), (geotile = geotiles.id, date=date_center, height = height_center)));
+        push!(curvature_hyps, String(mission) => DataFrame(id=geotiles.id, curvature=[curvature_range for i in 1:ngeotile], dh = [fill(NaN,ncurvature) for i in 1:ngeotile], nobs=[zeros(ncurvature) for i in 1:ngeotile], model_coef = [zeros(size(p1)) for i in 1:ngeotile]))
+    end
+end
+
+# 2.6 hours for all 4 missions for all glacierized geotiles
+# 31 min for icesat + iceast2 + gedi for all glacierized geotiles
+@time for mission in keys(dh_hyps)
+    # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><><><><>
+    # mission = "icesat"
+    #out_file = "/mnt/devon2-r1/devon0/gardnera/Documents/GitHub/Altim/data/geotiles_glacier_hyps_2deg_dh.arrow";
+    #geotiles  = DataFrame(Arrow.Table(out_file));
+    #geotiles.extent = Extent.(getindex.(geotiles.extent, 1));
+    #geotiles = geotiles[(geotiles.rgi19 .> 0) .& (geotiles.glacier_frac .> 0), :] ;
+    # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+    
+    product = products[Symbol(mission)];
+
+    Threads.@threads for geotile in eachrow(geotiles)
+        # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><><>
+        #for geotile in eachrow(geotiles)
+        # geotile = geotiles[findfirst((geotiles.rgi1 .> 0.) .& (geotiles.glacier_frac .> 0.3)),:]
+        # geotile = geotiles[findfirst(geotiles.id .== "lat[-80-78]lon[+166+168]"), :]
+        # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+        
+        if geotile.glacier_frac == 0.0
+            continue
+        end
+
+        t1 = time();
+        path2altim = joinpath(paths[Symbol(mission)].geotile, geotile.id * ".arrow")
+
+        if !isfile(path2altim)
+            continue
+        end
+
+        altim = select!(DataFrame(Arrow.Table(path2altim)), [:longitude, :latitude, :datetime, :height, :quality]);
+
+        # add dem height and curvature
+        if dem_id == :best
+            # last dem takes precidence over earlier dems
+            dem_id0 = [:cop30_v2, :arcticdem_v4_10m, :rema_v2_10m]
+        else
+            dem_id0 = [dem_id]
+        end
+
+        altim[!, :height_ref] .= NaN
+        altim[!, :curvature] .= NaN
+        for dem_id1 in dem_id0           
+            path2dem = joinpath(paths[Symbol(mission)].geotile, geotile.id * ".$(dem_id1)")
+            if isfile(path2dem)
+                dem = select!(DataFrame(Arrow.Table(path2dem)), :height, :dhddx, :dhddy)
+                ind = .!isnan.(dem.height) .& .!isnan.(dem.dhddx) .& .!isnan.(dem.dhddy) .& (abs.(dem.height) .< 9998)
+                altim[ind, :height_ref] = dem[ind, :height]
+                altim[ind, :curvature] = Altim.curvature(dem.dhddx[ind], dem.dhddy[ind], Altim.dem_info(dem_id0[2])[1].epsg, lat = mean(geotile.extent.Y))
+            end
+        end
+
+        # load masks
+        path2masks = joinpath(paths[Symbol(mission)].geotile, geotile.id * ".masks")
+        masks = select!(DataFrame(Arrow.Table(path2masks)), [:inlandwater, :land, :landice, :ocean]);
+
+        if minimum(geotile.extent.Y) < -54 || maximum(geotile.extent.Y) > 66
+            canopy = DataFrame(canopyh = zeros(size(altim.latitude)))
+        else
+            path2canopy = joinpath(paths[Symbol(mission)].geotile, geotile.id * ".canopyh")
+            canopy = DataFrame(Arrow.Table(path2canopy));
+        end
+
+        # update glacier mask with high-resolution vector files
+        grid_resolution = 0.00027 # ~30m
+
+        x_mask = X(geotile.extent.X[1]:grid_resolution:geotile.extent.X[2], 
+            sampling=DimensionalData.Intervals(DimensionalData.Start()));
+        y_mask = Y(geotile.extent.Y[1]:grid_resolution:geotile.extent.Y[2], 
+            sampling=DimensionalData.Intervals(DimensionalData.Start()));
+
+        mask0 = Raster(zeros(UInt8, y_mask, x_mask))
+        setcrs(mask0, EPSG(4326))
+
+        # NOTE: count method is fastest
+        mask0 = Rasters.rasterize!(count, mask0, glacier_shp; threaded=false, 
+            shape=:polygon, progress=false, verbose=false, boundary=:center)
+
+        isvalid = Altim.within.(Ref(geotile.extent), altim.longitude, altim.latitude)
+        masks[!, :glacierice] .= false;
+
+        fast_index = true
+        if fast_index # fast index is 15x faster than Rasters
+            c = floor.(Int64, (altim.longitude[isvalid] .- first(x_mask)) ./ step(x_mask)) .+ 1;
+            r = floor.(Int64, (altim.latitude[isvalid] .- first(y_mask)) ./ step(y_mask)) .+ 1;
+            pts3 = [CartesianIndex(a, b) for (a, b) in zip(r, c)]
+            masks.glacierice[isvalid] = mask0[pts3] .> 0
+        else
+            #NOTE: 67% of time is taken here for large number of points.
+            pts1 = GeoInterface.PointTuple.([((Y=y, X=x)) for (x, y) in 
+                zip(altim.longitude[isvalid], altim.latitude[isvalid])]);
+            pts2 = extract(mask0, pts1, atol=grid_resolution/2, index = true, geometry=false);
+            masks.glacierice[isvalid] = getindex.(pts2, 2) .> 0
+            pts3 = CartesianIndex.(getindex.(pts2, 1))
+        end;
+
+        if !any(masks.glacierice)
+            continue
+        end
+        # use bin statistics to calculate dh vs. elevation for every 3 months.
+
+        # identify valid dh data
+        altim[!, :dh] = altim.height .- altim.height_ref;
+        altim[!, :height_ref] = altim.height_ref
+        showplots && plot(altim.datetime[isvalid],altim.dh[isvalid]; seriestype=:scatter, label="all")
+
+        if curvature_correct
+            var_ind = (.!masks.glacierice) .& isvalid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0) .& .!isnan.(altim.curvature) .& (abs.(altim.dh) .< 10) .& masks.land .& ((canopy.canopyh .<= max_canopy_height) .| (altim.latitude .< -60))
+
+            if sum(var_ind) <= length(p1)
+                warnings && (@warn ("$(geotile.id): no curvature corecction applied, not enought off-ice points"))
+            else
+
+                # check bounds: binstats will throw an error if no data is passed to median()
+                if !Altim.vector_overlap(altim[var_ind, :curvature], curvature_range) 
+                    continue
+                end
+
+                df = binstats(altim[var_ind, :], [:curvature], [curvature_range], :dh; col_function=[median], missing_bins=true);
+                bin_center = BinStatistics.bincenter.(df.curvature);
+                bin_valid = .!(ismissing.(df.dh_median))
+
+                if (sum(bin_valid) <= length(p1))
+                    warnings && (@warn ("$(geotile.id): no curvature corecction applied, not enought off-ice points"))
+                else
+
+                    fit1 = curve_fit(model1, bin_center[bin_valid], df.dh_median[bin_valid], df.nrow[bin_valid], p1);
+                    #histogram(altim.dh[var_ind], bins= -5:.1:5; label ="raw", xlabel="height change [m]")
+                    altim.dh = altim.dh .- model1(altim.curvature, fit1.param);
+                    #histogram!(altim.dh[var_ind], bins= -5:.1:5; label="curvature corrected")
+
+                    gt_ind = findfirst(geotile.id .== curvature_hyps[mission].id)
+                    cdh = @view curvature_hyps[mission].dh[gt_ind] 
+                    cdh[1][bin_valid] = df.dh_median[bin_valid];
+                    cnobs = @view curvature_hyps[mission][gt_ind, :nobs]
+                    cnobs[1][bin_valid] = df.nrow[bin_valid]
+                    curvature_hyps[mission][gt_ind, :model_coef] = fit1.param
+        
+                    #dh_cor = model1(bin_center, fit1.param);
+                    #plot(bin_center, df.dh_median; seriestype=:scatter);
+                    #plot!(bin_center,dh_cor; seriestype=:scatter);
+                end
+            end
+        end
+
+        #################################### FILTER 1 ######################################
+        var_ind = masks.glacierice .& isvalid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0)
+        if sum(var_ind) < 100
+            continue
+        end
+
+        # for troubleshooting
+        showplots && plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter,label="glacier")
+
+        var_ind[var_ind] = abs.(altim.dh[var_ind] .- median(altim.dh[var_ind])) .< filt.dh_max
+        
+        # for troubleshooting
+        showplots && plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter, label="glacier-filt", ylims = (-300, +300))
+        
+        if product.apply_quality_filter
+            var_ind = var_ind .& altim.quality
+
+            # for troubleshooting 
+            showplots && plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter, ylims = (-100, +100))
+        end
+        ####################################################################################
+
+        if !any(var_ind)
+            continue
+        end
+
+        # bin data by date and elevation
+        minmax_date = extrema(altim.datetime[var_ind])
+        minmax_height = extrema(altim.height_ref[var_ind])
+        date_ind = (date_range .>= minmax_date[1]-Day(dd)) .& 
+            (date_range .<= (minmax_date[2]+Day(dd)))
+        date_ind_center = findall(date_ind)[1:end-1];
+        height_ind = (height_range .>= minmax_height[1]-Δh) .& 
+            (height_range .<= (minmax_height[2]+Δh))
+        height_ind_center = findall(height_ind)[1:end-1];
+        
+        # check bounds: binstats will throw an error if no data is passed to median()
+        if !Altim.vector_overlap(altim[var_ind, :datetime], date_range[date_ind]) || 
+            !Altim.vector_overlap(altim[var_ind, :height_ref], height_range[height_ind]) 
+            continue
+        end
+
+        df = binstats(altim[var_ind, :], [:datetime, :height_ref], 
+            [date_range[date_ind], height_range[height_ind]], 
+            :dh; col_function=[binfun], missing_bins=true)
+
+        gdf = DataFrames.groupby(df, :datetime)
+
+        # create an array of dh as a function of time and elevation
+        obs = fill(NaN, sum(date_ind)-1, sum(height_ind)-1)
+        w = fill(Int64(0), sum(date_ind)-1, sum(height_ind)-1)    
+        p = sortperm(BinStatistics.bincenter.(gdf[1].height_ref))
+
+        h_center = bincenter.(gdf[1].height_ref)[p];
+        t_center = date_center[date_ind_center]
+
+        for (i,df) in enumerate(gdf)
+            isval = .!ismissing.(df[p, "dh_binfun"])
+            foo1 = @view obs[i,:]
+            foo2 = @view w[i, :]
+            if any(isval)
+                foo1[isval] = df.dh_binfun[p][isval]
+                foo2[isval] = df.nrow[p][isval]
+            end
+        end
+
+        # for troubleshooting 
+        showplots && heatmap(h_center, t_center, obs, clim = (-10, 10))
+
+        dh_hyps[mission][At(geotile.id), date_ind_center, height_ind_center] = obs
+        nobs_hyps[mission][At(geotile.id), date_ind_center, height_ind_center] = w
+        t2 = time()
+        dt = round(Int16, t2 - t1);
+        println("binned: $(mission) - $(geotile.id): $(dt)s")
+    end
+end
+
+save(out_file, Dict("dh_hyps" => dh_hyps, "nobs_hyps" => nobs_hyps, "curvature_hyps" => curvature_hyps));
