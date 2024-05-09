@@ -22,8 +22,31 @@ begin
 
     project_id = :v01;
     geotile_width = 2;
-    fill_dh = false
+    fill_dh = true
     showplots = false;
+
+    param = (
+        # filter parameters 
+
+        # scale bincount_min by the raw std of binned values
+        bincount_min = Dict("icesat" => 11, 
+            "icesat2" => 21, 
+            "gedi" => 21,
+            "hugonnet" => 51,
+        ),
+
+        smooth_n = Dict("icesat" => 3,
+            "icesat2" => 9,
+            "gedi" => 9,
+            "hugonnet" => 13,
+        ),
+
+        smooth_h2t_length_scale = 2000, # 300 m = 1 year in distance for anomaly
+        model1_madnorm_max = 5, # this is a sigma-equivelent threshold
+
+        model_fit_weight = 5, 
+        min_region_coverage = 0.10,
+    )
 
     # Define model that will be fit to all data binned by hypsometry
     #model::Function = model(t, h; t_intercept=2010) = hcat(ones(size(t)), (t .- t_intercept), h, h.^2, cos.(2 * pi * t), sin.(2 * pi * t))
@@ -166,15 +189,15 @@ amplitude:     $(round(dm_fit.param[4], digits = 1)) Gt",
 end
 
 
-#for dem_id in [:best, :cop30_v2]
-dem_id = :cop30_v2
-     #for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
-     binning_method = "meanmadnorm3"
-         #for curvature_correct in [true, false];
-            curvature_correct = true
+for dem_id in [:best, :cop30_v2]
+#dem_id = :cop30_v2
+     for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
+     #binning_method = "meanmadnorm3"
+         for curvature_correct in [true, false];
+            #curvature_correct = true
 
-            #for amplitude_correct = [true, false];
-                amplitude_correct = true
+            for amplitude_correct = [true, false];
+                #amplitude_correct = true
                 
                 
                 regional_offsets = true;
@@ -189,42 +212,15 @@ dem_id = :cop30_v2
                     runid = "glacier_dh_$(dem_id)_$(binning_method)_$(project_id)"
                 end
 
-                param = (
-                    # bin method
-                    
-                    runid = runid,
-
-                    # filter parameters 
-
-                    # scale bincount_min by the raw std of binned values
-                    bincount_min = Dict("icesat" => 11, 
-                        "icesat2" => 21, 
-                        "gedi" => 21,
-                        "hugonnet" => 51,
-                    ),
-
-                    smooth_n = Dict("icesat" => 3,
-                        "icesat2" => 9,
-                        "gedi" => 9,
-                        "hugonnet" => 13,
-                    ),
-
-                    smooth_h2t_length_scale = 2000, # 300 m = 1 year in distance for anomaly
-                    model1_madnorm_max = 5, # this is a sigma-equivelent threshold
-
-                    model_fit_weight = 5, 
-                    min_region_coverage = 0.5,
-                )
-              
-                binned_file = joinpath(binned_folder, "$(param.runid).jld2");
+                binned_file = joinpath(binned_folder, "$(runid).jld2");
 
                 if amplitude_correct
-                    binned_filled_file = joinpath(binned_folder, "$(param.runid)_filled_ac.jld2")
-                    out_id = replace(param.runid, "dh" => "dv")
+                    binned_filled_file = joinpath(binned_folder, "$(runid)_filled_ac.jld2")
+                    out_id = replace(runid, "dh" => "dv")
                     figure_suffix = "$(out_id)_ac"
                 else
-                    binned_filled_file = joinpath(binned_folder, "$(param.runid)_filled.jld2")
-                    figure_suffix = replace(param.runid, "dh" => "dv")
+                    binned_filled_file = joinpath(binned_folder, "$(runid)_filled.jld2")
+                    figure_suffix = replace(runid, "dh" => "dv")
                 end
 
                 dh1 = load(binned_file, "dh_hyps");
@@ -250,7 +246,7 @@ dem_id = :cop30_v2
                 #  <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 
                 # filter and fill on individual geotiles [4 min for for all glacierized geotiles and 4 missions]
-                # if fill_dh || !isfile(binned_filled_file)
+                if fill_dh || !isfile(binned_filled_file)
                 
                     t = Altim.decimalyear.(dims(dh1[first(keys(dh1))], :date))
                     t = repeat(t, 1, length(dims(dh1[first(keys(dh1))], :height)))
@@ -258,15 +254,15 @@ dem_id = :cop30_v2
                     h = val(dims(dh1[first(keys(dh1))], :height))'
                     h = repeat(h, length(dims(dh1[first(keys(dh1))], :date)), 1)
 
-                    # for mission in keys(dh1)
+                    for mission in keys(dh1)
 
                         # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><>
-                        mission = "icesat"
+                        # mission = "icesat"
                         # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-                        # Threads.@threads for geotile in dims(dh1[mission], :geotile)
-
+                        Threads.@threads for geotile in dims(dh1[mission], :geotile)
+                        #for geotile in dims(dh1[mission], :geotile)
                             # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><>
-                            geotile =   "lat[+74+76]lon[+060+062]"
+                            # geotile =       "lat[+80+82]lon[+058+060]"
                             # geotile = first(dims(dh1[mission], :geotile))
                             
                             # geotile = geotiles[findfirst((geotiles.rgi1 .> 0.) .& (geotiles.glacier_frac .> 0.3)),:]
@@ -283,14 +279,14 @@ dem_id = :cop30_v2
                             df.nbins_raw = sum(nobs0.>0)
 
                             ###################################### FILTER 1 ################################
-                            valid = .!isnan.(dh0) .& (nobs0 .> param.bincount_min[mission]) .& (abs.(dh0) .< 200)
+                            valid1 = .!isnan.(dh0) .& (nobs0 .> param.bincount_min[mission]) .& (abs.(dh0) .< 200)
                             ################################################################################
                             
-                            dh0[.!valid] .= NaN
-                            nobs0[.!valid] .= 0
+                            dh0[.!valid1] .= NaN
+                            nobs0[.!valid1] .= 0
                             
                             # if there are not enough points to fit a model the set all to NaNs
-                            va = sum(valid)
+                            va = sum(valid1)
                             if va <= (length(p1) + 2)
                                 dh0[:] .= NaN
                                 nobs0[:] .= 0
@@ -298,9 +294,9 @@ dem_id = :cop30_v2
                             end
 
                             # determine valid range of data
-                            (rrange, crange) = Altim.validrange(valid);
+                            (rrange, crange) = Altim.validrange(valid1);
                             dh0 = dh0[rrange,crange];
-                            valid = valid[rrange,crange];
+                            valid0 = valid1[rrange,crange];
                             nobs0 = nobs0[rrange,crange];
                             t0 = t[rrange,crange];
                             h0 = h[rrange,crange];
@@ -314,26 +310,32 @@ dem_id = :cop30_v2
                             h0_mean = mean(h0);
                             df.h0 = h0_mean;
                             h0 = h0 .- h0_mean;
-                            dh0_median = median(dh0[valid]) + 0.0000001; # add a small offset to prevent numerical instability
+                            dh0_median = median(dh0[valid0]) + 0.0000001; # add a small offset to prevent numerical instability
                             dh0 = dh0 .- dh0_median;
 
-                            df.bin_std = std(dh0[valid])
+                            df.bin_std = std(dh0[valid0])
 
                             # fit global model 
                             fit1=[]
                             try
-                                fit1 = curve_fit(model1, hcat(t0[valid], h0[valid]), dh0[valid], nobs0[valid], p1; lower=lb1, upper=ub1)
+                                fit1 = curve_fit(model1, hcat(t0[valid0], h0[valid0]), dh0[valid0], nobs0[valid0], p1; lower=lb1, upper=ub1)
                             catch 
-                                fit1 = curve_fit(model1, hcat(t0[valid], h0[valid]), dh0[valid], nobs0[valid], p1)
+                                println("---------------")
+                                println("$geotile $(size(valid0))")
+                                println("$geotile $(size(t0))")
+                                println("$geotile $(size(dh0))")
+                                println("$geotile $(size(nobs0))")
+                                println("---------------")
+                                fit1 = curve_fit(model1, hcat(t0[valid0], h0[valid0]), dh0[valid0], nobs0[valid0], p1)
                             end
 
-                            dh0_mdl = model1(hcat(t0[valid], h0[valid]), fit1.param);
-                            dh0_anom = dh0[valid] .- dh0_mdl;
+                            dh0_mdl = model1(hcat(t0[valid0], h0[valid0]), fit1.param);
+                            dh0_anom = dh0[valid0] .- dh0_mdl;
 
                             ###################################### FILTER 2 ####################################
                             # filter model1_madnorm_max sigma outliers
-                            valid[valid] = Altim.madnorm(dh0_anom) .<= param.model1_madnorm_max
-                            vb = sum(valid)
+                            valid0[valid0] = Altim.madnorm(dh0_anom) .<= param.model1_madnorm_max
+                            vb = sum(valid0)
                             df.nbins_filt1 = vb;
 
                             if vb <= (length(p1) + 2)
@@ -345,20 +347,20 @@ dem_id = :cop30_v2
                             if vb < va
                                 dh0[.!valid] .= NaN
                                 nobs0[.!valid] .= 0
-                                fit1 = curve_fit(model1, hcat(t0[valid], h0[valid]), dh0[valid], nobs0[valid], p1; lower=lb1, upper=ub1)
+                                fit1 = curve_fit(model1, hcat(t0[valid0], h0[valid0]), dh0[valid0], nobs0[valid0], p1; lower=lb1, upper=ub1)
 
-                                dh0_mdl = model1(hcat(t0[valid], h0[valid]), fit1.param);
-                                dh0_anom = dh0[valid] .- dh0_mdl;
+                                dh0_mdl = model1(hcat(t0[valid0], h0[valid0]), fit1.param);
+                                dh0_anom = dh0[valid0] .- dh0_mdl;
                             end
                             ####################################################################################
                             df.bin_anom_std = std(dh0_anom)
 
                             # take the median of the x closest neighbors 
-                            if sum(valid) < param.smooth_n[mission]
+                            if sum(valid0) < param.smooth_n[mission]
                                 anom_smooth = zeros(length(dh0))
                             else
                                 # scale height distance relative to time (i.e. length-scale)
-                                pts = hcat(t0[valid], h0[valid]/param.smooth_h2t_length_scale)'
+                                pts = hcat(t0[valid0], h0[valid0]/param.smooth_h2t_length_scale)'
                                 kdtree = KDTree(pts)
                                 (idxs, _) = knn(kdtree, pts, param.smooth_n[mission])
                                 anom0 = map(ind -> median(dh0_anom[ind]), idxs)
@@ -374,6 +376,8 @@ dem_id = :cop30_v2
                             dh1[mission][At(geotile),rrange,crange] = model1(hcat(t0[:], h0[:]), fit1.param) .+ dh0_median .+ anom_smooth
                             nobs1[mission][At(geotile), rrange, crange] = nobs0;
 
+                            foo = dh1[mission][At(geotile),rrange,crange];
+    
                             showplots && Plots.heatmap(dh1[mission][At(geotile),rrange,crange])
 
                             # println("granule interp: $(mission) - $(geotile)")
@@ -394,7 +398,7 @@ dem_id = :cop30_v2
                             end
                             
                             for geotile in dims(dh1[mission], :geotile)
-                            #geotile = first(dims(dh1[mission], :geotile))
+                                #geotile = first(dims(dh1[mission], :geotile))
                                 k = findfirst(params[mission].geotile .== geotile)
                                 df0 = params[mission][k,:]
                                 dfr = params[mission_ref][k, :]
@@ -427,13 +431,12 @@ dem_id = :cop30_v2
                     # extrapolate first and last values outside of valid elevation range for each year.
                     # 19s for all 4 missions for all glacierized geotiles
                     for mission in keys(dh1)
-
                         # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><
                         # mission = "icesat"
                         # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
                         for rgi in reg
                             # <><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><
-                            # rgi = "rgi2"
+                            # rgi = "rgi9"
                             # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 
                             rgi_ind = geotiles[:, rgi] .> 0;
@@ -453,10 +456,10 @@ dem_id = :cop30_v2
                             valid0 = valid[:,crange, zrange]
 
                             if showplots 
-                                p = plot()
+                                p = Plots.plot()
                                 for i in 1:length(dh0[:,1,1])
                                     if any(valid0[i,:,:])
-                                        p = plot(dh0[i,:,:])
+                                        p = Plots.plot(dh0[i,:,:], legend = false)
                                         display(p)
                                     end
                                 end
@@ -468,10 +471,20 @@ dem_id = :cop30_v2
                             h0 = val(dims(dh0, :height))'
                             h0 = repeat(h0, length(dims(dh0, :geotile)), 1)
 
+                            # determine the total observed area for each year
+                            area_frac = zeros(size(dims(dh0, :date)))
+                            for i in eachindex(dims(dh0, :date))
+                                area_frac[i] = sum(area[(nobs0[:,i,:].>0)']) ./ sum(area_total)
+                            end
+                            showplots && Plots.plot(dims(dh0, :date).val, area_frac)
+
+                            # to prevent wild extrapolation to not fit to tial year with poor coverage 
+                            valid_yr = area_frac .> param.min_region_coverage
+
                             # loop through each date and fill empty geotiles with second order polynomia fit to all data
                             for i in eachindex(dims(dh0, :date))
                                 # ----------------------------------- FOR TESTING ------------------------------
-                                # i = 71
+                                # i = 80
                                 #println("$(rgi): i = $(i)")
                                 # ------------------------------------------------------------------------------
 
@@ -479,7 +492,7 @@ dem_id = :cop30_v2
                                 valid00 = valid0[:,i,:]
                                 nobs00 = @view nobs0[:,i,:];
                                 
-                                if sum(area_total[vec(any(valid00, dims=2))]) ./ sum(area_total) .< param.min_region_coverage
+                                if .!any(valid_yr) || (i < findfirst(valid_yr)) || (i > findlast(valid_yr))
                                     # println(i)
                                     dh00[:] .= NaN;
                                     nobs00[:] .= 0;
@@ -493,15 +506,25 @@ dem_id = :cop30_v2
 
                                         fit2 = curve_fit(model2, h0[valid00], (dh00[valid00] .- dh_med), w[valid00], p2)
                                         
-
-                                        showplots && plot(h0', model2(h0, fit2.param)', legend= false; )
-                                        showplots && plot(h0[valid00], dh00[valid00], legend= false; seriestype=:scatter)
+                                        showplots && Plots.plot(h0', model2(h0, fit2.param)', legend= false; )
+                                        showplots && Plots.plot(h0[valid00], dh00[valid00], legend= false; seriestype=:scatter)
 
                                         # replace missing data
                                         dh00[.!valid00] = model2(h0[.!valid00] .- dh_med, fit2.param) .+ dh_med
                                     end
                                 end
                             end
+
+                            if showplots 
+                                p = Plots.plot()
+                                for i in 1:length(dh0[:,1,1])
+                                    if any(valid0[i,:,:])
+                                        p = Plots.plot(dh0[i,:,:], legend = false)
+                                        display(p)
+                                    end
+                                end
+                             end
+                
                             dh1[mission][At(geotile_ids), crange, zrange] = dh0
                             nobs1[mission][At(geotile_ids), crange, zrange] = nobs0
                         end
