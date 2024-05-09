@@ -2,7 +2,7 @@
 
 julia_version = "1.10.2"
 manifest_format = "2.0"
-project_hash = "42d858adf304a2aa5f5b8320612dfb8fc9be1ff7"
+project_hash = "4c6cd684cc56ef5da95674f506b693229e0ed0f0"
 
 [[deps.ARFFFiles]]
 deps = ["CategoricalArrays", "Dates", "Parsers", "Tables"]
@@ -1132,6 +1132,14 @@ version = "0.10.2"
 git-tree-sha1 = "53bb909d1151e57e2484c3d1b53e19552b887fb2"
 uuid = "42e2da0e-8278-4e71-bc24-59509adca0fe"
 version = "1.0.2"
+
+[[deps.H5ToTables]]
+deps = ["FillArrays", "HDF5"]
+git-tree-sha1 = "466642e948969af39f34a7058419bc37ece46c40"
+repo-rev = "main"
+repo-url = "https://github.com/alex-s-gardner/H5ToTable.jl"
+uuid = "adcd76a6-33ed-423f-8976-18bff4aa2144"
+version = "1.0.0-DEV"
 
 [[deps.HDF5]]
 deps = ["Compat", "HDF5_jll", "Libdl", "Mmap", "Printf", "Random", "Requires", "UUIDs"]

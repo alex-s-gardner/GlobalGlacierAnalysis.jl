@@ -28,7 +28,7 @@ ras = Raster(fn_raster; lazy=true);
 geotiles[!, out_var_name] = [zeros(size(bin_centers)) for r in 1:nrow(geotiles)];
 
 mask_frac = Symbol("$(mask)_frac")
-for geotile in eachrow(geotiles)
+Threads.@threads for geotile in eachrow(geotiles)
 
     if (geotile[mask_frac] > 0.0)
 
@@ -40,7 +40,7 @@ for geotile in eachrow(geotiles)
         # calculate area per cell
         lon = lookup(ras0, X)
         lat = lookup(ras0, Y)
-        d = Altim.meters2latlon_distance.(1, lat)
+        d = Altim.meters2lonlat_distance.(Ref(1), lat)
         a = abs.((1 ./ getindex.(d, 2) * (lat[2] .- lat[1])) .* (1 / d[1][1] * (lon[2] - lon[1])))
         area_m2 = repeat(a', outer = [length(lon), 1])
 

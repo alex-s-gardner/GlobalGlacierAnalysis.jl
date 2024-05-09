@@ -3663,8 +3663,11 @@ end
 """
 function geotiles_w_mask(geotile_width; resolution = (X=.001, Y= .001), remake = false)
 
-    (fldr, _) = splitdir(@__DIR__)
-    path2file = joinpath(fldr, "data", "geotiles_$(geotile_width)deg.arrow")
+    if .!isdir(analysis_paths(; geotile_width).binned)
+        mkpath(analysis_paths(; geotile_width).binned)
+    end
+    
+    path2file = joinpath(analysis_paths(; geotile_width).binned, "geotiles_$(geotile_width)deg.arrow")
 
     if remake || !isfile(path2file)
         geotiles = project_geotiles(; geotile_width);
@@ -3781,10 +3784,27 @@ function curvature(dhddx, dhddy, epsg; lat)
         ydist = 1
         xdist = 1
     end
-    curvature = -2(dhddx .* xdist .^ 2 + dhddy .* ydist .^ 2) * 100;
+    curvature = -2(dhddx * xdist ^ 2 + dhddy * ydist ^ 2) * 100;
 
     return curvature
 end
+
+
+function slope(dhdx, dhdy, epsg; lat)
+
+    if epsg == 4326
+        ydist, xdist = meters2lonlat_distance.(1, lat) # degree per meter
+    else
+        ydist = 1
+        xdist = 1
+    end
+
+    dhdx = dhdx * xdist
+    dhdy = dhdy * ydist
+   
+    return dhdx,  dhdy
+end
+
 
 """
 vector_overlap(a, b)

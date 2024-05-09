@@ -30,8 +30,8 @@ module Altim
     #using Optimization
     #using LossFunctions
     #using OptimizationOptimJL
-    #using MLJ
-    #using MLJLinearModels
+    using MLJ
+    using MLJLinearModels
     using LazyGrids
     using Rasters
     #using GeometryOps
