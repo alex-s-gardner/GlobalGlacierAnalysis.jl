@@ -68,7 +68,7 @@ function setpaths()
             # vector files
             RGI_dissolved = "/mnt/devon-r2/data/GlacierOutlines/RGI2000-v7.0-C-global-fix",
             RGI_regions = "/mnt/devon-r2/data/GlacierOutlines/RGI2000-v7.0-regions",
-            glacier_shp="/mnt/bylot-r3/data/vector_files/glacier.shp",
+            glacier_shp="/mnt/bylot-r3/data/vector_files/glacier_cl0cl1.shp",
             glacier_b1km_shp="/mnt/bylot-r3/data/vector_files/glacier_b1km.shp",
             glacier_b10km_shp="/mnt/bylot-r3/data/vector_files/glacier_b10km.shp",
             landice_shp="/mnt/bylot-r3/data/vector_files/land_ice.shp",
@@ -76,6 +76,17 @@ function setpaths()
             landice_b10km_shp="/mnt/bylot-r3/data/vector_files/land_ice_b10km.shp",
             floating_shp="/mnt/bylot-r3/data/vector_files/floating_ice.shp",
             rgi6_regions_shp="/mnt/bylot-r3/data/vector_files/00_rgi60_O1Regions_fix.shp",
+            water_shp="/mnt/bylot-r3/data/vector_files/GSHHS_f_L2.shp", #ocean + lakes
+
+            # grace timeseries data for validation [created in MATLAB using jplMasconTS.m]
+            grace_rgi = "/mnt/bylot-r3/data/GRACE/dM_grace_rgi.mat",
+
+            # glacier mass balance data for comparision
+            zemp_2019 = "/mnt/bylot-r3/data/glacier_mb/Zemp2019/Zemp_etal_DataTables2a-t_results_regions_global/",
+            marzeion_2012 = "/mnt/bylot-r3/data/glacier_mb/Marzeion2012/Marzeion2012.mat",
+            marzeion_2020 = "/mnt/bylot-r3/data/glacier_mb/Marzeion2020/suppl_GlacierMIP_results.nc",
+            hock_2019 = "/mnt/bylot-r3/data/glacier_mb/Hock2019/S0022143019000224sup001.nc",
+            ipcc_ar6 = "/mnt/bylot-r3/data/glacier_mb/IPCCAR6/",
         )
 
         return pathlocal

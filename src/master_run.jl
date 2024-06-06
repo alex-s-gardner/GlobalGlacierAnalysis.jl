@@ -8,4 +8,6 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_hyps.jl")
 include("/home/gardnera/Documents/GitHub/Altim.jl/src/gemb_binning.jl")
 
 include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_global_binning.jl")
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_heigh_change_hyps.jl")
+include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_heigh_change_hyps.jl") 
+
+include("/home/gardnera/Documents/GitHub/Altim.jl/src/plot_heigh_change_hyps.jl")

@@ -3743,7 +3743,7 @@ julia> validrange(A)
 function validrange(v)
    nd = ndims(v);
    d = collect(1:nd)
-   [findfirst(vec(any(v, dims=Tuple(x for x in d[d.!==n])))):findlast(vec(any(v, dims=Tuple(x for x in d[d.!==n])))) for n in 1:nd]
+   Tuple([findfirst(vec(any(v, dims=Tuple(x for x in d[d.!==n])))):findlast(vec(any(v, dims=Tuple(x for x in d[d.!==n])))) for n in 1:nd])
 end
 
 
@@ -3828,4 +3828,17 @@ function vector_overlap(a, b)
 
     tf = (ea[2] >= eb[1]) && (ea[1] <= eb[2])
     return tf
+end
+
+
+function nanmean(x)
+    mean(x[.!isnan.(x)])
+end
+
+
+
+const MATLAB_EPOCH = Dates.DateTime(-1, 12, 31)
+function datenum2date(n) 
+    d = MATLAB_EPOCH + Dates.Millisecond(round(Int64, n * 1000 * 60 * 60 * 24))
+    return d
 end

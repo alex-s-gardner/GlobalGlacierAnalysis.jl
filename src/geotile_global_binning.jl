@@ -12,7 +12,7 @@ begin
     using BinStatistics
     using Statistics
     using Dates
-    using Plots
+    using CairoMakie
     using JLD2
     using FileIO
     using LsqFit
@@ -23,15 +23,35 @@ begin
     geotile_width = 2;
     warnings = false
     showplots = false;
+    mask = :land
+
+    dem_ids = [:best, :cop30_v2]
+    binning_methods = ["median", "meanmadnorm3", "meanmadnorm5"];
+    curvature_corrects = [true, false]
 
     paths = project_paths(; project_id)
     products = project_products(; project_id)
     binned_folder = analysis_paths(; geotile_width).binned
+    fig_folder = joinpath(binned_folder, "figures")
 
     # open shapefiles
-    glacier_shp = Shapefile.Handle(Altim.pathlocal.glacier_shp)
-    #glacier_b10km_shp = Shapefile.Handle(Altim.pathlocal.glacier_b10km_shp);
-    #glacier_b1km_shp = Shapefile.Handle(Altim.pathlocal.glacier_b1km_shp);
+    excludemask_flag = false
+    if mask == :land
+        shp = Symbol("$(:water)_shp");
+        fn_shp = Altim.pathlocal[shp];
+        feature = Shapefile.Handle(fn_shp);
+
+        invert = true
+
+        shp = Symbol("$(:landice)_shp")
+        fn_shp = Altim.pathlocal[shp]
+        excludefeature = Shapefile.Handle(fn_shp)
+        excludemask_flag = true
+    else
+        shp = Symbol("$(mask)_shp");
+        invert = false
+    end
+
 
     # define model for curvature correction
     model1::Function = model1(c, p) = p[1] .+ p[2] .* c .+ p[3] .* c .^ 2 .+ p[4] .* c .^ 3 .+ p[5] .* c .^ 4
@@ -46,8 +66,7 @@ begin
     )
 
     # load geotile definitions with corresponding hypsometry
-    mask_project = :glacier
-    gt_file = joinpath(binned_folder, "geotile_$(mask_project)_hyps.arrow")
+    gt_file = joinpath(binned_folder, "geotile_$(mask)_hyps.arrow")
     geotiles = DataFrame(Arrow.Table(gt_file))
     geotiles.extent = Extent.(getindex.(geotiles.extent, 1))
 
@@ -68,43 +87,42 @@ begin
     Δh = 100;
     height_range = 0:100:10000;
     height_center = height_range[1:end-1] .+ Δh/2;
-
 end;
 
-for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
-    for dem_id in [:best, :cop30_v2] # [:rema_v2_10m]#[:cop30_v2]; #, :nasadem_v1, :rema_v2_10m, :arcticdem_v4_10m, :best]
-        for curvature_correct in [true, false];
-
-            #binning_method = "median"
-            #dem_id = :best 
-            #curvature_correct = true
+#for binning_method = binning_methods
+    #for dem_id in dem_ids  # [:rema_v2_10m]#[:cop30_v2]; #, :nasadem_v1, :rema_v2_10m, :arcticdem_v4_10m, :best]
+        #for curvature_correct in curvature_corrects
+begin
+            if  true
+                binning_method = "meanmadnorm3"
+                dem_id = :best 
+                curvature_correct = true
+                force_remake = true
+            end
 
             # funtion used for binning data
             if binning_method == "meanmadnorm3"
-                binfun = x -> mean(x[Altim.madnorm(x).<3])
+                binningfun(x) = mean(x[Altim.madnorm(x).<3])
             elseif binning_method == "meanmadnorm5"
-                binfun = x -> mean(x[Altim.madnorm(x).<5])
+                binningfun(x) = mean(x[Altim.madnorm(x).<5])
             elseif binning_method == "median"
-                binfun = x -> median(x)
+                binningfun(x) = median(x)
             else
                 error("unrecognized binning method")
             end
 
             # bin method
             if curvature_correct
-                runid = "glacier_dh_$(dem_id)_cc_$(binning_method)_$(project_id)"
+                runid = "$(mask)_dh_$(dem_id)_cc_$(binning_method)_$(project_id)"
             else
-                runid = "glacier_dh_$(dem_id)_$(binning_method)_$(project_id)"
+                runid = "$(mask)_dh_$(dem_id)_$(binning_method)_$(project_id)"
             end
 
             out_file = joinpath(binned_folder, "$(runid).jld2");
 
-            if !isfile(out_file) || force_remake
+            @time if !isfile(out_file) || force_remake
                 # 6.2 hours for all glaciers, all missions/datasets on 96 threads
-
-                # -------------------------------------- FOR TESTING -----------------------------------
-                #products = products[keys(products)[2:2]]
-                # --------------------------------------------------------------------------------------
+                # 10hr for land for all glaciers, all missions/datasets on 96 threads
 
                 # initialize dimensional arrays
                 dh_hyps = Dict();
@@ -122,9 +140,9 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
 
                 # 2.6 hours for all 4 missions for all glacierized geotiles
                 # 31 min for icesat + iceast2 + gedi for all glacierized geotiles
-                for mission in keys(dh_hyps)
+                @time for mission in keys(dh_hyps)
                     # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><><><><>
-                    #mission = "icesat2"
+                    # mission = "icesat"
                     #out_file = "/mnt/devon2-r1/devon0/gardnera/Documents/GitHub/Altim/data/geotiles_glacier_hyps_2deg_dh.arrow";
                     #geotiles  = DataFrame(Arrow.Table(out_file));
                     #geotiles.extent = Extent.(getindex.(geotiles.extent, 1));
@@ -136,7 +154,7 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                     Threads.@threads for geotile in eachrow(geotiles)
                         # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><><>
                         #for geotile in eachrow(geotiles)
-                        #geotile = geotiles[findfirst((geotiles.rgi13 .> 0.) .& (geotiles.glacier_frac .> 0.2)),:];
+                        # geotile = geotiles[findfirst((geotiles.rgi2 .> 0.) .& (geotiles.glacier_frac .> 0.1)),:];
                         #geotile = geotiles[findfirst(geotiles.id .== "lat[+44+46]lon[+006+008]"), :]
                         # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
                         
@@ -191,7 +209,7 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                             canopy = DataFrame(Arrow.Table(path2canopy));
                         end;
 
-                        # update glacier mask with high-resolution vector files
+                        # update mask with high-resolution vector files
                         grid_resolution = 0.00027; # ~30m
 
                         x_mask = X(geotile.extent.X[1]:grid_resolution:geotile.extent.X[2], 
@@ -203,31 +221,40 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                         setcrs(mask0, EPSG(4326));
 
                         # NOTE: count method is fastest
-                        mask0 = Rasters.rasterize!(count, mask0, glacier_shp; threaded=false, 
-                            shape=:polygon, progress=false, verbose=false, boundary=:center);
+                        mask0 = Rasters.rasterize!(count, mask0, feature; threaded=false, 
+                            shape=:polygon, progress=false, verbose=false, boundary=:center) .> 0;
+
+                        if invert
+                            mask0 = .!(mask0)
+                        end
+
+                        if excludemask_flag
+                            excludemask = Raster(zeros(UInt8, y_mask, x_mask));
+                            excludemask = Rasters.rasterize!(count, excludemask, excludefeature; threaded=false, shape=:polygon, progress=false, verbose=false) .> 0
+                            mask0 = mask0 .& .!excludemask
+                        end
 
                         isvalid = Altim.within.(Ref(geotile.extent), altim.longitude, altim.latitude);
-                        masks[!, :glacierice] .= false;
+                        masks[!, mask] .= false;
 
                         fast_index = true;
                         if fast_index # fast index is 15x faster than Rasters
                             c = floor.(Int64, (altim.longitude[isvalid] .- first(x_mask)) ./ step(x_mask)) .+ 1;
                             r = floor.(Int64, (altim.latitude[isvalid] .- first(y_mask)) ./ step(y_mask)) .+ 1;
                             pts3 = [CartesianIndex(a, b) for (a, b) in zip(r, c)]
-                            masks.glacierice[isvalid] = mask0[pts3] .> 0
+                            masks[isvalid,mask] .= mask0[pts3]
                         else
                             #NOTE: 67% of time is taken here for large number of points.
                             pts1 = GeoInterface.PointTuple.([((Y=y, X=x)) for (x, y) in 
                                 zip(altim.longitude[isvalid], altim.latitude[isvalid])]);
                             pts2 = extract(mask0, pts1, atol=grid_resolution/2, index = true, geometry=false);
-                            masks.glacierice[isvalid] = getindex.(pts2, 2) .> 0
+                            masks[:, mask][isvalid] = getindex.(pts2, 2)
                             pts3 = CartesianIndex.(getindex.(pts2, 1))
                         end;
 
-                        if !any(masks.glacierice)
+                        if !any(masks[:, mask])
                             continue
                         end
-
 
                         ## Check slope relation
                         if false
@@ -238,7 +265,7 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                     
                                     dhdx_dhdy = Altim.slope.(dem.dhdx, dem.dhdy, Ref(Altim.dem_info(dem_id1)[1].epsg), lat = mean(geotile.extent.Y));
                                     
-                                    var_ind = (.!masks.glacierice) .& isvalid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0) .& .!isnan.(altim.curvature) .& (abs.(altim.dh) .< 10) .& masks.land .& ((canopy.canopyh .<= max_canopy_height) .| (altim.latitude .< -60))
+                                    var_ind = (.!masks[:, mask]) .& isvalid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0) .& .!isnan.(altim.curvature) .& (abs.(altim.dh) .< 10) .& masks.land .& ((canopy.canopyh .<= max_canopy_height) .| (altim.latitude .< -60))
                                     
                                     if sum(var_ind) <= length(p1)
                                         warnings && (@warn ("$(geotile.id): slope offset not calculated, not enought off-ice points"))
@@ -252,10 +279,10 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                         # use bin statistics to calculate dh vs. elevation for every 3 months.
 
                         # identify valid dh data
-                        showplots && plot(altim.datetime[isvalid],altim.dh[isvalid]; seriestype=:scatter, label="all")
+                        showplots && plot(Altim.decimalyear.(altim.datetime[isvalid]),altim.dh[isvalid]; seriestype=:scatter, label="all")
 
                         if curvature_correct
-                            var_ind = (.!masks.glacierice) .& isvalid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0) .& .!isnan.(altim.curvature) .& (abs.(altim.dh) .< 10) .& masks.land .& ((canopy.canopyh .<= max_canopy_height) .| (altim.latitude .< -60))
+                            var_ind = (.!masks[:, :landice]) .& isvalid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0) .& .!isnan.(altim.curvature) .& (abs.(altim.dh) .< 10) .& masks.land .& ((canopy.canopyh .<= max_canopy_height) .| (altim.latitude .< -60))
 
                             if sum(var_ind) <= length(p1)
                                 warnings && (@warn ("$(geotile.id): no curvature corecction applied, not enought off-ice points"))
@@ -268,7 +295,7 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                                     catch
                                         # having issues with edge cases
                                         println(" ##################### ERRORED ##########################")
-                                        println(" ##################### $(geotile.id) ########################")
+                                        println(" ##################### $(mission): $(geotile.id) ########################")
                                         println(" ##################### ERRORED ##########################")
                                     end
 
@@ -291,9 +318,43 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                                             cnobs[1][bin_valid] = df.nrow[bin_valid]
                                             curvature_hyps[mission][gt_ind, :model_coef] = fit1.param
                                 
-                                            #dh_cor = model1(bin_center, fit1.param);
-                                            #plot(bin_center, df.dh_median; seriestype=:scatter);
-                                            #plot!(bin_center,dh_cor; seriestype=:scatter);
+                                            if showplots
+                                                dh_cor = model1(bin_center, fit1.param);
+                                                p = plot(bin_center, df.dh_median);
+
+                                                fontsize = 18;
+
+                                                title = "$mission: $(geotile.id)"
+
+                                                title = replace.(title, "hugonnet" => "ASTER")
+                                                title = replace.(title, "icesat" => "ICESat")
+                                                title = replace.(title, "icesat2" => "ICESat-2")
+                                                title = replace.(title, "gedi" => "GEDI")
+                                                
+                                                f = Figure(backgroundcolor=RGBf(0.98, 0.98, 0.98), size=(1000, 700), fontsize=fontsize);
+                                                ga = f[1:4, 1] = GridLayout()
+                                                gb = f[5:6, 1] = GridLayout()
+                                
+                                                Label(ga[1, 1, Top()],
+                                                    title, valign=:bottom,
+                                                    font=:bold,
+                                                    padding=(0, 0, 5, 0)
+                                                )
+
+                                                axmain = Axis(ga[1, 1]; ylabel="height anomaly [m]")
+                                                hidexdecorations!(axmain; grid=false, minorgrid=false)
+                                                axbottom = Axis(gb[1, 1], ylabel="count [×1000]", xlabel="curvature [cm⁻¹]", )
+                                                plot!(axmain, bin_center, df.dh_median; label = "observation");
+                                                lines!(axmain, bin_center, dh_cor; label = "model");
+                                                plot!(axmain, bin_center, df.dh_median .- dh_cor; label = "corrected");
+                                                barplot!(axbottom, bin_center, df.nrow / 1000)
+                                                axislegend(axmain, framevisible=false, position = :lt)
+                                                
+
+                                                fname = joinpath(fig_folder, "$(mask)_$(mission)_$(geotile.id)_$(dem_id)_curvature.png")
+                                                save(fname, f)
+                                                display(f)
+                                            end
                                         end
                                     end
                                 end
@@ -301,7 +362,7 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                         end
 
                         #################################### FILTER 1 ######################################
-                        var_ind = masks.glacierice .& isvalid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0)
+                        var_ind = masks[:, mask] .& isvalid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0)
                         if sum(var_ind) < 100
                             continue
                         end
@@ -310,6 +371,10 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                         showplots && plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter,label="glacier")
 
                         var_ind[var_ind] = (abs.(altim.dh[var_ind] .- median(altim.dh[var_ind])) .< filt.dh_max) .| (abs.(altim.dh[var_ind]) .> filt.dh_max*2)
+
+                        if mask == :land
+                            var_ind = var_ind .& (canopy.canopyh .<= max_canopy_height)
+                        end
                         
                         # for troubleshooting
                         showplots && plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter, label="glacier-filt", ylims = (-300, +300))
@@ -346,7 +411,7 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                         try
                             df = binstats(altim[var_ind, :], [:datetime, :height_ref], 
                                 [date_range[date_ind], height_range[height_ind]], 
-                                :dh; col_function=[binfun], missing_bins=true)
+                                :dh; col_function=[binningfun], missing_bins=true)
                         catch
                             # having issues with edge cases
                             println(" ##################### ERRORED ##########################")
@@ -366,11 +431,11 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                         t_center = date_center[date_ind_center]
 
                         for (i,df) in enumerate(gdf)
-                            isval = .!ismissing.(df[p, "dh_function"])
+                            isval = .!ismissing.(df[p, "dh_binningfun"])
                             obs2 = @view obs1[i,:]
                             nobs2 = @view nobs1[i, :]
                             if any(isval)
-                                obs2[isval] = df.dh_function[p][isval]
+                                obs2[isval] = df.dh_binningfun[p][isval]
                                 nobs2[isval] = df.nrow[p][isval]
                             end
                         end
@@ -385,6 +450,7 @@ for binning_method = ["median", "meanmadnorm3", "meanmadnorm5"];
                         println("binned: $(mission) - $(geotile.id): $(dt)s")
                     end
                 end
+                
                 save(out_file, Dict("dh_hyps" => dh_hyps, "nobs_hyps" => nobs_hyps, "curvature_hyps" => curvature_hyps));
             end
         end
