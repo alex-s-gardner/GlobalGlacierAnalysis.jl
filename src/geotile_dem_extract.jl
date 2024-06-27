@@ -12,7 +12,7 @@ slope = true;
 curvature = true;
 
 extent = nothing
-dems = [:rema_v2_10m]#[:cop30_v2]; #, :nasadem_v1, :rema_v2_10m, :arcticdem_v4_10m]
+dems = [:rema_v2_10m, :cop30_v2, :arcticdem_v4_10m]#[:cop30_v2]; #, :nasadem_v1, :rema_v2_10m, :arcticdem_v4_10m]
 
 paths = project_paths(; project_id);
 geotiles = Altim.geotiles_w_mask(geotile_width);
@@ -20,10 +20,9 @@ products = project_products(; project_id);
 
 geotiles = geotiles[geotiles.landice_frac .> 0, :];
 
-
 # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><><><><><><>
-#force_remake = true;
-#products = (icesat = products.icesat,)
+force_remake = false;
+products = (icesat = products.hugonnet,)
 #ind = findfirst(geotiles.id .== "lat[+54+56]lon[+096+098]")
 #geotiles = geotiles[ind:ind,:]
 #dems = [:arcticdem_v4_10m]

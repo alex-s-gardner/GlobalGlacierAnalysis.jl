@@ -805,6 +805,8 @@ function pointextract(
             if n_derivative > 0
                 val = [val for i = 1:(n_derivative+1)]
             end
+
+            return val
         else
             # crop and read into  memory 
             #@infiltrate
@@ -3841,4 +3843,143 @@ const MATLAB_EPOCH = Dates.DateTime(-1, 12, 31)
 function datenum2date(n) 
     d = MATLAB_EPOCH + Dates.Millisecond(round(Int64, n * 1000 * 60 * 60 * 24))
     return d
+end
+
+
+
+"""
+    add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder)
+
+    Add dem info to altim dataframe
+"""
+function add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder)
+
+    # add dem height and curvature
+    if dem_id == :best
+        # last dem takes precidence over earlier dems
+        dem_id0 = [:cop30_v2, :arcticdem_v4_10m, :rema_v2_10m]
+    else
+        dem_id0 = [dem_id]
+    end
+
+    altim[!, :height_ref] .= NaN
+    altim[!, :curvature] .= NaN
+
+    for dem_id1 in dem_id0
+        path2dem = joinpath(mission_geotile_folder, geotile.id * ".$(dem_id1)")
+        if isfile(path2dem)
+            dem = select!(DataFrame(Arrow.Table(path2dem)), :height, :dhddx, :dhddy)
+            # a bit faster to calculate curvature on all data then subset
+            curv = Altim.curvature.(dem.dhddx, dem.dhddy, Ref(Altim.dem_info(dem_id1)[1].epsg), lat=mean(geotile.extent.Y))
+
+            ind = .!isnan.(curv) .& (abs.(dem.height) .< 9998)
+
+            altim[ind, :height_ref] = dem[ind, :height]
+            altim[ind, :curvature] = curv[ind]
+        end
+    end
+
+    altim[!, :dh] = altim.height .- altim.height_ref
+    return altim
+end
+
+
+function highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, surface_mask)
+    # update mask with high-resolution vector files
+    grid_resolution = 0.00027 # ~30m
+
+    x_mask = X(geotile.extent.X[1]:grid_resolution:geotile.extent.X[2],
+        sampling=DimensionalData.Intervals(DimensionalData.Start()))
+    y_mask = Y(geotile.extent.Y[1]:grid_resolution:geotile.extent.Y[2],
+        sampling=DimensionalData.Intervals(DimensionalData.Start()))
+
+    mask1 = Raster(zeros(UInt8, y_mask, x_mask))
+    setcrs(mask1, EPSG(4326))
+
+    # NOTE: count method is fastest
+    mask1 = Rasters.rasterize!(count, mask1, feature; threaded=false,
+        shape=:polygon, progress=false, verbose=false, boundary=:center) .> 0
+
+    if invert
+        mask1 = .!(mask1)
+    end
+
+    if !isnothing(excludefeature)
+        excludemask = Raster(zeros(UInt8, y_mask, x_mask))
+        excludemask = Rasters.rasterize!(count, excludemask, excludefeature; threaded=false, shape=:polygon, progress=false, verbose=false) .> 0
+        mask1 = mask1 .& .!excludemask
+    end
+
+    valid = Altim.within.(Ref(geotile.extent), altim.longitude, altim.latitude)
+    masks0[!, surface_mask] .= false
+
+    fast_index = true
+    if fast_index # fast index is 15x faster than Rasters
+        c = floor.(Int64, (altim.longitude[valid] .- first(x_mask)) ./ step(x_mask)) .+ 1
+        r = floor.(Int64, (altim.latitude[valid] .- first(y_mask)) ./ step(y_mask)) .+ 1
+        pts3 = [CartesianIndex(a, b) for (a, b) in zip(r, c)]
+        masks0[valid, surface_mask] .= mask1[pts3]
+    else
+        #NOTE: 67% of time is taken here for large number of points.
+        pts1 = GeoInterface.PointTuple.([((Y=y, X=x)) for (x, y) in
+                                         zip(altim.longitude[valid], altim.latitude[valid])])
+        pts2 = extract(mask1, pts1, atol=grid_resolution / 2, index=true, geometry=false)
+        masks0[:, surface_mask][valid] = getindex.(pts2, 2)
+        pts3 = CartesianIndex.(getindex.(pts2, 1))
+    end
+
+    return masks0
+end
+
+
+function binningfun_define(binning_method)
+    
+    if binning_method == "meanmadnorm3"
+      x -> mean(x[Altim.madnorm(x).<3])
+    elseif binning_method == "meanmadnorm5"
+        x -> mean(x[Altim.madnorm(x).<5])
+    elseif binning_method == "meanmadnorm10"
+        x -> mean(x[Altim.madnorm(x).<10])
+    elseif binning_method == "median"
+        x -> median(x)
+    else
+        error("unrecognized binning method")
+    end
+
+
+end
+
+
+
+function highres_mask(latitude, longitude, feature; grid_resolution=0.00027)
+    # update mask with high-resolution vector files
+
+    ymin = floor(minimum(latitude) ./ grid_resolution) .* grid_resolution
+    ymax = ceil(maximum(latitude) ./ grid_resolution) .* grid_resolution
+    xmin = floor(minimum(longitude) ./ grid_resolution) .* grid_resolution
+    xmax = ceil(maximum(longitude) ./ grid_resolution) .* grid_resolution
+    
+    x_mask = X(xmin:grid_resolution:xmax, sampling=DimensionalData.Intervals(DimensionalData.Start()))
+    y_mask = Y(ymin:grid_resolution:ymax, sampling=DimensionalData.Intervals(DimensionalData.Start()))
+
+    mask1 = Raster(zeros(UInt8, y_mask, x_mask))
+
+    # NOTE: count method is fastest
+    mask1 = Rasters.rasterize!(count, mask1, feature; threaded=false, shape=:polygon, progress=false, verbose=false, boundary=:center) .> 0
+
+    fast_index = true
+    if fast_index # fast index is 15x faster than Rasters
+        c = floor.(Int64, (longitude .- first(x_mask)) ./ step(x_mask)) .+ 1
+        r = floor.(Int64, (latitude .- first(y_mask)) ./ step(y_mask)) .+ 1
+        pts3 = [CartesianIndex(a, b) for (a, b) in zip(r, c)]
+        mask = mask1[pts3]
+    else
+        #NOTE: 67% of time is taken here for large number of points.
+        pts1 = GeoInterface.PointTuple.([((Y=y, X=x)) for (x, y) in
+                                         zip(longitude, latitude)])
+        pts2 = extract(mask1, pts1, atol=grid_resolution / 2, index=true, geometry=false)
+        mask = getindex.(pts2, 2)
+    end
+
+    return mask
 end

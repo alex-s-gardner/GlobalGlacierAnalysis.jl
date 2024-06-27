@@ -26,7 +26,7 @@ function project_products(; project_id = :v01)
 
             gedi=ElevationProduct(mission=:gedi, name=:GEDI02_A, version=2, id="G02A", error_sigma=0.1, halfwidth=22 / 4, kernel=:gaussian, apply_quality_filter=false, coregister=true),
 
-            hugonnet=ElevationProduct(mission=:hugonnet, name=:HSTACK, version=1, id="HS01", error_sigma=5, halfwidth=100 / 2, kernel=:gaussian, apply_quality_filter=true, coregister=true)
+            hugonnet=ElevationProduct(mission=:hugonnet, name=:HSTACK, version=1, id="HS01", error_sigma=5, halfwidth=100 / 2, kernel=:gaussian, apply_quality_filter=false, coregister=true)
         )
     end
     return product

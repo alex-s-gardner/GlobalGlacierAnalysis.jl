@@ -1112,12 +1112,12 @@ uuid = "50e95529-e670-4fa6-84ad-e28f686cc091"
 version = "0.2.5"
 
 [[deps.GeoTiles]]
-deps = ["Arrow", "DataFrames", "Extents", "FastGeoProjections", "GeoFormatTypes", "JLD2", "Printf", "Scanf"]
-git-tree-sha1 = "221e807c9473e13917d5bbc3353ef896f9acaca3"
+deps = ["Arrow", "DataFrames", "Extents", "FastGeoProjections", "GeoFormatTypes", "GeoInterface", "JLD2", "Printf", "Scanf"]
+git-tree-sha1 = "06eca98b4cf37f1cfcce70a2dabaee995d4b347e"
 repo-rev = "main"
 repo-url = "https://github.com/alex-s-gardner/GeoTiles.jl"
 uuid = "2d466ccc-baa7-41f7-823f-6e09e7c71845"
-version = "1.0.0-DEV"
+version = "1.1.0-DEV"
 
 [[deps.Geodesy]]
 deps = ["CoordinateTransformations", "Dates", "LinearAlgebra", "StaticArrays"]

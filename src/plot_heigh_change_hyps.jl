@@ -11,18 +11,20 @@ begin
 
     include("utilities_hyps.jl")
 
-    showplots = false
+    showplots = true
     project_id = :v01;
     geotile_width = 2;
 
+    surface_mask = :glacier_b10km
+
     binned_folder = analysis_paths(; geotile_width).binned
     fig_folder = joinpath(binned_folder, "figures")
-    fName = "dvdm_reg_$(project_id).jld2"
+    fName = "dvdm_reg_$(surface_mask)_$(project_id).jld2"
     path2dmdv = joinpath(binned_folder, fName);
 
     dv = load(path2dmdv, "dv");
     dm = load(path2dmdv, "dm");
-    nobs = load(path2dmdv, "nobs");
+    nobs0 = load(path2dmdv, "nobs");
     area = load(path2dmdv, "area");
     df = load(path2dmdv, "df");
 
@@ -33,9 +35,9 @@ begin
 
     # bin method
     if curvature_correct
-        runid = "glacier_dh_$(dem_id)_cc_$(binning_method)_$(project_id)"
+        runid = "$(surface_mask)_dh_$(dem_id)_cc_$(binning_method)_$(project_id)"
     else
-        runid = "glacier_dh_$(dem_id)_$(binning_method)_$(project_id)"
+        runid = "$(surface_mask)_dh_$(dem_id)_$(binning_method)_$(project_id)"
     end
 
     figure_suffix = replace(runid, "dh" => "dv")
@@ -45,7 +47,7 @@ begin
 
     dm_reg_masked = dm[figure_suffix]
     dv_reg_masked = dv[figure_suffix]
-    nobs_reg_masked = nobs[figure_suffix]
+    nobs_reg_masked = nobs0[figure_suffix]
 
     t = collect(dims(dm_reg_masked, :date))
     t = Altim.decimalyear.(t)
@@ -66,7 +68,7 @@ if true
 
         f = plot_dvdm(dv_reg_masked[:, At(rgi), :], dm_reg_masked[:, At(rgi), :], nobs_reg_masked[:, At(rgi), :]; title, fontsize, colors, date_intercept, area = area[At(rgi)])
 
-        fname = joinpath(fig_folder, "$(rgi)_$(figure_suffix).png")
+        fname = joinpath(fig_folder, "$(surface_mask)_$(rgi)_$(figure_suffix).png")
         save(fname, f)
         showplots && display(f)
 
@@ -80,7 +82,7 @@ if true
 
     f = plot_dvdm(dvX, dmX, nobsX; title, fontsize, colors, area=sum(area.data))
 
-    fname = joinpath(fig_folder, "global_$(figure_suffix).png")
+    fname = joinpath(fig_folder, "$(surface_mask)_global_$(figure_suffix).png")
     save(fname, f)
     showplots && display(f)
 
@@ -95,14 +97,15 @@ if true
         dm = df[(df.rgi.==rgi).&df.amplitude_correct, :]
         f = plot_dm_permutations(t, dm, title; colors=colorschemes[:tab20c])
 
-        fname = joinpath(fig_folder, "$(rgi)_$(figure_suffix)_permutations.png")
+        fname = joinpath(fig_folder, "$(surface_mask)_$(rgi)_$(figure_suffix)_permutations.png")
         save(fname, f)
         showplots && display(f)
     end
 end
 
+
 # plot using a density of 850 kg/m
-#if true
+if true
     δ = .850
     dvX = copy(dv_reg_masked[1, 1, :])
     dvX .= 0.0
@@ -127,7 +130,7 @@ end
 
         f = plot_dvdm(dm850, dmFac, nobs_reg_masked[:, At(rgi), :]; title, fontsize, colors, date_intercept, area=area[At(rgi)], dmdm_flag = true, δ_effective)
 
-        fname = joinpath(fig_folder, "$(rgi)_$(figure_suffix)_d850.png")
+        fname = joinpath(fig_folder, "$(surface_mask)_$(rgi)_$(figure_suffix)_d850.png")
         save(fname, f)
         showplots && display(f)
 
@@ -141,7 +144,7 @@ end
 
     f = plot_dvdm(dvX, dmX, nobsX; title, fontsize, colors, area=sum(area.data))
 
-    fname = joinpath(fig_folder, "global_$(figure_suffix)_d850.png")
+    fname = joinpath(fig_folder, "$(surface_mask)_global_$(figure_suffix)_d850.png")
     save(fname, f)
     showplots && display(f)
 end

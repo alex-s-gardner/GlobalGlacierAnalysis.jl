@@ -2,7 +2,7 @@
 using Altim
 using Extents
 
-force_remake = true; 
+force_remake = false; 
 geotile_width = 2; #geotile width [degrees]
 paths = project_paths();
 geotiles = project_geotiles(; geotile_width=geotile_width);
@@ -23,6 +23,8 @@ if !isdir(paths.hugonnet.geotile)
 end
 
 # get hstack catalogue
+hstack_parent_dir = paths.hugonnet.raw_data
+
 hstacks = hstack_catalogue(paths.hugonnet.raw_data; update_catalogue=force_remake)
     
 # build geotiles

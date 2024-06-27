@@ -22,6 +22,15 @@ begin
     geotile_width = 2;
     binning_method = "mean"; # "meanmadnorm3"
 
+    gemb_folder = "/home/schlegel/Share/GEMBv1/";
+    #gemb_folder = "/home/schlegel/Share/GEMBv1/Alaska_sample/"
+
+    file_uniqueid = "rv1_0_19500101_20231231"
+    Δtime_gemb = 5 #days
+
+    #file_uniqueid = "1979to2023_820_40_racmo_grid_lwt"
+    out_df = "/mnt/bylot-r3/data/gemb/raw/$file_uniqueid.arrow"
+
     # bin method
     runid = "glacier_gemb_$(binning_method)_$(project_id)"
 
@@ -55,9 +64,9 @@ begin
     #glacier_b1km_shp = Shapefile.Handle(Altim.pathlocal.glacier_b1km_shp);
 
     # define date and hight binning ranges 
-    dd =  30;
-    date_range = DateTime(1950):Day(dd):now();
-    date_center = date_range[1:end-1] .+ Day(dd/2);
+    Δd =  30;
+    date_range = DateTime(1950):Day(Δd):now();
+    date_center = date_range[1:end-1] .+ Day(Δd/2);
 
     # DO NOT MODIFY: these need to match elevations in hypsometry
     Δh = 100;
@@ -72,23 +81,19 @@ begin
     showplots = false;
 end;
 
-file_suffix = "rv1_0_19500101_20231231"
-out_df = "/mnt/bylot-r3/data/gemb/raw/$file_suffix.arrow"
+
 
 # 9 min
 if .!(isfile(out_df)) || force_remake   
     gemb_file = [
-        "GEMB_ANT_$file_suffix.mat",
-        "GEMB_ARC_$file_suffix.mat",
-        "GEMB_HMA_$file_suffix.mat",
-        "GEMB_PAT_$file_suffix.mat"
+        "GEMB_ANT_$file_uniqueid.mat",
+        "GEMB_ARC_$file_uniqueid.mat",
+        "GEMB_HMA_$file_uniqueid.mat",
+        "GEMB_PAT_$file_uniqueid.mat"
     ];
-
-    gemb_folder = "/home/schlegel/Share/GEMBv1/";
 
     # this takes 4 m
     gemb = Altim.gemb_read(joinpath.(Ref(gemb_folder), gemb_file))
-
 
     Arrow.write(out_df, gemb::DataFrame)
 else
@@ -167,7 +172,7 @@ rain_hyps = DimArray(fill(NaN, ngeotile, ndate, length(height_center)), (geotile
     # bin data by date and elevation
     minmax_date = extrema(gemb0.datetime[var_ind])
     minmax_height = extrema(gemb0.height_ref[var_ind])
-    date_ind = (date_range .>= minmax_date[1]-Day(dd)) .& (date_range .<= (minmax_date[2]+Day(dd)))
+    date_ind = (date_range .>= minmax_date[1]-Day(Δd)) .& (date_range .<= (minmax_date[2]+Day(Δd)))
     date_ind_center = findall(date_ind)[1:end-1];
     height_ind = (height_range .>= minmax_height[1]-Δh) .& (height_range .<= (minmax_height[2]+Δh))
     height_ind_center = findall(height_ind)[1:end-1];
@@ -176,25 +181,28 @@ rain_hyps = DimArray(fill(NaN, ngeotile, ndate, length(height_center)), (geotile
         continue
     end
 
-    df = binstats(gemb0[var_ind, :], [:datetime, :height_ref], 
+    df = binstats(gemb0[var_ind, :], [:datetime, :height_ref],
         [date_range[date_ind], height_range[height_ind]], 
         [:fac, :smb, :ec, :acc, :runoff, :melt, :fac_to_depth, :refreeze, :t_air, :rain]; col_function=[binfun], missing_bins=true)
 
     gdf = DataFrames.groupby(df, :datetime)
 
     # create an array of dh as a function of time and elevation
-    fac = fill(NaN, sum(date_ind)-1, sum(height_ind)-1)
-    smb = fill(NaN, sum(date_ind) - 1, sum(height_ind) - 1)
-    ec = fill(NaN, sum(date_ind) - 1, sum(height_ind) - 1)
-    acc = fill(NaN, sum(date_ind) - 1, sum(height_ind) - 1)
-    runoff = fill(NaN, sum(date_ind) - 1, sum(height_ind) - 1)
-    melt = fill(NaN, sum(date_ind) - 1, sum(height_ind) - 1)
-    fac_to_depth = fill(NaN, sum(date_ind) - 1, sum(height_ind) - 1)
-    refreeze = fill(NaN, sum(date_ind) - 1, sum(height_ind) - 1)
-    t_air = fill(NaN, sum(date_ind) - 1, sum(height_ind) - 1)
-    rain = fill(NaN, sum(date_ind) - 1, sum(height_ind) - 1)
+    m = sum(date_ind) - 1;
+    n = sum(height_ind) - 1
 
-    nobs = fill(Int64(0), sum(date_ind)-1, sum(height_ind)-1)    
+    fac = fill(NaN, m, n)
+    smb = fill(NaN, m,n)
+    ec = fill(NaN, m,n)
+    acc = fill(NaN, m,n)
+    runoff = fill(NaN, m,n)
+    melt = fill(NaN, m,n)
+    fac_to_depth = fill(NaN, m,n)
+    refreeze = fill(NaN, m,n)
+    t_air = fill(NaN, m,n)
+    rain = fill(NaN, m,n)
+
+    nobs = fill(Int64(0), m, n)    
     p = sortperm(BinStatistics.bincenter.(gdf[1].height_ref))
 
     h_center = bincenter.(gdf[1].height_ref)[p];
@@ -231,16 +239,19 @@ rain_hyps = DimArray(fill(NaN, ngeotile, ndate, length(height_center)), (geotile
 
     # for troubleshooting 
     showplots && heatmap(h_center, t_center, fac, clim = (-10, 10))
+
+    scale_for_time = (Δd / Δtime_gemb)
+
     fac_hyps[At(geotile.id), date_ind_center, height_ind_center] = fac
-    smb_hyps[At(geotile.id), date_ind_center, height_ind_center] = smb
+    smb_hyps[At(geotile.id), date_ind_center, height_ind_center] = smb .* scale_for_time
     nobs_hyps[At(geotile.id), date_ind_center, height_ind_center] = nobs
-    ec_hyps[At(geotile.id), date_ind_center, height_ind_center] = ec
-    acc_hyps[At(geotile.id), date_ind_center, height_ind_center] = acc
-    runoff_hyps[At(geotile.id), date_ind_center, height_ind_center] = runoff
-    melt_hyps[At(geotile.id), date_ind_center, height_ind_center] = melt
-    refreeze_hyps[At(geotile.id), date_ind_center, height_ind_center] = refreeze
+    ec_hyps[At(geotile.id), date_ind_center, height_ind_center] = ec .* scale_for_time
+    acc_hyps[At(geotile.id), date_ind_center, height_ind_center] = acc .* scale_for_time
+    runoff_hyps[At(geotile.id), date_ind_center, height_ind_center] = runoff .* scale_for_time
+    melt_hyps[At(geotile.id), date_ind_center, height_ind_center] = melt .* scale_for_time
+    refreeze_hyps[At(geotile.id), date_ind_center, height_ind_center] = refreeze .* scale_for_time
     t_air_hyps[At(geotile.id), date_ind_center, height_ind_center] = t_air
-    rain_hyps[At(geotile.id), date_ind_center, height_ind_center] = rain
+    rain_hyps[At(geotile.id), date_ind_center, height_ind_center] = rain .* scale_for_time
     fac_to_depth_hyps[At(geotile.id), date_ind_center, height_ind_center] = fac_to_depth
 
     t2 = time()

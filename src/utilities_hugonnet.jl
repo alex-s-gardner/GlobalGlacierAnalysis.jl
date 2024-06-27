@@ -1,7 +1,7 @@
 function hstack_catalogue(hstack_parent_dir; update_catalogue = false)
     outfile = joinpath(hstack_parent_dir,"hstack_catalogue.arrow")
 
-    if update_catalogue
+    if !isfile(outfile) || update_catalogue
 
         # find files
         files = allfiles(hstack_parent_dir; subfolders=true, fn_endswith=".nc")
@@ -33,8 +33,12 @@ function hstack_catalogue(hstack_parent_dir; update_catalogue = false)
             hstacks[i, :y] = (y[1]:(y[2]-y[1]):(y[1]+(y[2]-y[1])*(length(y)-1))) .- 50
             ##----------------------------------------
 
-            t = Date(2000, 1, 1) .+ Day.(ncread(file, "time"))
-            hstacks[i, :time_range] = (minimum(t), maximum(t))
+            t = Date(1900, 1, 1) .+ Day.(ncread(file, "time"))
+            t_ext = extrema(t)
+            if any(t_ext .< Date(2000, 1, 1)) || any(t_ext .> Date(2025, 1, 1))
+                error("data is being read incorrectly")
+            end
+            hstacks[i, :time_range] = t_ext;
 
             hstacks[i, :nlayers] = length(t)
 
@@ -80,8 +84,7 @@ end
 
 function hstacks2geotile(geotile,hstacks)
     # find intersecting tiles
-    E = nt2extent(geotile.extent)
-    stacksind = findall(Extents.intersects.(hstacks.GeoExtent, Ref(E)))
+    stacksind = findall(Extents.intersects.(hstacks.GeoExtent, Ref(geotile.extent)))
 
     gt = DataFrame()
 
@@ -94,7 +97,7 @@ function hstacks2geotile(geotile,hstacks)
         proj2geo = Proj.Transformation(hstacks[sind, :ProjString].val, "EPSG:4326")
         lat_lon = proj2geo.(x, y)
 
-        isin = map(x -> within(E, x[2], x[1]), lat_lon)
+        isin = map(x -> within(geotile.extent, x[2], x[1]), lat_lon)
         
         if !any(isin)
             continue
@@ -112,12 +115,12 @@ function hstacks2geotile(geotile,hstacks)
                     dem_names = ncread(hstacks[sind, :path], "dem_names")::Vector{String}
                     corr = NetCDF.open(hstacks[sind, :path], "corr") do v v[ind, :]::Matrix{Int8} end
                 else
-                    t =  Date(2000, 1, 1) .+ Day.(ncread(hstacks[sind, :path], "time"))
+                    t =  Date(1900, 1, 1) .+ Day.(ncread(hstacks[sind, :path], "time"))
                     z = ncread(hstacks[sind, :path], "z")[ind, :]::Matrix{Float32}
                     ref_z = ncread(hstacks[sind, :path], "ref_z")[ind]::Vector{Float32}
                     uncert = ncread(hstacks[sind, :path], "uncert")::Vector{Float32}
                     dem_names = ncread(hstacks[sind, :path], "dem_names")::Vector{String}
-                    corr = ncread(hstacks[sind, :path], "corr")[ind, :]::Matrix{Int8}
+                    corr = ncread(hstacks[sind, :path], "corr")[ind, :]::Matrix{UInt8}
                 end
 
             end
@@ -164,7 +167,7 @@ function hstacks2geotile(geotile,hstacks)
         df1[!, :id] = fill(r.granule_info[1], n)
         df1[!, :height_reference] = r.height_reference
 
-        append!(f0, df1)
+        append!(df0, df1)
     end
 
     return df0

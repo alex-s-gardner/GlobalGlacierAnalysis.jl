@@ -5,6 +5,7 @@ using DataFrames
 using NCDatasets
 using Dates
 using GeoStats
+using Arrow
 
 # density of ice
 const di = 910; #kg m^3
@@ -174,7 +175,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
             vb = sum(valid0)
             df.nbins_filt1 = vb
 
-            # if there are not enough points to fit a model the set all to NaNs
+            # if there are not enough points to fit a model then set all to NaNs
             if vb <= (length(p1) + 2)
                 dh1[mission][At(geotile), :, :] .= NaN
                 nobs1[mission][At(geotile), :, :] .= 0
@@ -734,7 +735,12 @@ function hyps_offset2reference!(dv_reg, mission_reference)
     return offset, dv_reg
 end
 
-function hyps_fac_correction(fac, smb, nobs_gemb, dh1, geotiles, reg; mask = :glacier)
+
+
+
+
+
+function hyps_fac_correction_old(fac, smb, nobs_gemb, dh1, geotiles, reg; mask = :glacier)
     
     _, _, dheight = dims(smb)
     ddate = dims(dh1[first(keys(dh1))], :date)
@@ -875,16 +881,21 @@ end
 
 function hyps_scale_fac!(facv_reg, smbv_reg, dv_reg)
    
-    fac_scale = DimArray(fill(0., length(reg)), dims(facv_reg, :rgi))
+    fac_scale = fill(0., dims(facv_reg, :rgi))
 
     for rgi in dims(facv_reg, :rgi)
-        fac1 = sum(facv_reg[At(rgi), :, :], dims=2)
-        smb1 = sum(smbv_reg[At(rgi), :, :], dims=2)
+        fac1 = facv_reg[At(rgi), :]
+        smb1 = smbv_reg[At(rgi), :]
         geb_dv1 = (smb1 ./ (di/1000)) .+ fac1
         dv1 = dv_reg[At(mission_reference), At(rgi), :]
 
         # last valid date of gemb that was not interpolated
-        lastvalid = dims(facv_reg, :date)[findlast(any(.!isnan.(facv_reg), dims=(1, 3)))[2]]
+        if any(isnan.(facv_reg))
+            lastvalid = dims(facv_reg, :date)[findlast(any(.!isnan.(facv_reg), dims=(1, 2)))[2]]
+        else
+            lastvalid = last(dims(facv_reg, :date))
+        end
+
 
         # findoverlap
         valid1 = .!isnan.(fac1)
@@ -919,7 +930,7 @@ function hyps_mass_change(dv_reg, facv_reg)
     dm_reg = copy(dv_reg)
     for rgi in dims(dm_reg, :rgi)
 
-        dfac = sum(facv_reg[At(rgi), :, :], dims=2)
+        dfac = facv_reg[At(rgi), :]
             
         for mission in dims(dm_reg, :mission)
 
@@ -1425,7 +1436,7 @@ function read_ipccar6(;datadir=setpaths()[:ipcc_ar6], start2007=false)
     return foo
 end
 
-function geotile_binarea!(geotile, ras, feature, bin_edges; invert=false, excludefeature=missing)
+function geotile_binarea!(geotile, ras, feature, bin_edges; invert=false, excludefeature=nothing)
         
     t1 = time();
     ras0 = read(Rasters.crop(ras, to=geotile.extent));
@@ -1437,7 +1448,7 @@ function geotile_binarea!(geotile, ras, feature, bin_edges; invert=false, exclud
         mask0 = .!mask0
     end
 
-    if .!ismissing(excludefeature)
+    if .!isnothing(excludefeature)
         excludemask = Rasters.rasterize!(count, zeros(ras0.dims), excludefeature; threaded=false, shape=:polygon, progress=false, verbose=false) .> 0
         mask0 = mask0 .& .!excludemask
     end
@@ -1464,11 +1475,25 @@ function geotile_binarea!(geotile, ras, feature, bin_edges; invert=false, exclud
     return geotile
 end
 
+function geotiles_mask_hyps(surface_mask, geotile_width)
+
+    binned_folder = analysis_paths(; geotile_width).binned
+    gt_file = joinpath(binned_folder, "geotile_$(surface_mask)_hyps.arrow");
+    geotiles = DataFrame(Arrow.Table(gt_file));
+    geotiles.extent = Extent.(getindex.(geotiles.extent, 1));
+    geotiles = copy(geotiles);
+    return geotiles
+end
+
+
+
+
 function plot_dh(dh_reg, w; title = "", xlims=(DateTime(2000), DateTime(2024)))
     dmission = dims(dh_reg, :mission)
     dmetric = Dim{:metric}(["mean", "trend", "acceleration", "amplitude", "date_intercept"])
     fit_param = fill(NaN, (dmission, dmetric))
-
+    ddate = dims(dh_reg, :date)
+    decdate = Altim.decimalyear.(ddate)
     for mission in dmission
         dh0 = dh_reg[At(mission), :]
         valid = .!isnan.(dh0)
@@ -1516,19 +1541,52 @@ function landoffset!(dh1, geotiles, landfit)
 
     t = Altim.decimalyear.(lookup(dh1[first(keys(dh1))], :date))
     height = lookup(dh1[first(keys(dh1))], :height)
-    for rgi in dims(landfit, :rgi)
+    for rgi in lookup(landfit, :rgi)
         rgi_ind = findall(geotiles[:, rgi] .> 0)
 
         for mission in lookup(landfit, :mission)
-            t .- landfit[At(mission), At(rgi), At("date_intercept")]
-            land_dh = landfit[At(mission), At(rgi), At("mean")] .+ landfit[At(mission), At(rgi), At("trend")] .* t
-
+            t0 = t .- landfit[At(mission), At(rgi), At("date_intercept")]
+            land_dh = landfit[At(mission), At(rgi), At("mean")] ; #.+ landfit[At(mission), At(rgi), At("trend")] .* t0 .+ landfit[At(mission), At(rgi), At("acceleration")] .* t0.^2
             for i in rgi_ind
-                for k = eachindex(height)
+                for k in eachindex(height)
                     dh1[mission][i, :, k] .= dh1[mission][i, :, k] .- land_dh
                 end
             end
         end
     end
     return dh1
+end
+
+
+function binned_filepath(binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct)
+    if curvature_correct
+        runid = "$(surface_mask)_dh_$(dem_id)_cc_$(binning_method)_$(project_id)"
+    else
+        runid = "$(surface_mask)_dh_$(dem_id)_$(binning_method)_$(project_id)"
+    end
+
+    binned_file = joinpath(binned_folder, "$(runid).jld2");
+
+    return binned_file
+end
+
+function  binned_filled_filepath(binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
+
+    if curvature_correct
+        runid = "$(surface_mask)_dh_$(dem_id)_cc_$(binning_method)_$(project_id)"
+    else
+        runid = "$(surface_mask)_dh_$(dem_id)_$(binning_method)_$(project_id)"
+    end
+    
+    if amplitude_correct
+        binned_filled_file = joinpath(binned_folder, "$(runid)_filled_ac_p$(paramater_set).jld2")
+        out_id = replace(runid, "dh" => "dv")
+        figure_suffix = "$(out_id)_ac"
+    else
+        binned_filled_file = joinpath(binned_folder, "$(runid)_filled_p$(paramater_set).jld2")
+        figure_suffix = replace(runid, "dh" => "dv")
+    end
+
+    return binned_filled_file, figure_suffix
+    
 end

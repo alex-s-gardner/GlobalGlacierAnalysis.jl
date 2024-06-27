@@ -24,7 +24,7 @@ module Altim
     using NearestNeighbors
     using Stencils  
     using Infiltrator
-    #using Rasters
+    using Rasters
     using MAT
 
     #using Optimization
@@ -33,7 +33,6 @@ module Altim
     using MLJ
     using MLJLinearModels
     using LazyGrids
-    #using Rasters
     #using GeometryOps
     using LibGEOS
     using GeoInterface

@@ -1,7 +1,5 @@
 # add packages
 using Altim
-using Extents
-using GeoTiles
 
 # set paths
 force_remake = false
@@ -19,11 +17,11 @@ geotiles = geotiles[geotiles.landice_frac .> 0, :];
 
 # --------------------------------------------------------------------------
 #begin
-#@warn "--- only processing a subset of geotiles ----"
+@warn "--- only processing a subset of geotiles ----"
 #    region = :RGI02;
 #    ext, epsg = region_extent(region);
 #    geotiles = geotile_subset!(geotiles, ext);
-#    #products = (icesat=products.icesat, gedi=products.gedi)
+    products = (hugonnet=products.hugonnet, )
 #end
 # --------------------------------------------------------------------------
 

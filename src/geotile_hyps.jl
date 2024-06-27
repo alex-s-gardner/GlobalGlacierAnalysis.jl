@@ -9,7 +9,7 @@ begin
 
     geotile_width = 2;
     raster_file = :cop30_v2; #, :nasadem_v1, :rema_v2_10m, :arcticdem_v3_10m]
-    mask = :land; #
+    mask = :glacier_b10km #:land #
     subset = :glacier_frac
 
     runid = "geotile_$(mask)_hyps"
@@ -44,7 +44,8 @@ begin
         shp = Symbol("$(:glacier)_shp")
         fn_shp = Altim.pathlocal[shp]
         excludefeature = Shapefile.Handle(fn_shp)
-        excludemask_flag = true
+    else
+        excludefeature = nothing
     end
 end
 
