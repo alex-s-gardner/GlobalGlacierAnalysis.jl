@@ -39,19 +39,20 @@ begin
 
     showplots && (using Plots)
 
-    paramater_sets = [1,2,3,4]
+    paramater_sets = [1,2,3,4,5]
     dem_ids = [:best, :cop30_v2]
     binning_methods = ["median", "meanmadnorm3", "meanmadnorm5", "meanmadnorm10"];
     curvature_corrects = [true, false]
     surface_masks = [:glacier, :glacier_b1km, :land, :glacier_b10km]
     amplitude_corrects = [true, false]
 
-    if false
-        surface_masks = [:glacier, :glacier_b1km, :land, :glacier_b10km]
-        dem_ids = [:best]
-        binning_methods = ["meanmadnorm3"]
-        curvature_corrects = [true]
-        amplitude_corrects = [true]
+    if true
+        paramater_sets = [1, 2, 3, 4, 5,6]
+        dem_ids = [:best, :cop30_v2]
+        binning_methods = ["median", "meanmadnorm3", "meanmadnorm5", "meanmadnorm10"]
+        curvature_corrects = [true, false]
+        surface_masks = [:glacier, :land]
+        amplitude_corrects = [true, false]
     end
 
     model2::Function = model2(h, p) = p[1] .+ p[2] .* h .+ p[3] .* h .^ 2;
@@ -63,6 +64,9 @@ end
 
 
 for paramater_set in paramater_sets
+    #paramater_set = first(paramater_sets)
+    
+    ## DO NOT CHANGE THESE
     if paramater_set == 1
         param = (
             bincount_min=Dict("icesat" => 9,
@@ -106,18 +110,46 @@ for paramater_set in paramater_sets
 
     elseif paramater_set == 4
         param = (
-            bincount_min=Dict("icesat" => 5,
+            bincount_min=Dict("icesat" => 11,
+                "icesat2" => 11,
+                "gedi" => 11,
+                "hugonnet" => 11,
+            ), smooth_n=Dict("icesat" => 5,
                 "icesat2" => 5,
                 "gedi" => 5,
-                "hugonnet" => 5,
-            ), smooth_n=Dict("icesat" => 7,
-                "icesat2" => 7,
-                "gedi" => 7,
-                "hugonnet" => 7,
+                "hugonnet" => 11,
             ), smooth_h2t_length_scale=800, # 800 m = 1 year in distance for anomaly from variogram analysis =
-            model1_madnorm_max=5, # this is a sigma-equivelent threshold
+            model1_madnorm_max = +Inf, # this is a sigma-equivelent threshold
+        )
+
+    elseif paramater_set == 5
+        param = (
+            bincount_min=Dict("icesat" => 9,
+                "icesat2" => 9,
+                "gedi" => 9,
+                "hugonnet" => 21,
+            ), smooth_n=Dict("icesat" => 5,
+                "icesat2" => 5,
+                "gedi" => 5,
+                "hugonnet" => 11,
+            ), smooth_h2t_length_scale=800, # 800 m = 1 year in distance for anomaly from variogram analysis =
+            model1_madnorm_max = 15, # this is a sigma-equivelent threshold
+        )
+    elseif paramater_set == 6
+        param = (
+            bincount_min=Dict("icesat" => 9,
+                "icesat2" => 9,
+                "gedi" => 9,
+                "hugonnet" => 51,
+            ), smooth_n=Dict("icesat" => 5,
+                "icesat2" => 5,
+                "gedi" => 5,
+                "hugonnet" => 11,
+            ), smooth_h2t_length_scale=400, # 800 m = 1 year in distance for anomaly from variogram analysis =
+            model1_madnorm_max=15, # this is a sigma-equivelent threshold
         )
     end
+
 
     for surface_mask in surface_masks
         # ~5 min for filling and plotting per iteration, 1.5 hours for all permutations and combinations
@@ -197,7 +229,7 @@ for paramater_set in paramater_sets
                                         CairoMakie.hist!(collect(range_ratio[mission][valid]); title = mission,  bins=0:250:3000)
                                 end
 
-                                fname = joinpath(fig_folder, "variogram_range_ratio_$(figure_suffix)_p$(paramater_set).png")
+                                fname = joinpath(fig_folder, "$(figure_suffix)_variogram_range_ratio.png")
                                 save(fname, f)
                                 display(f)
                             end
@@ -300,7 +332,7 @@ for paramater_set in paramater_sets
                 title ="Randolph Glacier Inventory: Region $(rgi[4:end])"
                 f, fit_param[:,At(rgi),:] = plot_dh(dh_reg[:, At(rgi), :], (nobs_reg[:, At(rgi), :]); title, xlims=(DateTime(2000), DateTime(2024)))
 
-                fname = joinpath(fig_folder, "$(figure_suffix)_$(rgi)_p$(paramater_set).png")
+                fname = joinpath(fig_folder, "$(figure_suffix)_$(rgi).png")
                 save(fname, f)
                 showplots && display(f)
             end
@@ -482,20 +514,24 @@ for paramater_set in paramater_sets
 
     # compute volume and mass change for each region
     ## check if file exists and contains all binned_filled_files (need to load outfile to check this condition) 
-    for surface_mask in surface_masks[1:end]
+    for surface_mask in surface_masks
 
-        fName = "dvdm_reg_$(surface_mask)_$(project_id)_p$(paramater_set).jld2"
-        outfile = joinpath(binned_folder, fName)
+        #surface_mask = first(surface_masks)
 
+        dvdm_reg_file = dvdm_reg_filepath(binned_folder, surface_mask, project_id, paramater_set)
         compute_dvdm_reg = false
         
-        if isfile(outfile)
-            df = load(outfile,"df")
+        if isfile(dvdm_reg_file)
+            df = load(dvdm_reg_file,"df")
 
-            for binning_method = binning_methods
+            for binning_method in binning_methods
+                #binning_method = first(binning_methods)
                 for dem_id in dem_ids 
+                    #dem_id = first(dem_ids)
                     for curvature_correct in curvature_corrects
-                        for amplitude_correct = amplitude_corrects
+                        #curvature_correct = first(curvature_corrects)
+                        for amplitude_correct in amplitude_corrects
+                            #amplitude_correct = first(amplitude_corrects)
 
                             binned_filled_file, figure_suffix = binned_filled_filepath(binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
 
@@ -503,7 +539,7 @@ for paramater_set in paramater_sets
                                 continue
                             end
 
-                            if .!any((df.binning_method .== binning_method) .& (df.dem_id .== string(dem_id)) .& (df.curvature_correct .== curvature_correct) .& (df.amplitude_correct .==  amplitude_correct))
+                            if !any((df.binning_method .== binning_method) .& (df.dem_id .== dem_id) .& (df.curvature_correct .== curvature_correct) .& (df.amplitude_correct .==  amplitude_correct))
                                 compute_dvdm_reg = true;
                             end
                         end
@@ -519,7 +555,8 @@ for paramater_set in paramater_sets
             df = DataFrame()
             dm_reg_masked_all = []
             dv_reg_masked_all = []
-            nobs_reg_masked_all = []
+            facv_reg_masked_all = []
+            smbv_reg_masked_all = []
 
             geotiles = geotiles_mask_hyps(surface_mask, geotile_width)
 
@@ -603,6 +640,9 @@ for paramater_set in paramater_sets
                             for rgi in reg
                                 dm_reg[:, At(rgi), :] .-= dm_reg[At(ref_mission), At(rgi), ref_epoch]
                                 dv_reg[:, At(rgi), :] .-= dv_reg[At(ref_mission), At(rgi), ref_epoch]
+
+                                facv_reg0[:, At(rgi), :] .-= facv_reg0[At(ref_mission), At(rgi), ref_epoch]
+                                smbv_reg0[:, At(rgi), :] .-= smbv_reg0[At(ref_mission), At(rgi), ref_epoch]
                             end
                 
                             # exclude estimates if they have insuffient observations
@@ -706,13 +746,16 @@ for paramater_set in paramater_sets
                             dm_reg_masked_all = push!(dm_reg_masked_all, figure_suffix => dm_reg_masked)
                             dv_reg_masked_all = push!(dv_reg_masked_all, figure_suffix => dv_reg_masked)
                             nobs_reg_masked_all = push!(nobs_reg_masked_all, figure_suffix => nobs_reg_masked)
+
+                            facv_reg_masked_all = push!(facv_reg_masked_all, figure_suffix => facv_reg0)
+                            smbv_reg_masked_all = push!(smbv_reg_masked_all, figure_suffix => smbv_reg0)
                         end
                     end
                 end
             end
 
             # save output
-            save(outfile, Dict("dm" => Dict(dm_reg_masked_all...), "dv" => Dict(dv_reg_masked_all...), "nobs" => Dict(nobs_reg_masked_all...), "df" => df, "area" => area_reg));
+            save(dvdm_reg_file, Dict("dm" => Dict(dm_reg_masked_all...), "dv" => Dict(dv_reg_masked_all...), "facv" => Dict(facv_reg_masked_all...), "smbv" => Dict(smbv_reg_masked_all...), "nobs" => Dict(nobs_reg_masked_all...), "df" => df, "area" => area_reg))
         end
     end
 end

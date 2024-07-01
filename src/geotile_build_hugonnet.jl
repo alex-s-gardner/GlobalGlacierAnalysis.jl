@@ -23,14 +23,18 @@ if !isdir(paths.hugonnet.geotile)
 end
 
 # get hstack catalogue
-hstack_parent_dir = paths.hugonnet.raw_data
-
 hstacks = hstack_catalogue(paths.hugonnet.raw_data; update_catalogue=force_remake)
-    
+
+if contains(hstacks.path[1], "prefilt")
+    old_format = false
+else
+    old_format = true
+end
+
 # build geotiles
 begin
     printstyled("building Hugonnet geotiles\n"; color=:blue, bold=true)
     for geotile in eachrow(geotiles)
-        geotile_build_hugonnet(geotile, paths.hugonnet.geotile, hstacks; force_remake=force_remake)
+        geotile_build_hugonnet(geotile, paths.hugonnet.geotile, hstacks; force_remake, old_format)
     end
 end

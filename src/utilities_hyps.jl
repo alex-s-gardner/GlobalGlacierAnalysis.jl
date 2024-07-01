@@ -491,9 +491,11 @@ function plot_dvdm(
     ylabel = replace.(ylabel, "icesat2" => "ICESat-2")
     ylabel = replace.(ylabel, "gedi" => "GEDI")
 
+    if !dmdm_flag
     axbottom = Axis(gb[1, 1]; yticks=(1:4, lowercase.(ylabel)), yticklabelcolor = colors, 
         yminorgridvisible=true, yminorticks=IntervalsBetween(2), 
         yminorgridwidth=3, kwargs...)
+    end
 
     hideydecorations!(axbottom; grid=true, minorgrid=false, ticklabels=false)
 
@@ -577,20 +579,26 @@ amplitude:     $(abs(round(dv_fit.param[4], digits = 1))) Gt",
     )
     end
 
+    if dmdm_flag
+        plot()
+
+
     var0 = log.(nobs.data');
     var0[isinf.(var0)] .= NaN
 
     hm = CairoMakie.heatmap!(axbottom, decdate, 1:4, var0, colormap=Reverse(:magma),)
+    CairoMakie.Colorbar(f[6, 2], hm; label="log(count)"); #, vertical=false, bbox=axbottom.scene.px_area)
+    end
 
     rowgap!(ga, 1)
     rowgap!(gb, 1)
 
-    CairoMakie.Colorbar(f[6, 2], hm; label="log(count)"); #, vertical=false, bbox=axbottom.scene.px_area)
+   
 
     return f
 end
 
-function plot_dm_permutations(t, dm, title; colors=colorschemes[:tab20c], date_intercept=2012)
+function plot_dm_permutations(t, dm, title; colors=colorschemes[:tab20c], date_intercept=2012, fontsize=18)
     f = Figure(size=(1500, 500); fontsize);
     #title = "Randolph Glacier Inventory: Region $(rgi[4:end])"
     Label(f[0, :], text=title)
@@ -1580,13 +1588,23 @@ function  binned_filled_filepath(binned_folder, surface_mask, dem_id, binning_me
     
     if amplitude_correct
         binned_filled_file = joinpath(binned_folder, "$(runid)_filled_ac_p$(paramater_set).jld2")
-        out_id = replace(runid, "dh" => "dv")
-        figure_suffix = "$(out_id)_ac"
     else
         binned_filled_file = joinpath(binned_folder, "$(runid)_filled_p$(paramater_set).jld2")
-        figure_suffix = replace(runid, "dh" => "dv")
     end
+
+    figure_suffix = splitpath(binned_filled_file)
+    figure_suffix = replace(figure_suffix[end], "dh" => "dv")
 
     return binned_filled_file, figure_suffix
     
 end
+
+
+function dvdm_reg_filepath(binned_folder, surface_mask, project_id, paramater_set)
+    fName = "$(surface_mask)_dvdm_reg_$(project_id)_p$(paramater_set).jld2"
+    dvdm_reg_file = joinpath(binned_folder, fName)
+
+    return dvdm_reg_file
+end
+
+

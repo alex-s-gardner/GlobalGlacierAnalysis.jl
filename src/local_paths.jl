@@ -69,6 +69,7 @@ function setpaths()
             RGI_dissolved = "/mnt/devon-r2/data/GlacierOutlines/RGI2000-v7.0-C-global-fix",
             RGI_regions = "/mnt/devon-r2/data/GlacierOutlines/RGI2000-v7.0-regions",
             glacier_shp="/mnt/bylot-r3/data/vector_files/glacier_cl0cl1.shp",
+            glacier_rgi7_shp="/mnt/bylot-r3/data/vector_files/RGI2000-v7.0-C-01_global.shp",
             glacier_b1km_shp="/mnt/bylot-r3/data/vector_files/glacier_b1km.shp",
             glacier_b10km_shp="/mnt/bylot-r3/data/vector_files/glacier_b10km.shp",
             landice_shp="/mnt/bylot-r3/data/vector_files/land_ice.shp",

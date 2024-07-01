@@ -2,7 +2,7 @@
 
 julia_version = "1.10.3"
 manifest_format = "2.0"
-project_hash = "822222437989b8b84e94360ae73672200182fb38"
+project_hash = "b960f946f266a0c011ada825b5a2aa5be16fd178"
 
 [[deps.ARFFFiles]]
 deps = ["CategoricalArrays", "Dates", "Parsers", "Tables"]
@@ -857,6 +857,12 @@ repo-url = "https://github.com/alex-s-gardner/FastGeoProjections.jl"
 uuid = "981663e8-0c94-46dd-b2cf-efc8480900ec"
 version = "0.0.2"
 
+[[deps.FastRunningMedian]]
+deps = ["DataStructures"]
+git-tree-sha1 = "72109ef417ec83067efe92a59637eed1da1638f9"
+uuid = "3a47ddbd-112b-4cc1-b00e-3746ec434ee5"
+version = "0.3.0"
+
 [[deps.FieldMetadata]]
 git-tree-sha1 = "c279c6eab9767a3f62685e5276c850512e0a1afd"
 uuid = "bf96fef3-21d2-5d20-8afa-0e7d4c32a885"
@@ -1279,6 +1285,12 @@ deps = ["AxisArrays", "ImageAxes", "ImageBase", "ImageCore"]
 git-tree-sha1 = "355e2b974f2e3212a75dfb60519de21361ad3cb7"
 uuid = "bc367c6b-8a6b-528e-b4bd-a4b897500b49"
 version = "0.9.9"
+
+[[deps.ImageShow]]
+deps = ["Base64", "ColorSchemes", "FileIO", "ImageBase", "ImageCore", "OffsetArrays", "StackViews"]
+git-tree-sha1 = "3b5344bcdbdc11ad58f3b1956709b5b9345355de"
+uuid = "4e3cecfd-b093-5904-9786-8bbb286a6a31"
+version = "0.3.8"
 
 [[deps.Imath_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]

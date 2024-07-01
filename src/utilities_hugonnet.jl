@@ -82,7 +82,7 @@ function hstack_catalogue(hstack_parent_dir; update_catalogue = false)
     return hstacks
 end
 
-function hstacks2geotile(geotile,hstacks)
+function hstacks2geotile(geotile, hstacks; old_format=false)
     # find intersecting tiles
     stacksind = findall(Extents.intersects.(hstacks.GeoExtent, Ref(geotile.extent)))
 
@@ -107,7 +107,8 @@ function hstacks2geotile(geotile,hstacks)
 
             # build geotile [98% of all time is spent reading in data in this block]
             begin
-                if false
+                if old_format
+                    # old unfilered data 
                     t =  Date(2000, 1, 1) .+ Day.(ncread(hstacks[sind, :path], "time"))
                     z = NetCDF.open(hstacks[sind, :path], "z") do v v[ind, :]::Matrix{Float32} end
                     ref_z = NetCDF.open(hstacks[sind, :path], "ref_z") do v v[ind]::Vector{Float32} end
@@ -115,6 +116,7 @@ function hstacks2geotile(geotile,hstacks)
                     dem_names = ncread(hstacks[sind, :path], "dem_names")::Vector{String}
                     corr = NetCDF.open(hstacks[sind, :path], "corr") do v v[ind, :]::Matrix{Int8} end
                 else
+                    # new unfilered data 
                     t =  Date(1900, 1, 1) .+ Day.(ncread(hstacks[sind, :path], "time"))
                     z = ncread(hstacks[sind, :path], "z")[ind, :]::Matrix{Float32}
                     ref_z = ncread(hstacks[sind, :path], "ref_z")[ind]::Vector{Float32}
@@ -174,14 +176,14 @@ function hstacks2geotile(geotile,hstacks)
 end
 
 
- function geotile_build_hugonnet(geotile, geotile_dir, hstacks; force_remake=false)
+function geotile_build_hugonnet(geotile, geotile_dir, hstacks; force_remake=false, old_format=false)
 
     t1 = time()
     outfile = joinpath(geotile_dir, geotile[:id] * ".arrow")
 
     if !isfile(outfile) || force_remake
 
-        gt = hstacks2geotile(geotile, hstacks)
+        gt = hstacks2geotile(geotile, hstacks; old_format)
         t2 = time()
         if !isempty(gt)
             tmp = tempname(dirname(outfile))

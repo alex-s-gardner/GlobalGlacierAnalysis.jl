@@ -12,16 +12,18 @@ paths = project_paths(; project_id);
 products = project_products(; project_id);
 
 geotiles = Altim.geotiles_w_mask(geotile_width);
-geotiles = geotiles[geotiles.landice_frac .> 0, :];
+if domain == :landice
+    geotiles = geotiles[geotiles.landice_frac .> 0, :];
+end
 
 
 # --------------------------------------------------------------------------
 #begin
-@warn "--- only processing a subset of geotiles ----"
+# @warn "--- only processing a subset of geotiles ----"
 #    region = :RGI02;
 #    ext, epsg = region_extent(region);
 #    geotiles = geotile_subset!(geotiles, ext);
-    products = (hugonnet=products.hugonnet, )
+#    products = (hugonnet=products.hugonnet, )
 #end
 # --------------------------------------------------------------------------
 

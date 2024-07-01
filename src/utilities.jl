@@ -694,6 +694,7 @@ function pointextract(
     ga::GeoArray;
     nodatavalue=0.0,
     replace_nodatavalue_withnans=false,
+    convert_to_float=false,
     filter_kernel=nothing,
     derivative_kernel=nothing,
     interp::F=Constant()
@@ -817,11 +818,20 @@ function pointextract(
             # println("size of cropped array = $(size(ga0)), crop to extent = $(extent)")
 
             ###################################
+            if convert_to_float
+                if (eltype(ga0.A) <: Integer)
+                    f = ga0.f
+                    ga0 = GeoArray(Float32.(ga0.A))
+                    ga0.crs = ga.crs
+                    ga0.f = f
+                end
+            end
+
 
             if replace_nodatavalue_withnans
                 if (eltype(ga0.A) <: Integer)
                     f = ga0.f
-                    ga0 = GeoArray(Float64.(ga0.A))
+                    ga0 = GeoArray(Float32.(ga0.A))
                     ga0.crs = ga.crs
                     ga0.f = f
                 end
@@ -1501,16 +1511,16 @@ function dem_height(
             if deminfo.hight_datum == "wgs84"
                 wgs84_height = pointextract(lon, lat, "EPSG:4326", dem_ga;
                     nodatavalue=deminfo.nodatavalue, filter_kernel=k, interp=interp,
-                    replace_nodatavalue_withnans=false)
+                    replace_nodatavalue_withnans=false, convert_to_float=true)
             else
                 # convert from geoid to wgs84 height
                 geoid_height = pointextract(lon, lat, "EPSG:4326", dem_ga;
                     nodatavalue=deminfo.nodatavalue, filter_kernel=k, interp=interp,
-                    replace_nodatavalue_withnans=false)
+                    replace_nodatavalue_withnans=false, convert_to_float=true)
                 geoid_to_wgs84 = geoid(deminfo.hight_datum; folder=goids_folder)
                 geoid_to_wgs84 = pointextract(lon, lat, "EPSG:4326", geoid_to_wgs84;
                     nodatavalue=deminfo.nodatavalue, filter_kernel=k, interp=interp,
-                    replace_nodatavalue_withnans=false)
+                    replace_nodatavalue_withnans=false, convert_to_float=true)
                 wgs84_height = geoid_height .+ geoid_to_wgs84
 
             end
@@ -1553,17 +1563,17 @@ function dem_height(
                     wgs84_height_slope = pointextract(lon, lat, "EPSG:4326", dem_ga;
                     nodatavalue=deminfo.nodatavalue, filter_kernel=k,
                     derivative_kernel=derivative_kernel, replace_nodatavalue_withnans=false, 
-                    interp=interp)
+                    interp=interp, convert_to_float=true)
             else
                 # convert from geoid to wgs84 height
                 geoid_height = pointextract(lon, lat, "EPSG:4326", dem_ga;
                     nodatavalue=deminfo.nodatavalue, filter_kernel=k,
                     derivative_kernel=derivative_kernel, replace_nodatavalue_withnans=false, 
-                    interp=interp)
+                    interp=interp, convert_to_float=true)
 
                 geoid_to_wgs84 = geoid(deminfo.hight_datum; folder=goids_folder)
                 geoid_to_wgs84 = pointextract(lon, lat, "EPSG:4326", geoid_to_wgs84;
-                    nodatavalue=deminfo.nodatavalue, filter_kernel=k, interp=interp)
+                    nodatavalue=deminfo.nodatavalue, filter_kernel=k, interp=interp, convert_to_float=true)
 
                 geoid_height[1] = geoid_height[1] .+ geoid_to_wgs84
                 wgs84_height_slope = geoid_height
