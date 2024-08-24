@@ -1,12 +1,3 @@
-using LsqFit
-using Statistics
-using CSV
-using DataFrames
-using NCDatasets
-using Dates
-using GeoStats
-using Arrow
-
 # density of ice
 const di = 910; #kg m^3
 # Define model that will be fit to all data binned by hypsometry
@@ -43,7 +34,7 @@ const p3 = zeros(5)
 
 function geotiles_mutually_exclusive_rgi!(geotiles) 
     reg = names(geotiles);
-    reg = reg[contains.(reg, "rgi")];
+    reg = reg[startswith.(reg, "rgi")];
     rgi_id = replace.(reg, Ref("rgi" => ""));
     rgi_id = parse.(Int64, rgi_id);
 
@@ -83,8 +74,8 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
     for mission in keys(dh1)
 
         # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><>
-        #mission = "hugonnet"
         # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+        #mission = "hugonnet"
 
         # find valid range for entire mission so that all filled geotiles cover the same date range
         rrange, = Altim.validrange(vec(any(.!isnan.(dh1[mission]), dims=(1, 3))))
@@ -199,16 +190,15 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
                 geotable = georef(table, coord)
 
                 try
-                    vg1 = DirectionalVariogram((1.0, 0.0), geotable, :Z)
-                    f1 = fit(SphericalVariogram, vg1)
-                    vg2 = DirectionalVariogram((0.0, 1.0), geotable, :Z)
-                    f2 = fit(SphericalVariogram, vg2)
+                    vg1 = GeoStats.DirectionalVariogram((1.0, 0.0), geotable, :Z)
+                    f1 = GeoStats.fit(SphericalVariogram, vg1)
+                    vg2 = GeoStats.DirectionalVariogram((0.0, 1.0), geotable, :Z)
+                    f2 = GeoStats.fit(SphericalVariogram, vg2)
                     range_ratio[mission][At(geotile)] = round(Int, (f2.ball.radii ./ f1.ball.radii)[1])
                     println("elevation / height range: $(range_ratio[mission][At(geotile)])")
 
                 catch
                 end
-
 
                 continue
             end
@@ -224,7 +214,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
             if sum(valid0) < smooth_n[mission]
                 anom_smooth = zeros(length(dh0))
             else
-                # scale height distance relative to time (i.e. length-scale)
+                # scale height distance relative to time (i.e. length-scale) 
                 pts = hcat(t0[valid0], h0[valid0] / smooth_h2t_length_scale)'
                 kdtree = KDTree(pts)
                 (idxs, _) = knn(kdtree, pts, smooth_n[mission])
@@ -415,8 +405,9 @@ function hyps_fill_updown!(dh1, geotiles; mask = :glacier)
         # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 
         rrange, = Altim.validrange(vec(any(.!isnan.(dh1[mission]), dims=(1, 3))))
+        dgeotile = dims(dh1[mission], :geotile);
 
-        Threads.@threads for geotile in (dims(dh1[mission], :geotile))
+        Threads.@threads for geotile in dgeotile
 
             # fill with median of nearest neighbors if not data
             k = findfirst(geotiles.id .== geotile)
@@ -427,6 +418,7 @@ function hyps_fill_updown!(dh1, geotiles; mask = :glacier)
             else
                 crange, = Altim.validrange(valid)
             end
+            
             dh0 = @view dh1[mission][At(geotile), rrange, crange]
 
             # fill lowest hand highest elevations with first and last values
@@ -456,8 +448,10 @@ function plot_dvdm(
     colors = palette(:Set1_4, length(keys(dh1))),
     date_intercept = 2012,
     area = NaN,
+    area_average_flag=false,
     dmdm_flag=false,
-    δ_effective=""
+    δ_effective="",
+    δ_effective_timeseries = nothing,
     )
     
     f = Figure(backgroundcolor=RGBf(0.98, 0.98, 0.98), size=(1000, 700), fontsize=fontsize)
@@ -476,7 +470,11 @@ function plot_dvdm(
     decdate = Altim.decimalyear.(dims(dv, :date).val)
     kwargs = (; xminorgridvisible=true, xminorticks=IntervalsBetween(5))
     if dmdm_flag
-        ylabel="mass/volume anomaly [Gt]"
+        ylabel="mass anomaly [Gt]"
+    elseif area_average_flag
+        ylabel = "height anomaly [m w.e./ m]"
+        dv = deepcopy(dv) ./ area .* 1000
+        dm = deepcopy(dm) ./ area .* 1000
     else
         ylabel="mass/volume anomaly [Gt/km³]"
     end
@@ -491,13 +489,14 @@ function plot_dvdm(
     ylabel = replace.(ylabel, "icesat2" => "ICESat-2")
     ylabel = replace.(ylabel, "gedi" => "GEDI")
 
-    if !dmdm_flag
-    axbottom = Axis(gb[1, 1]; yticks=(1:4, lowercase.(ylabel)), yticklabelcolor = colors, 
-        yminorgridvisible=true, yminorticks=IntervalsBetween(2), 
-        yminorgridwidth=3, kwargs...)
+    if dmdm_flag
+        axbottom = Axis(gb[1, 1], ylabel="δ [kg m⁻³]")
+    else
+        axbottom = Axis(gb[1, 1]; yticks=(1:4, lowercase.(ylabel)), yticklabelcolor = colors, 
+            yminorgridvisible=true, yminorticks=IntervalsBetween(2), 
+            yminorgridwidth=3, kwargs...)
+        hideydecorations!(axbottom; grid=true, minorgrid=false, ticklabels=false)
     end
-
-    hideydecorations!(axbottom; grid=true, minorgrid=false, ticklabels=false)
 
     linkxaxes!(axmain, axbottom)
 
@@ -547,6 +546,11 @@ function plot_dvdm(
 trend:            $(round(dm_fit.param[2], digits = 1)) Gt yr⁻¹
 acceleration: $(round(dm_fit.param[3], digits = 1)) Gt yr⁻²
 amplitude:     $(abs(round(dm_fit.param[4], digits = 1))) Gt"
+    elseif area_average_flag
+        text = "trend:            $(round(dm_fit.param[2], digits = 2)) m w.e. yr⁻¹
+acceleration: $(round(dm_fit.param[3], digits = 2)) m w.e. yr⁻²
+amplitude:     $(abs(round(dm_fit.param[4], digits = 2))) m w.e.
+area:             $(round(Int64,area)) km²"
     else
         text = "trend:            $(round(dm_fit.param[2], digits = 1)) Gt yr⁻¹
 acceleration: $(round(dm_fit.param[3], digits = 1)) Gt yr⁻²
@@ -579,45 +583,89 @@ amplitude:     $(abs(round(dv_fit.param[4], digits = 1))) Gt",
     )
     end
 
-    if dmdm_flag
-        plot()
+    if !dmdm_flag
+        var0 = log.(nobs.data');
+        var0[isinf.(var0)] .= NaN
 
-
-    var0 = log.(nobs.data');
-    var0[isinf.(var0)] .= NaN
-
-    hm = CairoMakie.heatmap!(axbottom, decdate, 1:4, var0, colormap=Reverse(:magma),)
-    CairoMakie.Colorbar(f[6, 2], hm; label="log(count)"); #, vertical=false, bbox=axbottom.scene.px_area)
+        hm = CairoMakie.heatmap!(axbottom, decdate, 1:4, var0, colormap=Reverse(:magma),)
+        CairoMakie.Colorbar(f[6, 2], hm; label="log(count)"); #, vertical=false, bbox=axbottom.scene.px_area)
+    else
+      
+        hm = CairoMakie.plot!(axbottom, δ_effective_timeseries)
+        CairoMakie.ylims!(axbottom, (0, 2000))
+   
     end
 
     rowgap!(ga, 1)
     rowgap!(gb, 1)
 
-   
-
     return f
 end
 
-function plot_dm_permutations(t, dm, title; colors=colorschemes[:tab20c], date_intercept=2012, fontsize=18)
+function plot_dm_permutations(
+    t, 
+    dm, 
+    title; 
+    colors=ColorSchemes.colorschemes[:tab20c], 
+    date_intercept=2012, 
+    fontsize=18,
+    heightanomaly_flag = false
+    )
+    
     f = Figure(size=(1500, 500); fontsize);
     #title = "Randolph Glacier Inventory: Region $(rgi[4:end])"
     Label(f[0, :], text=title)
-    ax = Axis(f[1, 1:3], ylabel="mass anomaly Gt")
+
+    if heightanomaly_flag
+         ax = Axis(f[1, 1:3], ylabel="height anomaly [m]")
+    else
+        ax = Axis(f[1, 1:3], ylabel="mass anomaly [Gt]")
+    end
+
     l1 = []
     dm_fit = []
-    
+
+
+    if heightanomaly_flag
+        for row = eachrow(dm)
+            row.dm_gt = row.dm_gt ./ row.area_km2 * 1000
+        end
+    end
+
     for (i, r) in enumerate(eachrow(dm))
         dm0 = DimArray(r.dm_gt, Dim{:date}(Altim.decimalyear2datetime.(t)))
         _, dm_fit0 = region_fit(dm0, date_intercept)
+
         push!(dm_fit,dm_fit0)
         label = "bin = $(r.binning_method), dem = $(r.dem_id), curve = $(r.curvature_correct), amp = $(r.amplitude_correct)"
         l1 = lines!(ax, t, r.dm_gt; label, color = colors[i], linewidth=2)
     end
 
-    tr = round.(extrema([f.param[2] for f in dm_fit]), digits = 1)
-    acc = round.(extrema([f.param[3] for f in dm_fit]), digits = 2)
-    amp = round.(extrema([abs(f.param[4]) for f in dm_fit]), digits = 1)
+    if heightanomaly_flag
+        tr = round.(extrema([f.param[2] for f in dm_fit]), digits = 3)
+        acc = round.(extrema([f.param[3] for f in dm_fit]), digits = 3)
+        amp = round.(extrema([abs(f.param[4]) for f in dm_fit]), digits = 3)
+    else
+        tr = round.(extrema([f.param[2] for f in dm_fit]), digits = 1)
+        acc = round.(extrema([f.param[3] for f in dm_fit]), digits = 2)
+        amp = round.(extrema([abs(f.param[4]) for f in dm_fit]), digits = 1)
+    end
 
+    if heightanomaly_flag
+     text!(
+        0.60, 0.95,
+        text=
+"trend:            $(tr[1]) to $(tr[2]), m yr⁻¹
+acceleration: $(acc[1]) to $(acc[2]) m yr⁻²
+amplitude:     $(amp[1]) to $(amp[2]) m",
+        #font=:bold,
+        color=(:black, 0.5),
+        align=(:left, :top),
+        space=:relative,
+        fontsize=fontsize
+    )
+
+     else
      text!(
         0.60, 0.95,
         text=
@@ -629,7 +677,8 @@ amplitude:     $(amp[1]) to $(amp[2]) Gt",
         align=(:left, :top),
         space=:relative,
         fontsize=fontsize
-    )
+     )
+     end
 
     Legend(f[1, 4], ax, framevisible=false)
     return f
@@ -652,21 +701,30 @@ function region_fit(dm, date_intercept)
 end
 
 
-function hyps_volume_change(dh1, nobs1, geotiles; mask = :glacier)
-    (ngeotile, ndate, nheight) = size(dh1[first(keys(dh1))])
+function hyps_volume_change(
+    dh1, 
+    nobs1, 
+    geotiles; 
+    mask = :glacier
+    )
+
     missions = collect(keys(dh1))
-    nmissions = length(missions)
+  
     dmission = Dim{:mission}(missions)
+    ddate = dims(dh1[first(missions)], :date)
+    dgeotile = dims(dh1[first(missions)], :geotile)
     
-    dv = DimArray(fill(NaN, nmissions, ngeotile, ndate), (dmission, dims(dh1[first(missions)], :geotile), dims(dh1[first(missions)], :date)))
-    nobs = DimArray(fill(NaN, nmissions, ngeotile, ndate), (dmission, dims(dh1[first(missions)], :geotile), dims(dh1[first(missions)], :date)))
-                
-    var_area = reduce(hcat, geotiles[:, "$(mask)_area_km2"])'
-    var_area = permutedims(repeat(var_area, 1, 1, ndate), (1, 3, 2))
+    dv = fill(NaN, (dmission, dgeotile, ddate))
+    nobs = fill(0, (dmission, dgeotile, ddate))
+    ndate = length(ddate);
+
+    var_area = reduce(hcat, geotiles[:, "$(mask)_area_km2"])
+    var_area = permutedims(repeat(var_area, 1, 1, ndate), (2, 3, 1))
 
     # if there is no glacier ice then set dhdt to zero
     for mission in keys(dh1)
-        #mission = "icesat2"
+        #mission = first(keys(dh1))
+
         rrange, = Altim.validrange(vec(any(.!isnan.(dh1[mission]), dims=(1, 3))))
         area_mask = var_area .== 0
 
@@ -742,11 +800,6 @@ function hyps_offset2reference!(dv_reg, mission_reference)
 
     return offset, dv_reg
 end
-
-
-
-
-
 
 function hyps_fac_correction_old(fac, smb, nobs_gemb, dh1, geotiles, reg; mask = :glacier)
     
@@ -887,7 +940,7 @@ function hyps_fac_correction_old(fac, smb, nobs_gemb, dh1, geotiles, reg; mask =
     return facv_reg, smbv_reg
 end
 
-function hyps_scale_fac!(facv_reg, smbv_reg, dv_reg)
+function hyps_scale_fac!(facv_reg, smbv_reg, dv_reg; mission_reference)
    
     fac_scale = fill(0., dims(facv_reg, :rgi))
 
@@ -1172,7 +1225,7 @@ function plot_dm(
     dm;
     title=nothing,
     fontsize=18,
-    colors=colorschemes[:hawaii100],
+    colors=ColorSchemes.colorschemes[:hawaii100],
     scale_color = true,
     date_intercept=2012,
     date_alignall=(2000, 2005),
@@ -1347,7 +1400,7 @@ function read_grace_rgi(;datadir=setpaths()[:grace_rgi])
 end
 
 
-function plot_height_time(dh1; geotile, fig_suffix, fig_folder, figure_suffix, mask = :glacier)
+function plot_height_time(dh1; geotile, fig_suffix, fig_folder, figure_suffix, mask=:glacier, showplots=false)
     for mission in keys(dh1)
         height = dims(dh1[mission], :height)
         valid = geotile["$(mask)_area_km2"] .> 0
@@ -1357,25 +1410,24 @@ function plot_height_time(dh1; geotile, fig_suffix, fig_folder, figure_suffix, m
         rrange, = Altim.validrange(vec(any(.!isnan.(dh1[mission]), dims=(1, 3))))
 
         # i need to plot twice, once to get colorbar and once to align x-axis.. makie does not yet support catigorical axis.. but coming soon
-        color = cgrad(:balance, rev=true);
+        color = Plots.cgrad(:balance, rev=true);
         clim = (-10, 10)
 
         fname = joinpath(fig_folder, "height_time_colormap.png")
-        f = heatmap(rand(10, 10); clim, color, rightmargin=5Plots.mm)
+        f = Plots.heatmap(rand(10, 10); clim, color, rightmargin=5Plots.mm)
 
         savefig(f, fname)
-        display(f)
 
         for legend = [false]
-            f = plot(layout=grid(2, 1, heights=[0.8, 0.2]), link=:x, framestyle=:box, legend=legend)
+            f = Plots.plot(layout=grid(2, 1, heights=[0.8, 0.2]), link=:x, framestyle=:box, legend=legend)
 
-            heatmap!(dh1[mission][At(geotile.id), rrange, crange]; subplot=1, legend=false, framestyle=:box, clim, color)
-            xlabel!("")
-            ylabel!("")
+            Plots.heatmap!(dh1[mission][At(geotile.id), rrange, crange]; subplot=1, legend=false, framestyle=:box, clim, color)
+            Plots.xlabel!("")
+            Plots.ylabel!("")
 
-            bar!(val(height[crange]), geotile["$(mask)_area_km2"][crange], subplot=2, legend=false, framestyle=:box, link=:x)
-            ylabel!("area [km²]", subplot=2)
-            xlabel!("height [m]")
+            Plots.bar!(val(height[crange]), geotile["$(mask)_area_km2"][crange], subplot=2, legend=false, framestyle=:box, link=:x)
+            Plots.ylabel!("area [km²]", subplot=2)
+            Plots.xlabel!("height [m]")
 
             if legend
                 fname = joinpath(fig_folder, "$(figure_suffix)_$(mission)_$(geotile.id)_binned_$(fig_suffix)_colorbar.png")
@@ -1383,7 +1435,7 @@ function plot_height_time(dh1; geotile, fig_suffix, fig_folder, figure_suffix, m
                 fname = joinpath(fig_folder, "$(figure_suffix)_$(mission)_$(geotile.id)_binned_$(fig_suffix).png")
             end
             savefig(f, fname)
-            display(f)
+            showplots && display(f)
         end
     end
 end
@@ -1444,9 +1496,8 @@ function read_ipccar6(;datadir=setpaths()[:ipcc_ar6], start2007=false)
     return foo
 end
 
-function geotile_binarea!(geotile, ras, feature, bin_edges; invert=false, excludefeature=nothing)
-        
-    t1 = time();
+function geotile_binarea!(geotile, ras, feature, bin_edges; invert=false, excludefeature=nothing, var_name)
+    t1 = time()
     ras0 = read(Rasters.crop(ras, to=geotile.extent));
 
     # using rasterize is 15 times faster than reading its_live masks !!!!
@@ -1468,12 +1519,15 @@ function geotile_binarea!(geotile, ras, feature, bin_edges; invert=false, exclud
     a = abs.((1 ./ getindex.(d, 2) * (lat[2] .- lat[1])) .* (1 / d[1][1] * (lon[2] - lon[1])))
     area_m2 = repeat(a', outer = [length(lon), 1])
 
+
     feature_area_km2 = mask0 .* area_m2 / (1000 * 1000)
+    
+    foo = geotile[var_name]
 
-    foo = geotile[out_var_name]
+    df = DataFrame(ras = ras0[mask0], feature_area_km2 = feature_area_km2[mask0])
 
-    df = DataFrame(ras = ras0[:], feature_area_km2 = feature_area_km2[:])
-    dfbs = binstats(df, :ras, bin_edges, :feature_area_km2, col_function = sum, missing_bins = true)
+    dfbs = BinStatistics.binstats(df, :ras, bin_edges, :feature_area_km2, col_function = sum, missing_bins = true)
+
     valid = .!(ismissing.(dfbs.feature_area_km2_sum))
     foo[valid] .= dfbs.feature_area_km2_sum[valid]
 
@@ -1490,13 +1544,24 @@ function geotiles_mask_hyps(surface_mask, geotile_width)
     geotiles = DataFrame(Arrow.Table(gt_file));
     geotiles.extent = Extent.(getindex.(geotiles.extent, 1));
     geotiles = copy(geotiles);
+
+
+    # As of now I can not figure out how to restore geometry using GI.Polygon
+    df2 = Altim.project_geotiles(; geotile_width=geotile_width);
+    if !any(contains.(names(geotiles), "geometry"))
+        geotiles = innerjoin(geotiles, df2[!, [:id, :geometry]], on = [:id])
+    else
+        geotiles = innerjoin(geotiles[!, Not(:geometry)], df2[!, [:id, :geometry]], on=[:id])
+    end
+
+    # println(gt_file)
     return geotiles
 end
 
 
 
 
-function plot_dh(dh_reg, w; title = "", xlims=(DateTime(2000), DateTime(2024)))
+function plot_dh(dh_reg, w; title="", xlims=(DateTime(2000), DateTime(2024)), ylims=nothing)
     dmission = dims(dh_reg, :mission)
     dmetric = Dim{:metric}(["mean", "trend", "acceleration", "amplitude", "date_intercept"])
     fit_param = fill(NaN, (dmission, dmetric))
@@ -1529,19 +1594,20 @@ function plot_dh(dh_reg, w; title = "", xlims=(DateTime(2000), DateTime(2024)))
     end
 
     label = reverse(permutedims(label))
-    p = plot(
+    p = Plots.plot(
         dh_reg';
         linewidth=2,
         ylabel="height anomaly [m]",
         label,
-        legend=:outerright,
+        legend=:topright,
         margin=5Plots.mm,
         title,
         legendtitle="mission: mean trend acc amp",
-        xlims
+        xlims,
+        ylims
     )
 
-    plot!(size=(1200, 400))
+    Plots.plot!(size=(1000, 700))
     return p, fit_param
 end
 
@@ -1566,7 +1632,7 @@ function landoffset!(dh1, geotiles, landfit)
 end
 
 
-function binned_filepath(binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct)
+function binned_filepath(;binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct)
     if curvature_correct
         runid = "$(surface_mask)_dh_$(dem_id)_cc_$(binning_method)_$(project_id)"
     else
@@ -1578,7 +1644,7 @@ function binned_filepath(binned_folder, surface_mask, dem_id, binning_method, pr
     return binned_file
 end
 
-function  binned_filled_filepath(binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
+function binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
 
     if curvature_correct
         runid = "$(surface_mask)_dh_$(dem_id)_cc_$(binning_method)_$(project_id)"
@@ -1593,18 +1659,682 @@ function  binned_filled_filepath(binned_folder, surface_mask, dem_id, binning_me
     end
 
     figure_suffix = splitpath(binned_filled_file)
-    figure_suffix = replace(figure_suffix[end], "dh" => "dv")
+    figure_suffix = figure_suffix[end];
+    figure_suffix = replace(figure_suffix, ".jld2"=>"")
+    figure_suffix = replace(figure_suffix, "dh" => "dm")
 
-    return binned_filled_file, figure_suffix
+    return binned_filled_file, figure_suffix 
+end
+
+function binned_filled_fileparts(binned_filled_file)
+
+    # plit file name at "_"
+    param = split(binned_filled_file, "_")
+
+    p = 1
+    surface_mask = param[p]
+
+    # skip "dm" in file name
+    p += 1
+
+    if !(param[p] == "dh")
+        surface_mask = "$(surface_mask)_$(param[p])"
+        p += 1
+    end
+
+    p += 1
+
+    dem = param[p]
+
+    if dem == "cop30"
+        dem = "cop30_v2"
+        p += 1
+    end
+
+    p += 1
+    if param[p] == "cc"
+        curvature_correct = true
+        p += 1
+    else
+        curvature_correct = false
+    end
+
+    binning_method = param[p]
+
+    p += 1
+    project_id = param[p]
+
+    # skip "filled"
+    p += 2
+    if param[p] == "ac"
+        amplitude_correct = true
+        p += 1
+    else
+        amplitude_correct = false
+    end
+
+    fill_param = parse(Int16, param[p][2])
+
+    out = (; surface_mask, dem, curvature_correct, binning_method, project_id, amplitude_correct, fill_param)
+    return out
+end
+
+function facfit(; gemb, dh, geotiles, geotile_buffer=1, mission_ref_fac = "icesat2")
+
+    # make FAC cube
+    fac = copy(dh[mission_ref_fac])
+    fac[:] .= NaN
+    smb = copy(fac)
+
+    Threads.@threads for geotile in eachrow(geotiles)
+        #for geotile in eachrow(geotiles)
+        # geotile = eachrow(geotiles)[1000]
+        #geotile = eachrow(geotiles)[geotiles.id .== "lat[-68-66]lon[-066-064]"][1]
+
+        # println("$(gemb_surface_mask): $(geotile.id)")
+
+        #geotiles0 = geotiles.id[(geotiles.rgi1 .> 0) .& (geotiles.glacier_frac .> 0.3), :]
+        #geotile = first(geotiles0)
+
+        dh0 = dh[mission_ref_fac][At(geotile.id), :, :]
+        fac0 = fac[At(geotile.id), :, :]
+        smb0 = smb[At(geotile.id), :, :]
+
+        # round to the nearest day
+        tdh = round.(Altim.decimalyear.(lookup(dh0, :date)), digits=3)
+
+        valid = .!isnan.(dh0)
+        if !any(valid)
+            continue
+        end
+
+        trange_dh, hrang_dh = Altim.validrange(.!isnan.(dh0))
+        extrema_dh = extrema(tdh[trange_dh])
+
+        tg = round.(vec(gemb["datetime"]), digits=3)
+
+        _, trange_g = Altim.validrange(.!isnan.(gemb["fac"]))
+        extrema_g = extrema(tg[trange_g])
+
+        ext = (max(extrema_dh[1], extrema_g[1]), min(extrema_dh[2], extrema_g[2]))
+
+        trange_dh, = Altim.validrange((tdh .>= ext[1]) .& (tdh .<= ext[2]))
+        trange_g, = Altim.validrange((tg .>= ext[1]) .& (tg .<= ext[2]))
+        (length(trange_dh) != length(trange_g)) && error("gemb and dh do not have the same length")
+
+        dh_altim = dh0[trange_dh, hrang_dh]
+        dh_altim0 = copy(dh_altim)
+        tdh0 = vec(tdh[trange_dh] .- mean(tdh[trange_dh]))
+
+        # remove 3rd polynomal
+        for h in lookup(dh_altim, :height)
+            fit0 = Altim.curve_fit(model2, tdh0, dh_altim[:, At(h)], p2)
+            dh_altim0[:, At(h)] = fit0.resid
+        end
+
+        #in geotile
+        ext = GeoTiles.extent(geotile.id)
+
+        # buffer by 1 degree all arround
+        ext = Extents.buffer(ext, (X=geotile_buffer, Y=geotile_buffer))
+        in_geotile = findall(vec([Altim.within(ext, x, y) for (x, y) in zip(gemb["longitude"], gemb["latitude"])]))
+
+        dgembts = Dim{:gembts}(1:length(in_geotile))
+        dheight = dims(dh_altim, :height)
+        rmse = fill(NaN, (dgembts, dheight))
+
+        dh_gem = ((gemb["smb"][in_geotile, trange_g] .* (1 / 0.91)) .+ gemb["fac"][in_geotile, trange_g])'
+        dh_gem0 = copy(dh_gem)
+
+        for j in axes(dh_gem, 2)
+            fit0 = Altim.curve_fit(model2, tdh0, dh_gem[:, j], p2)
+            dh_gem0[:, j] = fit0.resid
+        end
+
+        for h in lookup(dh_altim, :height)
+            alt = dh_altim0[:, At(h)]
+            for j in axes(dh_gem0, 2)
+                # println("$r, $j, $h")
+                rmse[At(j), At(h)] = sqrt(mean((alt .- dh_gem0[:, j]) .^ 2))
+            end
+        end
+
+        # loop for each height range and find best run and repective elevation
+        gemb_best_fit = fill(0, (dheight))
+        rmse_best_fit = fill(0.0, (dheight))
+
+        for h in lookup(dh_altim, :height)
+            #h = first(lookup(dh_altim, :height))
+
+            fooX = rmse[:, At(h)]
+            validX = .!isnan.(fooX)
+
+            if !any(validX)
+                continue
+            end
+
+            mrmse = minimum(fooX[validX])
+            gemb_best_fit[At(h)] = in_geotile[findfirst(fooX .== mrmse)]
+            rmse_best_fit[At(h)] = mrmse
+
+            facX = gemb["fac"][gemb_best_fit[At(h)], :]
+            smbX = gemb["smb"][gemb_best_fit[At(h)], :]
+
+            # fac/smb and dh may have different length time dimensions due to using now() in defining the date dimension... this should be fixed but for now just take the overlapping range with both having the same start date.
+            fac0[:, At(h)] = facX[1:length(fac0[:, At(h)])]
+            smb0[:, At(h)] = facX[1:length(smb0[:, At(h)])]
+        end
+
+        fac[At(geotile.id), :, :] = fac0
+        smb[At(geotile.id), :, :] = smb0
+    end
+    return (fac, smb)
+end
+
+# create a large data frame with all regionfiles
+function regionfiles2dataframe(; 
+    binned_folders=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"),
+    surface_masks=[:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km],
+    dem_ids=[:best, :cop30_v2],
+    binning_methods = ["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"],
+    curvature_corrects = [true, false],
+    amplitude_corrects = [true, false],
+    paramater_sets = [1, 2],
+    geotile_width=2, project_id = :v01,
+)
+
+    df = DataFrame()
+    ddate = [];
+    for binned_folder in binned_folders
+
+        for paramater_set in paramater_sets
+        #paramater_set = first(paramater_sets)
+
+            # compute volume and mass change for each region
+            ## check if file exists and contains all binned_filled_files (need to load outfile to check this condition)
+            for surface_mask in surface_masks
+            #surface_mask = first(surface_masks)
+
+                for dem_id in dem_ids
+                    for binning_method in binning_methods
+                        for curvature_correct in curvature_corrects
+                            for amplitude_correct in amplitude_corrects
+
+                                # paths to files
+                                binned_filled_file, figure_suffix = Altim.binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
+                                dvdm_reg_file = replace(binned_filled_file, ".jld2" => "_reg.jld2")
+
+                                if !isfile(dvdm_reg_file)
+                                    continue
+                                else
+                                    println(dvdm_reg_file)
+                                end
+
+                                dm, dv, facv, smbv, nobs, area = FileIO.load(dvdm_reg_file, "dm", "dv", "facv", "smbv", "nobs", "area")
+
+                                if isempty(dm)
+                                    continue
+                                end
+
+                                ddate = dims(dm, :date)
+                                drgi = dims(dm, :rgi)
+                                dmission = dims(dm, :mission)
+
+                                data_parameters = Altim.binned_filled_fileparts(splitpath(dvdm_reg_file)[end])
+                                
+                                for rgi in drgi
+                                #rgi = first(drgi)
+
+                                    for mission in dmission
+                                    #mission = first(dmission)
+                                        append!(df, 
+                                            DataFrame(; rgi, mission, data_parameters..., binned_folder, surface_mask=string(surface_mask), area_km2=area[At(rgi)], dm_gt=[vec(dm[At(mission), At(rgi), :])], dv_km3=[vec(dv[At(mission), At(rgi), :])], nobs=[vec(nobs[At(mission), At(rgi), :])], fac_km3=[vec(facv[At(rgi), :])], smb_km3=[vec(smbv[At(rgi), :])])
+                                        )
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
     
+    # store date as metadata
+    DataFrames.metadata!(df, "date", collect(ddate))
+    
+    return df
 end
 
 
-function dvdm_reg_filepath(binned_folder, surface_mask, project_id, paramater_set)
-    fName = "$(surface_mask)_dvdm_reg_$(project_id)_p$(paramater_set).jld2"
-    dvdm_reg_file = joinpath(binned_folder, fName)
+function unique_col_elements(df; exclude_vector_of_vectors = true)
+    for (name, col) in zip(names(df),eachcol(df))
 
-    return dvdm_reg_file
+        u = unique(col);
+        if isa(u[1], Array)
+            println("$name: is an Array{Array{}}, results not shown")
+            continue
+        end
+        n = min(length(u), 10)
+        println("$name: $(unique(col)[1:n])")
+    end
+end
+
+function regional_dmass(
+    binned_filled_file, 
+    geotiles, 
+    reg; 
+    surface_mask = :glacier, 
+    fac_scale_apply = true, 
+    firn_mission_ref = :icesat2, 
+    landfit=nothing,
+    land_apply_landoffset = false,
+    land_fac_apply = false)
+
+    if !(isfile(binned_filled_file))
+        printstyled("binned file does not exist, skipping: $(binned_filled_file) \n"; color=:yellow)
+        out = nothing
+    else
+
+        dh1 = FileIO.load(binned_filled_file, "dh_hyps")
+        nobs1 = FileIO.load(binned_filled_file, "nobs_hyps")
+
+        gt = collect(dims(dh1[first(keys(dh1))], :geotile))
+        gt_ind = [findfirst(geotiles.id .== g0) for g0 in gt]
+        geotiles = geotiles[gt_ind, :]
+
+        drgi = Dim{:rgi}(reg)
+        area_reg = fill(0.0, drgi)
+        for rgi in reg
+            rgi_ind = geotiles[:, rgi] .> 0
+            area_reg[At(rgi)] = sum(sum(geotiles[rgi_ind, "$(surface_mask)_area_km2"]))
+        end
+
+        gemb_fit_file = splitpath(binned_filled_file)
+        gemb_fit_file = joinpath(gemb_fit_file[1:end-1]..., "gemb_" * gemb_fit_file[end])
+
+        fac = Dict(firn_mission_ref => FileIO.load(gemb_fit_file, "fac"))
+        fac[firn_mission_ref][isnan.(fac[firn_mission_ref])] .= 0
+
+        fac_nobs = deepcopy(fac)
+        fac_nobs[firn_mission_ref] .= 1
+
+        facv, nobsv = Altim.hyps_volume_change(fac, fac_nobs, geotiles; mask=surface_mask)
+        facv_reg = Altim.hyps_geotile_aggrigate(facv, geotiles, reg; fun=sum)
+
+        smb = Dict(firn_mission_ref => FileIO.load(gemb_fit_file, "smb"))
+        smb[firn_mission_ref][isnan.(smb[firn_mission_ref])] .= 0
+
+        smbv, nobsv = Altim.hyps_volume_change(smb, fac_nobs, geotiles; mask=surface_mask)
+        smbv_reg = Altim.hyps_geotile_aggrigate(smbv, geotiles, reg; fun=sum)
+
+        # subset to valid geotiles ("$(surface_mask)_area_km2" .> 0)
+        for k in keys(dh1)
+            dh1[k] = dh1[k][At(geotiles.id),:,:]
+            nobs1[k] = nobs1[k][At(geotiles.id),:,:]
+        end
+
+        # apply offset to dh
+        if (surface_mask == :land)
+            apply_landoffset = land_apply_landoffset
+            fac_apply = land_fac_apply
+        else
+            apply_landoffset = true;
+            fac_apply = true
+        end
+
+        if apply_landoffset
+            #!!!!!!!!!!!!!!!!!! THIS IS A HACK !!!!!!!!!!!!!!!!!!!!!
+            # remove only fixed GEDI trend of -.144 as determined from global analysis
+            landfit[At(["icesat", "icesat2", "hugonnet"]),:,:] .= 0
+            landfit[At(["gedi"]), :, :] .= -.144
+            #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+            dh1 = Altim.landoffset!(dh1, geotiles, landfit)
+        end
+
+        # calculate geotile volume change
+        dv, nobs2 = Altim.hyps_volume_change(dh1, nobs1, geotiles; mask=surface_mask)
+
+        dv_reg = Altim.hyps_geotile_aggrigate(dv, geotiles, reg; fun=sum)
+        nobs_reg = Altim.hyps_geotile_aggrigate(nobs2, geotiles, reg; fun=sum)
+
+        ## scale fac  
+        if fac_scale_apply
+            fac_scale0, facv_reg0, smbv_reg0 = Altim.hyps_scale_fac!(copy(facv_reg[At(firn_mission_ref), :, :]), copy(smbv_reg[At(firn_mission_ref), :, :]), dv_reg; mission_reference=firn_mission_ref)
+        else 
+            facv_reg0 = copy(facv_reg[At(firn_mission_ref),:,:])
+        end
+
+        if !fac_apply
+            facv_reg0[:] .= 0.
+        end
+
+        # calculate regional mass change 
+        dm_reg = Altim.hyps_mass_change(dv_reg, facv_reg0)
+
+        out = Dict("dm" => dm_reg, "dv" => dv_reg, "facv" => facv_reg0, "smbv" => smbv_reg0, "nobs" => nobs_reg, "area" => area_reg)
+    end
+    return out
 end
 
 
+function iterative_model2_fit(mid, low, high, decyear; iterations = 1000)
+
+    notnan = .!isnan.(low)
+    d = Normal()
+
+    n = sum(notnan)
+    x = decyear[notnan] .- mean(decyear[notnan])
+
+    sigma = high[notnan] .- low[notnan]
+    mid = mid[notnan]
+
+    foo_fit = zeros(iterations, 5)
+
+    for i = 1:iterations
+        y = (rand(d, n) .* sigma) .+ mid
+        foo_fit[i, :] = Altim.curve_fit(Altim.model3, x, y, Altim.p3).param
+    end
+
+    trend = mean(foo_fit[:, 2])
+    trend_err = std(foo_fit[:, 2])
+    acceleration = mean(foo_fit[:, 3])
+    acceleration_err = std(foo_fit[:, 3])
+    amplitude = mean(abs.(foo_fit[:, 4]))
+    amplitude_err = std(abs.(foo_fit[:, 4]))
+    return (;trend, trend_err, acceleration, acceleration_err , amplitude, amplitude_err)
+end
+
+
+function _sumvecofvec(r)
+    if length(r) == 1
+        out = r;
+    elseif typeof(r[1]) <: Array{}
+        out = [vec(sum(reduce(hcat, r), dims = 2))]
+    else
+        out = sum(r)
+    end
+end
+
+function _rssvecofvec(r)
+    if length(r) == 1
+        out = r
+    elseif typeof(r[1]) <: Array{}
+        out = [sqrt.(vec(sum(reduce(hcat, r).^2, dims=2)))]
+    else
+        out = sqrt((sum(r).^2))
+    end
+end
+
+
+function region_combine!(
+    df; 
+    # combine rgi13, rgi14, rgi15 into a single rgi30 (HMA)  region
+    region_col = "rgi",
+    region_combines = (("rgi13", "rgi14", "rgi15") => "hma", ),
+    combine_vars =  ["area_km2", "dm_gt", "dv_km3", "nobs", "fac_km3", "smb_km3"],
+    rss_vars = nothing,
+    missions = nothing,
+    )
+    
+    # run paramters that need to match to combine
+    param_vars = setdiff(names(df), reduce(vcat, (combine_vars, [region_col], rss_vars)))
+        
+    df1 = DataFrame()
+    n = nrow(df)
+
+    for region_combine in region_combines
+    #region_combine = first(region_combines)
+        
+        region_index = falses(n)
+        for rgi in region_combine[1]
+            region_index = (df.rgi .== rgi) .| region_index
+        end
+        
+        for r in unique(eachrow(df[:,param_vars]))
+        #r = first(unique(eachrow(df[:,param_vars])))
+
+            if !isnothing(missions)
+                if all(r.mission .!== missions)
+                    continue
+                end
+            end
+
+            run_index = isequal.(Ref(r), eachrow(df[:,param_vars]))
+            index = findall(region_index .& run_index)
+
+            new_row = hcat(DataFrame(r), DataFrames.combine(df[index, combine_vars], combine_vars .=> _sumvecofvec .=> combine_vars))
+            if !isnothing(rss_vars)
+                new_row = hcat(new_row, DataFrames.combine(df[index, rss_vars], rss_vars .=> _rssvecofvec .=> rss_vars))
+            end
+            new_row[!, region_col] .= region_combine[2]
+            df1 = append!(df1, new_row)
+        end
+    end
+    df = append!(df, df1)
+end
+
+function plot_regional_dvdm(df;
+    # featured_mission = "synthesis"
+    rgi="rgi17",
+    variable="dm",
+    featured_mission="gedi",
+    showmissions=true,
+)
+
+    missions = unique(df.mission)
+    dates = DataFrames.metadata(df, "date")
+    decyear = Altim.decimalyear.(dates)
+
+    # place featured_mission last for plotting 
+    missions = missions[missions.!=featured_mission]
+    missions = vcat(missions, featured_mission)
+
+    title = Altim.rgi2label[rgi]
+
+    index = findfirst((df.rgi .== rgi) .& (df.var .== variable))
+    ylabel = "$(Altim.units2label[df[index, "unit"]]) [$(df[index, "unit"])]"
+
+    # make plots
+    f = CairoMakie.Figure()
+    ax = CairoMakie.Axis(f[1, 1];
+        title,
+        xticks=WilkinsonTicks(5),
+        ylabel,
+    )
+    for mission in missions
+        index = (df.rgi .== rgi) .& (df.var .== variable) .& (df.mission .== mission)
+        if .!any(index)
+            continue
+        end
+        mid = df[index, :mid][1]
+        low = df[index, :low][1]
+        high = df[index, :high][1]
+        notnan = .!isnan.(mid)
+
+        if any(notnan)
+            if mission .== featured_mission
+                CairoMakie.band!(decyear[notnan], low[notnan], high[notnan]; color=(Makie.wong_colors()[1], 0.6))
+                CairoMakie.lines!(decyear[notnan], mid[notnan])
+            elseif showmissions
+                CairoMakie.band!(decyear[notnan], low[notnan], high[notnan]; color=(:lightgrey, 0.5))
+                CairoMakie.lines!(decyear[notnan], mid[notnan], color=(:black, 0.3))
+            end
+        end
+    end
+
+    return f
+end
+
+function plot_multiregion_dvdm(df;
+    variable="dm",
+    featured_mission="synthesis",
+    regions=reduce(vcat, (["rgi$i" for i in vcat(1:12, 16:19)], ["hma"])),
+    showlines=false,
+    showmissions=true,
+    fontsize=15,
+    cmap = :bluesreds
+    )
+
+    missions = unique(df.mission)
+    dates = DataFrames.metadata(df, "date")
+    decyear = Altim.decimalyear.(dates)
+
+    # place featured_mission last for plotting 
+    missions = missions[missions.!=featured_mission]
+    missions = vcat(missions, featured_mission)
+
+    # subset regions to include 
+    index = (df.var .== variable) .& (df.mission .== featured_mission)
+
+    reg_index = falses(size(index))
+    for region in regions
+        reg_index = reg_index .| (df.rgi .== region)
+    end
+    index = index .& reg_index
+
+    index0 = findfirst(index)
+    title = "Glacier $(Altim.units2label[df[index0, "unit"]])"
+
+    if (df[index0, "unit"] .== "m") || (df[index0, "unit"] .== "m w.e.")
+        delta_offset = -10
+    else
+        delta_offset = -50
+    end
+
+    dfX = df[index, :]
+
+    sort!(dfX, :trend; rev=true)
+
+    notnan = vec(any(.!isnan.(hcat(dfX.mid...)), dims=2))
+
+    # make plots
+    xtick_delta = 4
+    xticks = (floor(Int64, minimum(decyear[notnan]) ./ xtick_delta)*xtick_delta):xtick_delta:(ceil(Int64, maximum(decyear[notnan]) ./ xtick_delta)*xtick_delta)
+
+    xlims = (xticks.start, xticks.stop)
+
+    backgroundcolor=RGBf(0.98, 0.98, 0.98)
+    f = CairoMakie.Figure(;size=(500, 750), fontsize);
+
+    # initialize
+    n = nrow(dfX)
+    palette = (; color=Makie.resample_cmap(cmap, n))
+
+    y2ticks = zeros(n)
+    y2ticklabels = fill("", n)
+    y2ticklabelcolor = palette.color;
+    yticklabels = [Altim.rgi2label[r] for r in dfX.rgi]
+
+    ax1 = CairoMakie.Axis(f[1, 1];
+        #title,
+        palette,
+        xticks=WilkinsonTicks(5),
+        yticklabelrotation=0 / (360 / (2 * pi)),
+        ygridcolor=:black,
+        ygridwidth=0.5,
+        yticks=((1:n) / n, string.((1:n) / n)),
+        yticklabelcolor=y2ticklabelcolor,
+    )
+
+    CairoMakie.xlims!(ax1, xlims...)
+
+
+    ymin = Inf;
+    ymax = -Inf;
+
+    last = zeros(sum(notnan))
+    offset = zeros(n)
+
+    # plot error bounds first so all other lines are overlain
+    for (i, r) in enumerate(eachrow(dfX))
+        #i = 1; r = first(eachrow(dfX))
+        ctr = r.mid[notnan][1]
+        if i == 1
+            offset[i] = 0
+        else
+            offset[i] = -floor(max(maximum((r.mid[notnan] .- ctr) .- last), 0) / delta_offset) * delta_offset .+ delta_offset
+        end
+        
+        mid = r.mid[notnan] .+ offset[i] .- ctr
+        low = r.low[notnan] .+ offset[i] .- ctr
+        high = r.high[notnan] .+ offset[i] .- ctr
+
+        CairoMakie.band!(ax1, decyear[notnan], low, high; color=(:grey, 0.3))
+        
+        last = mid;
+        ymin = min(ymin, minimum(low))
+        ymax = max(ymax, maximum(high))
+    end
+
+    # plot lines over error bounds
+    for (i, r) in enumerate(eachrow(dfX))
+        o = offset[i] - r.mid[notnan][1]
+
+        if showmissions
+            for mission in missions
+                index = (df.var .== r.var) .& (df.mission .== mission) .& (df.rgi .== r.rgi)
+                if any(index)
+                    CairoMakie.lines!(ax1, decyear[notnan], df.mid[index][1][notnan] .+ o; color=(:black, 0.5))
+                end
+            end
+        end
+
+        y = r.mid[notnan]
+        ln = CairoMakie.lines!(ax1, decyear[notnan], y .+ o)
+
+        y2ticklabels[i] = string(round(Int64, (y[end] - y[1]))) * " $(df[index0, "unit"])"
+        y2ticks[i] = r.mid[notnan][end] .+ o
+        y2ticklabelcolor[i] = ln.color.val
+    end
+
+    CairoMakie.ylims!(ymin, ymax)
+    CairoMakie.reset_limits!(ax1) # this is needed to be able to retrive limits
+    minorgridspacing = -delta_offset / 5
+    ylim = round.(Int, ax1.yaxis.attributes.limits.val ./ minorgridspacing) .* minorgridspacing
+    yticks = offset
+
+    ax1.yticks = (yticks, yticklabels)
+    ax1.yticklabelcolor = y2ticklabelcolor;
+    ax1.ygridvisible = showlines
+
+
+    !showlines && CairoMakie.hidespines!(ax1, :t, :r)
+    #!showlines && CairoMakie.hidexdecorations!(ax1,)
+
+
+    ax2 = CairoMakie.Axis(f[1, 1];
+        yaxisposition=:right,
+        yticks=(y2ticks, y2ticklabels),
+        yticklabelcolor=y2ticklabelcolor,
+    )
+
+    foo = ax1.yaxis.attributes.limits.val
+    CairoMakie.ylims!(ax2, foo)
+
+    minorgridspacing = -(delta_offset / 5)
+
+    ax2.yminorticks = ylim[1]:minorgridspacing:ylim[2]
+
+    ax2.yminorticksvisible = false
+    ax2.yminorgridvisible = showlines
+    ax2.yticksvisible = true
+    ax2.ygridvisible = false
+    CairoMakie.hidespines!(ax2)
+    CairoMakie.hidexdecorations!(ax2)
+
+
+    xtickcolor = RGBf(0.85, 0.85, 0.85);
+    ax1.xaxisposition = :bottom
+    ax1.xgridvisible = true
+    ax1.xgridcolor = xtickcolor
+    ax1.xticklabelcolor = RGBf(0, 0, 0)
+    ax1.xticks = (Float64.(xticks), string.(xticks))
+    ax1.xtickcolor = RGBf(0, 0, 0)
+    ax1.xlabelcolor = xtickcolor
+    ax1.xlabelvisible = true
+    ax1.xticksvisible = true
+
+    return f
+end

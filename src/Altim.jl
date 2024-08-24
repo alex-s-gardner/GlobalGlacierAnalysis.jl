@@ -26,10 +26,23 @@ module Altim
     using Infiltrator
     using Rasters
     using MAT
-
+    using ScatteredInterpolation
+    using DimensionalData
+    using LsqFit
+    using CSV
+    using NCDatasets
+    using GeoStats
+    using Distances
+    using DataInterpolations
+    using ColorSchemes
+    using CairoMakie
+    using JLD2
+    using Distributions
+    
     #using Optimization
     #using LossFunctions
     #using OptimizationOptimJL
+
     using MLJ
     using MLJLinearModels
     using LazyGrids
@@ -38,6 +51,7 @@ module Altim
     using GeoInterface
     using Shapefile
     using FileIO
+    using Plots
     #using ProfileView
 
     #include("utilities.jl")
@@ -46,6 +60,8 @@ module Altim
     include("utilities_hugonnet.jl")
     include("utilities_gemb.jl")
     include("modelfit_tree_fast.jl")
+    include("utilities_hyps.jl")
+    include("utilities_geotile_processing.jl")
     #include("model_optimize.jl")
 
     export Extent

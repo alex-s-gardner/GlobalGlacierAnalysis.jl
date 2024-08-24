@@ -3294,8 +3294,8 @@ function offset_geo_fast(
 
     # compute h offset to h_reference
     dx, dy, dz, cnt, mad_offset, mad_ref = track_offset(
-        BinStatistics.bincenter.(df[:, :dhdx]),
-        BinStatistics.bincenter.(df[:, :dhdy]),
+        df[:, :dhdx],
+        df[:, :dhdy],
         df.dh_median;
         interations=interations,
         iter_thresh=iter_thresh,
@@ -3847,6 +3847,15 @@ function nanmean(x)
     mean(x[.!isnan.(x)])
 end
 
+function nanmedian(x)
+    valid = .!isnan.(x)
+    if any(valid)
+        y = median(x[valid])
+    else
+        y = NaN
+    end
+    return y
+end
 
 
 const MATLAB_EPOCH = Dates.DateTime(-1, 12, 31)
@@ -3993,3 +4002,72 @@ function highres_mask(latitude, longitude, feature; grid_resolution=0.00027)
 
     return mask
 end
+
+
+
+function nanquantile(itr, p;)
+    valid = .!isnan.(itr)
+    if any(valid)
+        q = quantile(itr[valid], p)
+    else
+        q = fill(NaN, size(p))
+    end
+end
+
+
+function mission2label(mission)
+    if mission == "hugonnet"
+        label = "ASTER"
+    elseif mission == "icesat"
+        label = "ICESat"
+    elseif mission == "icesat2"
+        label = "ICESat-2"
+    elseif mission == "gedi"
+        label = "GEDI"
+    elseif mission == "grace"
+        label = "GRACE/-FO"
+    else
+        label = mission
+    end
+    return label
+end
+
+rgi2label = Dict(
+    "rgi1" => "Alaska",
+    "rgi2" => "Western Canada",
+    "rgi3" => "Arctic Canada N.",
+    "rgi4" => "Arctic Canada S.",
+    "rgi5" => "Greenland",
+    "rgi6" => "Iceland",
+    "rgi7" => "Svalbard",
+    "rgi8" => "Scandinavia",
+    "rgi9" => "Russian Arctic",
+    "rgi10" => "North Asia",
+    "rgi11" => "Central Europe",
+    "rgi12" => "Caucasus",
+    "rgi13" => "Central Asia",
+    "rgi14" => "South Asia W.",
+    "rgi15" => "South Asia E.",
+    "rgi16" => "Low Latitudes",
+    "rgi17" => "Southern Andes",
+    "rgi18" => "New Zealand",
+    "rgi19" => "Antarctic",
+    "hma" => "High Mtn. Asia",
+    "global" => "Global",
+    "global_ep" => "Global [excluding periphery]",
+    "ghll" => "All Missions: rgi 2, 10, 11, 12, 13, 14, 15, 17, 18",
+    "hll" => "ASTER, ICESat/-2: rgi 1, 3, 4, 5, 6, 7, ,8, 9, 19",
+    "hll_ep" => "ASTER, ICESat/-2 no periphery: rgi 1, 3, 4, 6, 7, ,8, 9",
+)
+
+unit2areaavg = Dict(
+    "km⁻³"=>"m", 
+    "Gt"=>"m w.e."
+)
+
+units2label = Dict(
+    "m w.e." => "water equivlent height anomaly", 
+    "Gt" => "mass anomaly", 
+    "km⁻³" => "volume anomaly",  
+    "m" => "height anomaly"
+)
