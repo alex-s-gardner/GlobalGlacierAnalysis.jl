@@ -1019,7 +1019,7 @@ function geotile_regional_dvdm(;
     force_remake_masschange=false,
     )
 
-     # compute regional volume change, firn correction and mass change
+    # compute regional volume change, firn correction and mass change
     df_param = DataFrame()
     for binned_folder in binned_folders
         for paramater_set in paramater_sets
@@ -1138,6 +1138,7 @@ function geotile_dvdm_synthesize(;
     for surface_mask in surface_masks
         surface_valid = surface_valid .| (df.surface_mask .== surface_mask)
     end
+
     surface_valid_best = (df.surface_mask .== surface_mask_best)
 
     binning_valid = falses(n)
@@ -1179,10 +1180,9 @@ function geotile_dvdm_synthesize(;
     param_valid = surface_valid .& dem_valid .& curvature_valid .& amplitude_valid .& fill_valid .& folder_valid .& binning_valid
     param_valid_best = surface_valid_best .& dem_valid_best .& curvature_valid_best .& amplitude_valid_best .& fill_valid_best .& folder_valid_best .& binning_valid_best
 
-    # create an rgi glacier area data frame
-    x = df[(df.mission.=="icesat").&(df.surface_mask.=="glacier"), :]
+    # create an rgi surface_mask area data frame
+    x = df[((df.mission.=="icesat") .& surface_valid_best), :]
     idx = unique(z -> x.area_km2[z], 1:length(x.area_km2))
-
     df_area = DataFrame(rgi=x[idx, :rgi], area_km2=x[idx, :area_km2])
 
     # find index where each mission has valid data... choose rgi2 since all missions are valid there
@@ -1337,6 +1337,8 @@ function geotile_dvdm_synthesize(;
     quantiles = [0.95]
 
     df_mission = DataFrame()
+    DataFrames.metadata!(df_mission, "date", collect(dates); style=:note)
+
     for rgi in rgis
         #rgi = "rgi1"
 
@@ -1344,7 +1346,7 @@ function geotile_dvdm_synthesize(;
             #mission = "icesat"
 
             df1 = DataFrame()
-
+            DataFrames.metadata!(df1, "date", collect(dates); style=:note)
             valid = findall((df.rgi .== rgi) .& (mission_index[mission]) .& param_valid)
             valid_best = (df.rgi .== rgi) .& mission_index[mission] .& param_valid_best
 
@@ -1391,6 +1393,7 @@ function geotile_dvdm_synthesize(;
     # rearange df_mission from columns to rows 
     vars = ["dm_gt", "dv_km3", "fac_km3", "smb_km3"]
     df1 = DataFrame()
+    DataFrames.metadata!(df1, "date", collect(dates); style=:note)
 
     for var0 in vars
         for rgi in rgis
@@ -1402,7 +1405,7 @@ function geotile_dvdm_synthesize(;
                 mid = df_mission[index, var0]
                 high = df_mission[index, var0*"_high"]
 
-                area_km2 = df_area[df_area.rgi.==rgi, :area_km2]
+                area_km2 = df_area[df_area.rgi .== rgi, :area_km2]
                 nobs0 = deepcopy(df_mission[index, "nobs"])
 
                 if (var0 == "fac_km3") || (var0 == "smb_km3")
@@ -1415,14 +1418,12 @@ function geotile_dvdm_synthesize(;
     end
     df_mission = df1
 
-    # store date as metadata
-    metadata!(df_mission, "date", dates)
-
 
     ## synthesize observations (error weighted average)
     vars = ["dm_gt", "dv_km3", "fac_km3", "smb_km3"]
     df_synth = DataFrame()
-
+    DataFrames.metadata!(df_synth, "date", collect(dates); style=:note)
+    
     for var0 in vars
         #var0 = "dm_gt"
 
@@ -1489,6 +1490,7 @@ function geotile_dvdm_synthesize(;
 
     # combine mission and synthesis results
     df_dmass = vcat(df_mission, df_synth)
+    DataFrames.metadata!(df_dmass, "date", collect(dates); style=:note)
 
     # add units as column and remove from var name
     df_dmass[!, "unit"] .= ""
@@ -1502,7 +1504,6 @@ function geotile_dvdm_synthesize(;
         df_dmass[i, "var"] = split(r.var, "_")[1]
     end
 
-    metadata!(df_dmass, "date", dates)
     return df_dmass
 end
 
@@ -1607,7 +1608,7 @@ function geotile_dvdm_addgrace!(df_dmass)
 
         append!(df_dmass, DataFrame(; var=var0, rgi, mission, area_km2, mid, low, high, nobs=nobs0, unit))
     end
-    metadata!(df_dmass, "date", dates)
+
     return df_dmass
 end
 
@@ -1670,7 +1671,7 @@ function geotile_combine_synth_regions!(df_dmass)
     # global mean error = 267 Gt if RSS all 3 mission combined region errors (assumes no correlation between mission combined regions)
     # global mean error = 526 Gt if ADD all rgi region errors (assumes 100% correlation between regions)
     # global mean error = 352 Gt if ADD all 3 mission combined region errors (assumes 100% correlation between mission combined regions)
-    metadata!(df_dmass, "date", dates)
+
     return df_dmass
 end
 
@@ -1698,13 +1699,13 @@ function geotile_dvdm_add_trend!(df_dmass; iterations = 1000)
         r.amplitude = fit0.amplitude
         r.amplitude_err = fit0.amplitude_err
     end
-    metadata!(df_dmass, "date", dates)
+    return df_dmass
 end
 
 
 # convert from Gt/km3 to m.w.e/m
 function geotile_dvdm_areaaverage(df_dmass)
-    dates = DataFrames.metadata(df_dmass, "date")
+
     df_dheight = deepcopy(df_dmass)
     for (i, r) in enumerate(eachrow(df_dheight))
         for v in ["mid", "low", "high", "trend", "trend_err", "acceleration", "acceleration_err", "amplitude", "amplitude_err"]
@@ -1712,5 +1713,7 @@ function geotile_dvdm_areaaverage(df_dmass)
         end
         df_dheight[i, "unit"] = Altim.unit2areaavg[r.unit]
     end
-    metadata!(df_dmass, "date", dates)
+
+    return df_dheight
+
 end

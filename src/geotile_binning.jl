@@ -3,10 +3,14 @@
 
 #@time begin
 # load packages
-#using Altim
+using Altim
 
     project_id = :v01
     geotile_width = 2
+
+    force_remake_binning = false
+    force_remake_fill = false
+
 
     binned_folder_filtered = analysis_paths(; geotile_width).binned
     binned_folder_unfiltered = replace(binned_folder_filtered, "binned" => "binned_unfiltered")
@@ -15,12 +19,11 @@
     showplots = false
     
     # run parameters
-    force_remake_binning = false;
     update_geotile = false; # this will load in prevous results to update select geotiles or missions
     update_geotile_missions = ["icesat2"]
 
     # run parameters
-    all_permutations_for_glacier_only = true
+    all_permutations_for_glacier_only = false
     surface_masks = [:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km]
     binned_folders= (binned_folder_filtered, binned_folder_unfiltered)
     dem_ids = [:best, :cop30_v2]
@@ -36,10 +39,11 @@
     plot_dh_as_function_of_time_and_elevation = true;
     mission_reference_for_amplitude_normalization = "icesat2"
     
+
     # ------------------------------------------------------------------------------------------
-    if true
+    if false
         force_remake_binning = false
-        force_remake_fill = false
+        force_remake_fill = true
 
         update_geotile = true # this will load in prevous results to update select geotiles or missions [only if force_remake = true]
         update_geotile_missions = ["gedi"]
@@ -125,7 +129,7 @@ Altim.geotile_bin_fit_fac(;
         firn_mission_ref = "icesat2",
         project_id=:v01,
         geotile_width=2,
-        surface_masks=[:glacier, :glacier_rgi7, :glacier_b1km, :glacier_b10km],
+        surface_masks=[:glacier, :glacier_rgi7, :glacier_b1km, :glacier_b10km, :land],
         binned_folders=(binned_folder_filtered, binned_folder_unfiltered),
         dem_ids=[:best, :cop30_v2],
         binning_methods=["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"],
@@ -147,13 +151,23 @@ Altim.geotile_regional_dvdm(;
         curvature_corrects,
         paramater_sets=filling_paramater_sets,
         amplitude_corrects,
-        force_remake_masschange = true,
+        force_remake_masschange = false,
     )
 
 
-df = Altim.geotile_dvdm_synthesize(;
-        # best estimate ,
-        surface_mask_best = "glacier",
+synthesis = Dict()
+for  surface_mask_best in ["land", "glacier"]
+#surface_mask_best = "land"
+
+    if  surface_mask_best == "land"
+        surface_masks = ["land"]
+    else
+            surface_masks = ["glacier", "glacier_rgi7", "glacier_b1km"]
+    end
+
+    df = Altim.geotile_dvdm_synthesize(;
+        # best estimate 
+        surface_mask_best,
         dem_best = "best",
         curvature_correct_best = true,
         amplitude_correct_best = true,
@@ -162,10 +176,12 @@ df = Altim.geotile_dvdm_synthesize(;
         binned_folder_best = binned_folder_filtered,
 
         # to include in uncertainty
-        surface_masks = ["glacier", "glacier_rgi7", "glacier_b1km"],
+        surface_masks,
+      
         dems = ["best", "cop30_v2"],
         curvature_corrects = [false, true],
         amplitude_corrects = [true],
+
         binning_methods = ["median", "meanmadnorm5", "meanmadnorm3", "meanmadnorm10"],# ["median", "meanmadnorm10", "meanmadnorm5", "meanmadnorm3"]
         fill_params=filling_paramater_sets,
         binned_folders=(binned_folder_filtered, binned_folder_unfiltered),
@@ -190,11 +206,12 @@ df = Altim.geotile_dvdm_synthesize(;
 
     df = Altim.geotile_combine_synth_regions!(df)
 
-    df_dm = Altim.geotile_dvdm_add_trend!(df; iterations = 1000)
+    synthesis[surface_mask_best] = Dict()
+    synthesis[surface_mask_best]["dm"] = Altim.geotile_dvdm_add_trend!(df; iterations = 1000)
+    synthesis[surface_mask_best]["dh"] = Altim.geotile_dvdm_areaaverage(df)
+end
 
-    df_dh = Altim.geotile_dvdm_areaaverage(df)
-
-    fig = Altim.plot_regional_dvdm(df_dm;
+    fig = Altim.plot_regional_dvdm(synthesis["glacier"]["dm"];
         rgi="global_ep",
         variable="dm",
         featured_mission="synthesis",
@@ -202,8 +219,9 @@ df = Altim.geotile_dvdm_synthesize(;
         )
 
 
-Altim.plot_multiregion_dvdm(df_dm;
-    variable = "dm",
+    # plot mass change
+(f, regions, region_offsets, ylims) = Altim.plot_multiregion_dvdm(synthesis["glacier"]["dm"];
+    variable = "smb",
     featured_mission = "synthesis",
     regions = reduce(vcat, (["rgi$i" for i in vcat(1:12, 16:19)], ["hma"])),
     showlines = false,
@@ -211,5 +229,49 @@ Altim.plot_multiregion_dvdm(df_dm;
     fontsize = 15,
     cmap=:Dark2_4
     )
+display(f)
 
+
+# plot volume change
+(f, regions, offset) = Altim.plot_multiregion_dvdm(synthesis["glacier"]["dm"];
+    variable = "dv",
+    featured_mission = "synthesis",
+    regions,
+    showlines = false,
+    showmissions = false,
+    fontsize = 15,
+    cmap=:Dark2_4,
+    regions_ordered=true,
+    region_offsets,
+    ylims,
+    )
+display(f)
+
+
+# scale land mass and colume change to glaicer area
+df = deepcopy(synthesis["land"]["dm"])
+for r in eachrow(df)
+    index = findfirst(synthesis["glacier"]["dm"][:, :rgi] .== r.rgi)
+    scale_factor =  synthesis["glacier"]["dm"][:, "area_km2"][index] / r.area_km2
+
+    println(scale_factor)
+    r.mid = r.mid .* scale_factor
+    r.low = r.low .* scale_factor
+    r.high = r.high .* scale_factor
+end
+
+(f, regions, offset) = Altim.plot_multiregion_dvdm(df;
+    variable = "dv",
+    featured_mission = "synthesis",
+    regions,
+    showlines = false,
+    showmissions = false,
+    fontsize = 15,
+    cmap=:Dark2_4,
+    regions_ordered=true,
+    region_offsets,
+    ylims,
+    )
+
+display(f)
 end

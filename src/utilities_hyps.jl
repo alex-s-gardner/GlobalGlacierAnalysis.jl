@@ -1832,7 +1832,7 @@ function facfit(; gemb, dh, geotiles, geotile_buffer=1, mission_ref_fac = "icesa
 end
 
 # create a large data frame with all regionfiles
-function regionfiles2dataframe(; 
+function regionfiles2dataframe(;
     binned_folders=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"),
     surface_masks=[:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km],
     dem_ids=[:best, :cop30_v2],
@@ -1882,13 +1882,16 @@ function regionfiles2dataframe(;
 
                                 data_parameters = Altim.binned_filled_fileparts(splitpath(dvdm_reg_file)[end])
                                 
+                                filename = last(splitpath(dvdm_reg_file))
+     
+
                                 for rgi in drgi
                                 #rgi = first(drgi)
 
                                     for mission in dmission
                                     #mission = first(dmission)
                                         append!(df, 
-                                            DataFrame(; rgi, mission, data_parameters..., binned_folder, surface_mask=string(surface_mask), area_km2=area[At(rgi)], dm_gt=[vec(dm[At(mission), At(rgi), :])], dv_km3=[vec(dv[At(mission), At(rgi), :])], nobs=[vec(nobs[At(mission), At(rgi), :])], fac_km3=[vec(facv[At(rgi), :])], smb_km3=[vec(smbv[At(rgi), :])])
+                                            DataFrame(; rgi, mission, data_parameters..., binned_folder, filename, surface_mask=string(surface_mask), area_km2=area[At(rgi)], dm_gt=[vec(dm[At(mission), At(rgi), :])], dv_km3=[vec(dv[At(mission), At(rgi), :])], nobs=[vec(nobs[At(mission), At(rgi), :])], fac_km3=[vec(facv[At(rgi), :])], smb_km3=[vec(smbv[At(rgi), :])])
                                         )
                                     end
                                 end
@@ -1901,8 +1904,8 @@ function regionfiles2dataframe(;
     end
     
     # store date as metadata
-    DataFrames.metadata!(df, "date", collect(ddate))
     
+    DataFrames.metadata!(df, "date", collect(ddate); style=:note)
     return df
 end
 
@@ -1945,6 +1948,7 @@ function regional_dmass(
 
         drgi = Dim{:rgi}(reg)
         area_reg = fill(0.0, drgi)
+
         for rgi in reg
             rgi_ind = geotiles[:, rgi] .> 0
             area_reg[At(rgi)] = sum(sum(geotiles[rgi_ind, "$(surface_mask)_area_km2"]))
@@ -2174,7 +2178,10 @@ function plot_multiregion_dvdm(df;
     showlines=false,
     showmissions=true,
     fontsize=15,
-    cmap = :bluesreds
+    cmap=:Dark2_4,
+    regions_ordered=false,
+    region_offsets=nothing,
+    ylims = nothing,
     )
 
     missions = unique(df.mission)
@@ -2195,7 +2202,7 @@ function plot_multiregion_dvdm(df;
     index = index .& reg_index
 
     index0 = findfirst(index)
-    title = "Glacier $(Altim.units2label[df[index0, "unit"]])"
+    # title = "Glacier $(Altim.units2label[df[index0, "unit"]])"
 
     if (df[index0, "unit"] .== "m") || (df[index0, "unit"] .== "m w.e.")
         delta_offset = -10
@@ -2204,10 +2211,22 @@ function plot_multiregion_dvdm(df;
     end
 
     dfX = df[index, :]
-
-    sort!(dfX, :trend; rev=true)
-
     notnan = vec(any(.!isnan.(hcat(dfX.mid...)), dims=2))
+
+    #total mass change
+    dfX[!, "total_change"] .= 0.
+    for r in eachrow(dfX)
+        foo = r.mid[notnan]
+        r.total_change = foo[end] - foo[1]
+    end
+
+    if !regions_ordered
+        sort!(dfX, :total_change; rev=true)
+    else
+        # order same as input regions
+        p = findfirst.(isequal.(regions), (dfX.rgi,))
+        dfX = dfX[p,:];
+    end
 
     # make plots
     xtick_delta = 4
@@ -2215,7 +2234,7 @@ function plot_multiregion_dvdm(df;
 
     xlims = (xticks.start, xticks.stop)
 
-    backgroundcolor=RGBf(0.98, 0.98, 0.98)
+    # backgroundcolor=RGBf(0.98, 0.98, 0.98)
     f = CairoMakie.Figure(;size=(500, 750), fontsize);
 
     # initialize
@@ -2240,26 +2259,32 @@ function plot_multiregion_dvdm(df;
 
     CairoMakie.xlims!(ax1, xlims...)
 
-
     ymin = Inf;
     ymax = -Inf;
 
     last = zeros(sum(notnan))
-    offset = zeros(n)
+
+    if !isnothing(region_offsets)
+        dfX[!, :offset] = region_offsets
+    else
+        dfX[!,:offset] .= 0.
+    end
 
     # plot error bounds first so all other lines are overlain
-    for (i, r) in enumerate(eachrow(dfX))
-        #i = 1; r = first(eachrow(dfX))
+    first_iter = true;
+    for r in eachrow(dfX)
+        #r = first(eachrow(dfX))
+        display(r)
         ctr = r.mid[notnan][1]
-        if i == 1
-            offset[i] = 0
+        if first_iter || !isnothing(region_offsets)
+            first_iter = false
         else
-            offset[i] = -floor(max(maximum((r.mid[notnan] .- ctr) .- last), 0) / delta_offset) * delta_offset .+ delta_offset
+            r.offset = -floor(max(maximum((r.mid[notnan] .- ctr) .- last), 0) / delta_offset) * delta_offset .+ delta_offset
         end
         
-        mid = r.mid[notnan] .+ offset[i] .- ctr
-        low = r.low[notnan] .+ offset[i] .- ctr
-        high = r.high[notnan] .+ offset[i] .- ctr
+        mid = r.mid[notnan] .+ r.offset .- ctr
+        low = r.low[notnan] .+ r.offset .- ctr
+        high = r.high[notnan] .+ r.offset .- ctr
 
         CairoMakie.band!(ax1, decyear[notnan], low, high; color=(:grey, 0.3))
         
@@ -2270,7 +2295,7 @@ function plot_multiregion_dvdm(df;
 
     # plot lines over error bounds
     for (i, r) in enumerate(eachrow(dfX))
-        o = offset[i] - r.mid[notnan][1]
+        o = r.offset - r.mid[notnan][1]
 
         if showmissions
             for mission in missions
@@ -2289,20 +2314,22 @@ function plot_multiregion_dvdm(df;
         y2ticklabelcolor[i] = ln.color.val
     end
 
-    CairoMakie.ylims!(ymin, ymax)
+    if isnothing(ylims)
+        ylims = [ymin, ymax]
+    end
+
+    CairoMakie.ylims!(minimum(ylims), maximum(ylims))
+    
     CairoMakie.reset_limits!(ax1) # this is needed to be able to retrive limits
     minorgridspacing = -delta_offset / 5
     ylim = round.(Int, ax1.yaxis.attributes.limits.val ./ minorgridspacing) .* minorgridspacing
-    yticks = offset
+    yticks = dfX.offset
 
     ax1.yticks = (yticks, yticklabels)
     ax1.yticklabelcolor = y2ticklabelcolor;
     ax1.ygridvisible = showlines
 
-
-    !showlines && CairoMakie.hidespines!(ax1, :t, :r)
     #!showlines && CairoMakie.hidexdecorations!(ax1,)
-
 
     ax2 = CairoMakie.Axis(f[1, 1];
         yaxisposition=:right,
@@ -2317,24 +2344,26 @@ function plot_multiregion_dvdm(df;
 
     ax2.yminorticks = ylim[1]:minorgridspacing:ylim[2]
 
+    !showlines && CairoMakie.hidespines!(ax1, :t,:r,:l)
+    CairoMakie.hidespines!(ax2)
     ax2.yminorticksvisible = false
     ax2.yminorgridvisible = showlines
-    ax2.yticksvisible = true
+    ax2.yticksvisible = false
     ax2.ygridvisible = false
-    CairoMakie.hidespines!(ax2)
-    CairoMakie.hidexdecorations!(ax2)
 
+    CairoMakie.hidexdecorations!(ax2)
 
     xtickcolor = RGBf(0.85, 0.85, 0.85);
     ax1.xaxisposition = :bottom
     ax1.xgridvisible = true
     ax1.xgridcolor = xtickcolor
-    ax1.xticklabelcolor = RGBf(0, 0, 0)
+    ax1.xticklabelcolor = xtickcolor ./ 2
     ax1.xticks = (Float64.(xticks), string.(xticks))
-    ax1.xtickcolor = RGBf(0, 0, 0)
-    ax1.xlabelcolor = xtickcolor
+    ax1.xtickcolor = xtickcolor
     ax1.xlabelvisible = true
+    ax1.yticksvisible = false
     ax1.xticksvisible = true
+    ax1.bottomspinecolor = xtickcolor;
 
-    return f
+    return f, dfX[:,:rgi], dfX[:,:offset], ylims
 end
