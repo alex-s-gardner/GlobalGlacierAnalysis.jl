@@ -323,7 +323,7 @@ function geotile_download_granules!(
             if threads
                 asyncmap(granules; ntasks = 10) do g
                     flag = 0
-                    while flag == 0
+                    (while) flag == 0
                         try
                             download!(g, savedir)
                             flag = 1

@@ -38,29 +38,28 @@ module Altim
     using CairoMakie
     using JLD2
     using Distributions
-    
-    #using Optimization
-    #using LossFunctions
-    #using OptimizationOptimJL
+    using Images
+    using FlexiJoins
 
     using MLJ
     using MLJLinearModels
     using LazyGrids
-    #using GeometryOps
+
     using LibGEOS
     using GeoInterface
     using Shapefile
     using FileIO
     using Plots
-    #using ProfileView
 
     #include("utilities.jl")
     include("utilities.jl")
+    include("mapzonal.jl")
     include("utilities_project.jl")
     include("utilities_hugonnet.jl")
     include("utilities_gemb.jl")
     include("modelfit_tree_fast.jl")
     include("utilities_hyps.jl")
+    include("utilities_plot.jl")
     include("utilities_geotile_processing.jl")
     #include("model_optimize.jl")
 

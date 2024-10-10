@@ -140,6 +140,10 @@ function hstacks2geotile(geotile, hstacks; old_format=false)
                 gt0[!, :height] .= [f(z[:, i], .!isnan.(z[:, i])) for i = 1:nrow(gt0)]
                 gt0[!, :latitude] .= [f(latitude, .!isnan.(z[:, i])) for i = 1:nrow(gt0)]
                 gt0[!, :longitude] .= [f(longitude, .!isnan.(z[:, i])) for i = 1:nrow(gt0)]
+
+                @warn(" hugonnet quality flag currently excludes all ArcticDEM data")
+                # isaster .= getindex.(altim.id, 1) .== 'A'
+                # isarcticdem .= getindex.(altim.id, 1) .== 'S'
                 gt0[!, :quality] .= [f(corr[:, i] .>= 70, .!isnan.(z[:, i])) for i = 1:nrow(gt0)]
                 gt0[!, :height_error] .= uncert
                 gt0[!, :height_reference] .= [f(ref_z[:], .!isnan.(z[:, i])) for i = 1:nrow(gt0)]

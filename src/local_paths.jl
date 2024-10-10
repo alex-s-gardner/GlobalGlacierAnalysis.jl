@@ -76,8 +76,9 @@ function setpaths()
             landice_b1km_shp="/mnt/bylot-r3/data/vector_files/land_ice_b1km.shp",
             landice_b10km_shp="/mnt/bylot-r3/data/vector_files/land_ice_b10km.shp",
             floating_shp="/mnt/bylot-r3/data/vector_files/floating_ice.shp",
+            not_ocean_shp="/mnt/bylot-r3/data/vector_files/not_ocean.shp", # GGSHHS_f_L1 +  scripps_antarctica_grounded
             rgi6_regions_shp="/mnt/bylot-r3/data/vector_files/00_rgi60_O1Regions_fix.shp",
-            water_shp="/mnt/bylot-r3/data/vector_files/GSHHS_f_L2.shp", #ocean + lakes
+            water_shp="/mnt/bylot-r3/data/vector_files/GSHHS_f_L2.shp", #GSHHG lakes
 
             # grace timeseries data for validation [created in MATLAB using jplMasconTS.m]
             grace_rgi = "/mnt/bylot-r3/data/GRACE/dM_grace_rgi.mat",

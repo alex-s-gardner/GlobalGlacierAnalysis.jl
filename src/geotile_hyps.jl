@@ -19,9 +19,9 @@ for mask in masks
     binned_folder = analysis_paths(; geotile_width).binned
     out_file = joinpath(binned_folder, "$(runid).arrow");
 
-    dbin = 100.;
-    bin_centers = dbin/2:dbin:10000-dbin/2;
-    bin_edges = 0:dbin:10000;
+    height_range, height_center = Altim.project_height_bins()
+    Δh = abs(height_center[2] - height_center[1])
+
     excludemask_flag = false
 
     var_name = Symbol("$(mask)_area_km2")
@@ -40,7 +40,7 @@ for mask in masks
     fn_shp = Altim.pathlocal[shp];
     feature = Shapefile.Handle(fn_shp);
 
-    geotiles[!, var_name] = [zeros(size(bin_centers)) for r in 1:nrow(geotiles)];
+    geotiles[!, var_name] = [zeros(size(height_centers)) for r in 1:nrow(geotiles)];
     mask_frac = Symbol("$(mask)_frac")
 
     if mask == :land
@@ -53,7 +53,7 @@ for mask in masks
 
     dfr = eachrow(geotiles)
     Threads.@threads for geotile in dfr[geotiles[:,subset].> 0]
-        geotile_binarea!(geotile, ras, feature, bin_edges; invert, excludefeature, var_name)
+        geotile_binarea!(geotile, ras, feature, height_range; invert, excludefeature, var_name)
     end
     Arrow.write(out_file, geotiles::DataFrame)
 end

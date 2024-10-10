@@ -3,7 +3,6 @@ include("local_paths.jl")
 global pathlocal = setpaths()
 const world = Extent(X=(-180, 180), Y=(-90, 90))
 
-
 struct EpsgPoints
     x::Vector{<:Real}
     y::Vector{<:Real}
@@ -1292,10 +1291,12 @@ function utm_epsg(lon::Real, lat::Real; always_xy=true)
         # NSIDC Sea Ice Polar Stereographic North
         epsg = 3413
         epsg = "EPSG:$epsg"
+        return epsg
     elseif lat < -80
         # Antarctic Polar Stereographic
         epsg = 3031
         epsg = "EPSG:$epsg"
+        return epsg
     end
 
     # make sure lon is from -180 to 180
@@ -3746,9 +3747,9 @@ Finds the enclosing range (start and end indices) of `true` elements along each 
 
 **Examples:**
 
-```julia
 julia> A = [false true true false; false true false false; false false false false]
 julia> validrange(A)
+```julia
 (1:2, 2:3)
 ```
 """
@@ -3877,8 +3878,10 @@ function add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder)
     if dem_id == :best
         # last dem takes precidence over earlier dems
         dem_id0 = [:cop30_v2, :arcticdem_v4_10m, :rema_v2_10m]
-    else
+    elseif any([:cop30_v2, :arcticdem_v4_10m, :rema_v2_10m] .== dem_id)
         dem_id0 = [dem_id]
+    else
+        error("unreconized dem_id: $dem_id")
     end
 
     altim[!, :height_ref] .= NaN
@@ -3903,7 +3906,7 @@ function add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder)
 end
 
 
-function highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, surface_mask)
+function highres_mask(geotile, feature, invert, excludefeature)
     # update mask with high-resolution vector files
     grid_resolution = 0.00027 # ~30m
 
@@ -3929,6 +3932,22 @@ function highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, 
         mask1 = mask1 .& .!excludemask
     end
 
+    # calculate area per cell
+    lon = lookup(mask1, X)
+    lat = lookup(mask1, Y)
+    d = Altim.meters2lonlat_distance.(Ref(1), lat)
+    a = abs.((1 ./ getindex.(d, 2) * (lat[2] .- lat[1])) .* (1 / d[1][1] * (lon[2] - lon[1])))
+    area_m2 = repeat(a', outer=[length(lon), 1])
+
+    return (mask1, area_m2)
+end
+
+
+function highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, surface_mask)
+    
+    
+    (mask1, _) = highres_mask(geotile, feature, invert, excludefeature)
+    
     valid = Altim.within.(Ref(geotile.extent), altim.longitude, altim.latitude)
     masks0[!, surface_mask] .= false
 
@@ -4004,6 +4023,15 @@ function highres_mask(latitude, longitude, feature; grid_resolution=0.00027)
 end
 
 
+# remove all rows that contian only nans
+function remove_allnan(df, column)
+    allnan = falses(nrow(df))
+    for (i, r) in enumerate(eachrow(df))
+        allnan[i] = all(isnan.(r[column])) || isempty(r[column])
+    end
+    df = df[.!allnan,:]
+end
+
 
 function nanquantile(itr, p;)
     valid = .!isnan.(itr)
@@ -4015,22 +4043,15 @@ function nanquantile(itr, p;)
 end
 
 
-function mission2label(mission)
-    if mission == "hugonnet"
-        label = "ASTER"
-    elseif mission == "icesat"
-        label = "ICESat"
-    elseif mission == "icesat2"
-        label = "ICESat-2"
-    elseif mission == "gedi"
-        label = "GEDI"
-    elseif mission == "grace"
-        label = "GRACE/-FO"
-    else
-        label = mission
-    end
-    return label
-end
+mission2label = Dict( 
+    "hugonnet" => "ASTER",
+    "icesat" => "ICESat",
+    "icesat2" => "ICESat-2",
+    "gedi" => "GEDI",
+    "grace" => "GRACE/-FO",
+    "synthesis" => "Synthesis",
+    "gemb" => "GEMB Model",
+)
 
 rgi2label = Dict(
     "rgi1" => "Alaska",
@@ -4071,3 +4092,46 @@ units2label = Dict(
     "km⁻³" => "volume anomaly",  
     "m" => "height anomaly"
 )
+
+
+var2label = Dict(
+    "dm" => "Mass Anomaly",
+    "dv" => "Volume Anomaly",
+    "fac" => "Firn Air Content Anomaly",
+    "smb" => "Total Surface Mass Balance",
+    "acc" => "Total Accumulation",
+    "runoff" => "Total Runoff",
+    "refreeze" => "Total Refreeze",
+)
+
+"""
+ntpermutations(nt)
+
+given a named tuple [nt] return all a vector of named tuples of all permutiations of nt values, retaining original names
+
+Inputs:
+  - nt: a named tuple of iterables
+Output:
+  - vector of named tuples with all permutations of input named tuple of iterables
+
+  **Examples:**
+
+julia> nt_in = (; category = [1, 3, 4], letter = ["a", "b", "c"], score = [1.1, 4.0], thing = ["hat", "cat"])
+julia> nt = ntpermutations(nt_in)
+```julia
+36-element Vector{NamedTuple}:
+ (catagory = 1, letter = "a", score = 1.1, thing = "hat")
+ ⋮
+ (catagory = 4, letter = "c", score = 4.0, thing = "cat")
+```
+"""
+ntpermutations(nt_in) = [NamedTuple{keys(nt_in)}(reverse(t)) for t in Iterators.product(reverse(nt_in)...)] |> vec
+
+
+
+function extent2rectangle(extent)
+    xbounds = extent[1]
+    ybounds = extent[2]
+    rectangle = GeoInterface.Wrappers.Polygon([[(xbounds[1], ybounds[1]), (xbounds[1], ybounds[2]), (xbounds[2], ybounds[2]), (xbounds[2], ybounds[1]), (xbounds[1], ybounds[1])]])
+    return rectangle
+end
