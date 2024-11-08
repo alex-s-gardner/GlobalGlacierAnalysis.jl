@@ -607,6 +607,7 @@ function getpoints(granule; extent=nothing, replace_corrupt_h5 = false)
                 end
                 (savedir, _) = splitdir(granule.url);
                 try
+                    # this might be breaking with https://github.com/evetion/SpaceLiDAR.jl/pull/79#issuecomment-2406022071
                     granule = search(SpaceLiDAR.mission(granule), granule.info.type; version=granule.info.version, id=granule.id)[1]
                     download!(granule, savedir)
                     pts = SpaceLiDAR.points(granule; bbox=extent)

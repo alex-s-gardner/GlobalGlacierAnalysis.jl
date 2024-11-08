@@ -1571,7 +1571,7 @@ function geotiles_mask_hyps(surface_mask, geotile_width)
 
     # As of now I can not figure out how to restore geometry using GI.Polygon
     df2 = Altim.project_geotiles(; geotile_width);
-    if !any(contains.(names(geotiles), "geometry"))
+    if !any(Base.contains.(names(geotiles), "geometry"))
         geotiles = innerjoin(geotiles, df2[!, [:id, :geometry]], on = [:id])
     else
         geotiles = innerjoin(geotiles[!, Not(:geometry)], df2[!, [:id, :geometry]], on=[:id])
@@ -2376,15 +2376,15 @@ end
 
 function glacier_discharge(; datadir=Altim.pathlocal[:data_dir])
     # Kochtitzky NH discharge and terminus retreate 
-    nh_discharge = joinpath(datadir, "GlacierOutlines/GlacierDischage/Kochtitzky2022/41467_2022_33231_MOESM4_ESM.csv")
+    nh_discharge = joinpath(datadir, "GlacierOutlines/GlacierDischarge/Kochtitzky2022/41467_2022_33231_MOESM4_ESM.csv")
     nothern_hemisphere = CSV.read(nh_discharge, DataFrame; header=14, skipto=16)
 
     fn =  joinpath(datadir, "GlacierOutlines/rgi60/17_rgi60_SouthernAndes/17_rgi60_SouthernAndes.shp")
     df = DataFrame(Shapefile.Table(fn))
 
-    fn =  joinpath(datadir, "GlacierOutlines/GlacierDischage/Fuerst2023/fuerst_2023_npi_comparison_ice_discharge_v1.0.0.txt")
+    fn =  joinpath(datadir, "GlacierOutlines/GlacierDischarge/Fuerst2023/fuerst_2023_npi_comparison_ice_discharge_v1.0.0.txt")
     patagonia = CSV.read(fn, DataFrame; header=25, skipto=27)
-    fn =  joinpath(datadir, "GlacierOutlines/GlacierDischage/Fuerst2023/fuerst_2023_spi_comparison_ice_discharge_v1.0.0.txt")
+    fn =  joinpath(datadir, "GlacierOutlines/GlacierDischarge/Fuerst2023/fuerst_2023_spi_comparison_ice_discharge_v1.0.0.txt")
     patagonia = vcat(patagonia, CSV.read(fn, DataFrame; header=25, skipto=27))
 
     # find matching glaciers in RGI 
@@ -2418,6 +2418,27 @@ function glacier_discharge(; datadir=Altim.pathlocal[:data_dir])
     return df
 end
 
+
+# set dischage to smb
+function discharge2smb(glaciers; discharge2smb_max_latitude=-60, discharge2smb_equilibrium_period=(Date(1979), Date(2000)))
+    index_discharge2smb = glaciers.CenLat .< discharge2smb_max_latitude
+
+    discharge0 = DataFrame(latitude=glaciers[index_discharge2smb, :CenLat], longitude=glaciers[index_discharge2smb, :CenLon], discharge_gtyr=NaN, discharge_err_gtyr=NaN, frontal_ablation_gtyr=NaN)
+
+    ddate = dims(glaciers[1, :smb], :date)
+    decyear = Altim.decimalyear.(ddate)
+    Δdecyear = decyear .- decyear[1]
+    index_date = (ddate .>= discharge2smb_equilibrium_period[1]) .& (ddate .<= discharge2smb_equilibrium_period[2])
+
+    for (i, glacier) in enumerate(eachrow(glaciers[index_discharge2smb, :]))
+        y = glacier.smb[index_date]
+        fit = curve_fit(Altim.offset_trend, Δdecyear[index_date], y .- mean(y), Altim.offset_trend_p)
+        discharge0[i, :discharge_gtyr] = fit.param[2] .* sum(glacier.area_km2) / 1000
+    end
+    return discharge0
+end
+
+
 function dh2dv(dh, geotiles)
     dv = fill(NaN, dims(dh[:, :, 1]))
     index_date = vec(any(.!isnan.(dh[1, :, :]), dims=:height))
@@ -2438,22 +2459,19 @@ end
 
 
 # find optimal fit to gemb data
-function gemb_bestfit(dv_altim, dv_gemb, dischage, geotiles; dischage2smb_max_latitude=-60, dischage2smb_equilibrium_period=(Date(1979), Date(2000)))
+function gemb_bestfit(dv_altim, smb, fac, discharge, geotiles)
 
     ddate = dims(dv_altim, :date)
 
-    dΔheight = dims(dv_gemb["smb"], :Δheight)
-    dpscale = dims(dv_gemb["smb"], :pscale)
-    ddate_gemb = dims(dv_gemb["smb"], :date)
+    dΔheight = dims(smb, :Δheight)
+    dpscale = dims(smb, :pscale)
+    ddate_gemb = dims(smb, :date)
 
-
-    decyear = Altim.decimalyear.(ddate_gemb)
-    Δdecyear = decyear .- mean(decyear)
 
     volume2mass = Altim.δice / 1000
 
     # find common overlap 
-    index = .!isnan.(dv_gemb["smb"][1, :, 1, 1])
+    index = .!isnan.(smb[1, :, 1, 1])
     ex_gemb = extrema(ddate_gemb[index])
     index = .!isnan.(dv_altim[1,:])
     ex_dv = extrema(ddate[vec(index)])
@@ -2461,31 +2479,27 @@ function gemb_bestfit(dv_altim, dv_gemb, dischage, geotiles; dischage2smb_max_la
     index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
     index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
 
-    # 
-    index_dischage2smb = (ddate_gemb .>= dischage2smb_equilibrium_period[1]) .& (ddate_gemb .<= dischage2smb_equilibrium_period[2]) .& (.!isnan.(dv_gemb["smb"][1, :, 1, 1]))
+    decyear = Altim.decimalyear.(ddate_gemb[index_gemb])
+    Δdecyear = decyear .- mean(decyear)
 
     # loop for each geotile
     geotiles = copy(geotiles)
     geotiles[!, :pscale] .= 1.;
     geotiles[!, :Δheight] .= 0.;
     geotiles[!, :mad] .= 0.;
-    geotiles[!, :dischage_km3yr] .= 0.;
+    geotiles[!, :discharge_km3yr] .= 0.;
 
     #Threads.@threads 
     for geotile in eachrow(geotiles)
     #geotile = eachrow(geotiles)[findfirst(geotiles.id .== "lat[+82+84]lon[-034-032]")]
 
-        # total dischage D in Gt/yr converted to km3/yr
-        index = Altim.within.(Ref(geotile.extent), dischage.longitude, dischage.latitude)
+        # total discharge D in Gt/yr converted to km3/yr
+        index = Altim.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
         
         if any(index)
-            geotile.dischage_km3yr = sum(dischage[index,:discharge_gtyr]) ./ volume2mass
-        elseif max(geotile.extent[2]...) < dischage2smb_max_latitude
-            y = dv_gemb["smb"][At(geotile.id), index_dischage2smb, At(1), At(0)];
-            fit = curve_fit(Altim.offset_trend, Δdecyear[index_dischage2smb], y .- mean(y), Altim.offset_trend_p)
-            geotile.dischage_km3yr = fit.param[2] ./ volume2mass
+            geotile.discharge_km3yr = sum(discharge[index, :discharge_gtyr]) ./ volume2mass
         else
-            geotile.dischage_km3yr = 0
+            geotile.discharge_km3yr = 0
         end
 
         if all(isnan.(dv_altim[At(geotile.id),:]))
@@ -2501,12 +2515,12 @@ function gemb_bestfit(dv_altim, dv_gemb, dischage, geotiles; dischage2smb_max_la
 
             for Δheight in dΔheight
             #Δheight = first(dΔheight)
-                dv_gemb0 = (dv_gemb["smb"][At(geotile.id), index_gemb, At(pscale), At(Δheight)] ./ volume2mass .+ dv_gemb["fac"][At(geotile.id), index_gemb, At(pscale), At(Δheight)])
-                res = dv_altim[At(geotile.id), index_dv] .- (dv_gemb0 .- geotile.dischage_km3yr)
+                dv_gemb0 = (smb[At(geotile.id), index_gemb, At(pscale), At(Δheight)] ./ volume2mass .+ fac[At(geotile.id), index_gemb, At(pscale), At(Δheight)])
+                res = dv_altim[At(geotile.id), index_dv] .- (dv_gemb0 .- (geotile.discharge_km3yr.* Δdecyear))
 
                 if any(isnan.(res))
                     display(dv_gemb0)
-                    display(geotile.dischage_km3yr)
+                    display(geotile.discharge_km3yr)
                     display(dv_altim[At(geotile.id), index_dv])
 
                     println(geotile.id)
@@ -2529,5 +2543,108 @@ function gemb_bestfit(dv_altim, dv_gemb, dischage, geotiles; dischage2smb_max_la
         geotile.mad = mad0
     end
 
-    return geotiles[:, [:id, :extent, :pscale, :Δheight, :mad, :dischage_km3yr]]
+    return geotiles[:, [:id, :extent, :pscale, :Δheight, :mad, :discharge_km3yr]]
+end
+
+
+
+function gemb_bestfit_regional(dv_altim, smb, fac, discharge, geotiles)
+
+    # there are issues with calibrating the smb model to individual geotiles as dischage 
+    # is assigned at a point but can cross multiple geotiles. To tackle this issue we 
+    # calibrate the model at a regional scale.
+    cnames = names(geotiles)
+    cnames = cnames[Base.contains.(cnames, Ref("rgi"))]
+
+
+    ddate = dims(dv_altim, :date)
+    dΔheight = dims(smb, :Δheight)
+    dpscale = dims(smb, :pscale)
+    ddate_gemb = dims(smb, :date)
+
+    volume2mass = Altim.δice / 1000
+
+    # find common overlap 
+    index = .!isnan.(smb[1, :, 1, 1])
+    ex_gemb = extrema(ddate_gemb[index])
+    index = .!isnan.(dv_altim[1, :])
+    ex_dv = extrema(ddate[vec(index)])
+    ex = (max(ex_gemb[1], ex_dv[1]), min(ex_gemb[2], ex_dv[2]))
+    index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
+    index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
+
+    decyear = Altim.decimalyear.(ddate_gemb[index_gemb])
+    Δdecyear = decyear .- mean(decyear)
+
+    # loop for each geotile
+    geotiles = copy(geotiles)
+    geotiles[!, :pscale] .= 1.0;
+    geotiles[!, :Δheight] .= 0.0;
+    geotiles[!, :mad] .= 0.0;
+
+    # loop for each region
+    #Threads.@threads for cname in cnames
+    for cname in cnames
+        #cname = first(cnames)
+
+        discharge_km3yr = 0.0
+        cindex = geotiles[:, cname] .> 0
+
+        for geotile = eachrow(geotiles[cindex, :])
+
+            # total discharge D in Gt/yr converted to km3/yr
+            index = Altim.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
+
+            if any(index)
+                discharge_km3yr += sum(discharge[index, :discharge_gtyr]) ./ volume2mass
+            end
+        end
+
+        pscale0 = 1
+        Δheight0 = 0
+        mad0 = Inf
+
+        dv0 = dv_altim[At(geotiles[cindex, :id]), index_dv]
+        dv0 = dropdims(sum(dv0, dims=:geotile), dims=:geotile)
+        #p = plot(dv0)
+        for pscale in dpscale
+            #pscale = first(dpscale)
+
+            for Δheight in dΔheight
+                #Δheight = first(dΔheight)
+                smb0 = smb[At(geotiles[cindex, :id]), index_gemb, At(pscale), At(Δheight)] ./ volume2mass
+                smb0 = dropdims(sum(smb0, dims=:geotile), dims=:geotile)
+
+                fac0 = fac[At(geotiles[cindex, :id]), index_gemb, At(pscale), At(Δheight)]
+                fac0 = dropdims(sum(fac0, dims=:geotile), dims=:geotile)
+
+                res = dv0 .- (smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear))
+
+                #plot!((smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear)))
+                if any(isnan.(res))
+                    display(dv0)
+                    display(discharge_km3yr)
+                    println(cname)
+
+                    error()
+                end
+
+                mad1 = Altim.mad(res)
+
+                if mad1 < mad0
+                    mad0 = mad1
+                    pscale0 = pscale
+                    Δheight0 = Δheight
+                end
+            end
+        end
+
+        #plot!((dv_gemb0 .- (geotile.discharge_km3yr .* Δdecyear)); linewidth=8)
+        #display(p)
+
+        geotiles[cindex, :pscale] .= pscale0
+        geotiles[cindex, :Δheight] .= Δheight0
+        geotiles[cindex, :mad] .= mad0
+    end
+    return geotiles[:, [:id, :extent, :pscale, :Δheight, :mad]]
 end

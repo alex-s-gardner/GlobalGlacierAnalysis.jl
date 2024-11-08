@@ -16,7 +16,6 @@ module Altim
     using Extents
     using Interpolations
     using StaticArrays
-    import GeoFormatTypes as GFT
     using NetCDF
     using BinStatistics
     using FastGeoProjections
@@ -41,6 +40,18 @@ module Altim
     using Images
     using FlexiJoins
 
+    using LinearAlgebra
+    using Rotations
+    using CoordinateTransformations
+    using GeometryBasics 
+    using SparseArrays
+    using SortTileRecursiveTree
+    using AbstractTrees
+    using ProgressMeter
+    using Random
+    using SortTileRecursiveTree
+    using AbstractTrees
+
     using MLJ
     using MLJLinearModels
     using LazyGrids
@@ -50,6 +61,13 @@ module Altim
     using Shapefile
     using FileIO
     using Plots
+
+    import GeometryOps as GO
+    import GeoInterface as GI
+    import GeoFormatTypes as GFT
+    import GeometryOpsCore
+    import LibGEOS as LG
+import GeometryOpsCore as GOC
 
     #include("utilities.jl")
     include("utilities.jl")
@@ -61,7 +79,8 @@ module Altim
     include("utilities_hyps.jl")
     include("utilities_plot.jl")
     include("utilities_geotile_processing.jl")
-    #include("model_optimize.jl")
+    include("utilities_routing.jl")
+    include("/home/gardnera/Documents/GitHub/Altim.jl/src/STRTreesAbstractTreesExt.jl")
 
     export Extent
     export bin, binnedfiltering, crop!, decimalyear, download!, epsg2epsg, epsg2epsg_nodata

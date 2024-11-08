@@ -210,7 +210,6 @@ end
     # encode lake terminating and ocean terminating
     #TODO: Need to automatically locate correct file... maybe just combine all rgi6 files into one or build a vrt?
 
-
     geomfile_rgi6 = joinpath(datadir, "GlacierOutlines/rgi60/rgi60_Global.gpkg")
     glaicer_geom = GDF.read(geomfile_rgi6)
     

@@ -27,12 +27,7 @@ using Altim
     # run parameters
     all_permutations_for_glacier_only = false
     surface_masks = [:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
-    
-    
-    
-    #surface_masks = [:land] #, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
-    
-
+    surface_masks = [:glacier, :land, :glacier_rgi7]; #, :glacier_b1km, :glacier_b10km]
     binned_folders= (binned_folder_unfiltered, binned_folder_filtered)
     dem_ids = [:best, :cop30_v2]
     binning_methods = ["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"]
@@ -62,12 +57,12 @@ using Altim
         dem_ids = [:best]
         binning_methods = ["meanmadnorm3"]
         curvature_corrects = [true]
-        dh_max=200
+
 
         filling_paramater_sets = [1,2,3,4]
         amplitude_corrects = [true]
-        plot_dh_as_function_of_time_and_elevation = true;
-        mission_reference_for_amplitude_normalization = "icesat2"
+
+
 
     end
 
@@ -122,7 +117,6 @@ Altim.geotile_binned_fill(;
     @time Altim.geotile_align_replace(;
         mission_ref1 = "icesat2",
         mission_ref2 = "icesat",
-        refperiod = (2019.5, 2020.5),
         min_trend_count = 5,
         remove_land_surface_trend=Altim.mission_land_trend(),
         project_id,

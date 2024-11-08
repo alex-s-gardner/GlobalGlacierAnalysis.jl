@@ -224,7 +224,7 @@ function gemb2dataframe(;
     return df
 end
 
-function gem_Δvolume!(df)
+function gem_Δvolume!_old(df)
 
     volume2mass = Altim.δice / 1000
     dates = DataFrames.metadata(df, "date")
@@ -260,6 +260,8 @@ function gem_Δvolume!(df)
             x = Δdecyear[index] .- mean(Δdecyear[index])
             y = smb[index] .- mean(smb[index])
             discharge = x \ y * volume2mass
+
+            println(discharge)
 
             # println("Δheight = $(r.Δheight), pscale = $(r.pscale): discharge = $discharge Gt")
         elseif isnan(discharge) && (rgi == "rgi12")
@@ -364,4 +366,31 @@ function gemb_classes_densify!(df; n_densify = 4)
     df = append!(df, df_interp)
 
     return df
+end
+
+
+function gembscale(var0, gemb_fit)
+    # initialize fields and group
+    height_step = step(dims(var0, :height))
+    var2 = similar(var0[:, :, :, 1])
+
+    # doing as DimensionalData adds NO increase in processing time
+    for geotile in dims(var0, :geotile)
+        ind = findfirst(gemb_fit.id .== geotile)
+        Δheight = gemb_fit[ind, :Δheight]
+        pscale = gemb_fit[ind, :pscale]
+
+        # select appropriate precipitation scaling 
+        var2[At(geotile), :, :] = var0[At(geotile), :, :, At(pscale)]
+
+        # shift elevation to simulate lowering and raising the elevation of the model
+        height_shift = round(Int16(Δheight / height_step))
+
+        if height_shift > 0
+            var2[At(geotile), :, 1:(end-height_shift)] = var2[At(geotile), :, (height_shift+1):end]
+        elseif height_shift < 0
+            var2[At(geotile), :, (-height_shift+1):end] = var2[At(geotile), :, 1:(end+height_shift)]
+        end
+    end
+    return var2
 end
