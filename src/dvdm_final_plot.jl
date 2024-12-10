@@ -1,3 +1,36 @@
+"""
+Generate and save plots visualizing glacier mass change data.
+
+This script creates various plots to visualize glacier mass change data across different 
+regions, variables, and missions. It processes data from a JLD2 file containing mass 
+change time series and generates multiple figure types:
+
+Key operations:
+1. Loads and preprocesses mass change data from JLD2 files
+2. Creates multi-region plots showing mass changes for different variables:
+   - Total mass change (dm)
+   - Volume change (dv) 
+   - Firn air content (fac)
+   - Surface mass balance components (smb, runoff, melt)
+3. Generates individual regional plots for each RGI region
+4. Creates binned/smoothed versions of the data
+5. Saves all plots as PNG files
+
+Parameters:
+- geotile_width: Width of geotiles in degrees (default: 2)
+- project_id: Project identifier (default: :v01)
+- daterange: Analysis time period (default: 2000-2024)
+- dvdm_synthesis_id: Identifier for synthesis dataset
+
+The script outputs multiple figure types:
+- Multi-region mass change plots for each variable/mission combination
+- Individual regional plots showing all missions
+- Binned/smoothed versions of regional plots
+
+Dependencies:
+Altim, FileIO, CairoMakie, StatsBase, ColorSchemes, DataFrames
+"""
+
 #begin
     using Altim
     using FileIO

@@ -1,3 +1,34 @@
+"""
+Calculate and analyze elevation offsets between altimetry data and reference DEMs.
+
+This script calculates horizontal and vertical offsets between altimetry data 
+(primarily Hugonnet and ICESat data) and reference DEMs (primarily Copernicus 30m DEM).
+It processes data by geotiles and can handle different domains and regions.
+
+Key operations:
+1. Sets up project parameters (geotile width, domain, products)
+2. Optionally filters geotiles to specific geographic regions
+3. Extracts DEM data and masks for each geotile
+4. Calculates offsets between altimetry and DEM data
+5. Visualizes offset distributions through histograms
+
+Parameters:
+- project_id: Project identifier (default: :v01)
+- geotile_width: Width of geotiles in degrees (default: 2)
+- domain: Processing domain (:landice)
+- force_remake: Whether to force remaking of extracted data
+- slope: Whether to include slope calculations
+- ext: Geographic extent for processing
+
+The script outputs:
+- Horizontal (dx, dy) and vertical (dz) offsets
+- Histograms comparing offsets against both COP30 and reference heights
+- Statistics on offset distributions
+
+Dependencies:
+Altim, Extents, Arrow, DataFrames, GeoFormatTypes, Proj, Statistics, Plots
+"""
+
 using Altim
 using Extents
 using Arrow

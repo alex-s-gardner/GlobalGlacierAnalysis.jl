@@ -1,3 +1,19 @@
+# This script extracts canopy height data for geotiles:
+#
+# Configuration:
+# - Uses project ID v01 and 2-degree geotile width
+# - Processes only geotiles containing land ice
+# - Uses ETH Global Canopy Height 10m 2020 dataset
+#
+# Processing:
+# 1. Sets up project paths and loads product definitions
+# 2. Filters geotiles to only include those with land ice
+# 3. Reads canopy height data from source GeoTIFF
+# 4. Extracts canopy height values for each geotile using geotile_pointextract()
+#    - Processes all altimetry missions
+#    - Only processes if force_remake=true or output doesn't exist
+#    - Uses nodata value of 255
+
 begin
     using Altim, GeoArrays, Dates, Arrow, DataFrames
 

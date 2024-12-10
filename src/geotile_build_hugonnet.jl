@@ -1,4 +1,22 @@
-# build geotiles from Hugonnet stacks
+# This script processes Hugonnet glacier elevation change data into geotiles
+#
+# Processing steps:
+# 1. Set up configuration:
+#    - Define geotile width (2 degrees)
+#    - Load project paths and create geotile grid
+#    - Optional: Filter geotiles to specific regions/extents
+#
+# 2. Create output directory for Hugonnet geotiles if needed
+#
+# 3. Load Hugonnet data:
+#    - Get catalogue of Hugonnet elevation change stacks
+#    - Detect if using old/new data format
+#
+# 4. Build geotiles:
+#    - Iterate through each geotile
+#    - Process Hugonnet data into geotile format
+#    - Save geotiles to output directory
+
 using Altim
 using Extents
 

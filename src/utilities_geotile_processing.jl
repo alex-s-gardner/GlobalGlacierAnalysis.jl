@@ -2254,37 +2254,197 @@ function replace_with_model!(dh, nobs, geotiles2replace::AbstractArray; mission_
     return dh
 end
 
+
+
+"""
+    geotile2glacier!(glaciers, var0; varname)
+
+Convert geotile-based data to glacier-based data using area-weighted averaging.
+
+# Arguments
+- `glaciers`: DataFrame containing glacier data with geotile and area_km2 columns
+- `var0`: DimensionalArray containing variable data by geotile
+- `varname`: Name of the new column to store results in glaciers DataFrame
+
+# Returns
+Modified glaciers DataFrame with new varname column containing area-weighted values
+"""
 function geotile2glacier!(glaciers, var0; varname)
-
-    # initialize fields and group    
-    glaciers[!, varname] = [fill(NaN, dims(var0, :date)) for i in 1:nrow(glaciers)]
-
-    glaciers_grp = DataFrames.groupby(glaciers, :geotile)
-    geotiles = getindex.(keys(glaciers_grp), "geotile")
-
-    # doing as DimensionalData adds NO increase in processing time
-    Threads.@threads for geotile in geotiles
-        geotile_glaciers = glaciers_grp[(geotile,)]
-
+    # Pre-allocate output arrays
+    ddate = dims(var0, :date)
+    glaciers[!, varname] = [fill(NaN, ddate) for _ in 1:nrow(glaciers)]
+    
+    # Group glaciers by geotile for faster lookup
+    glaciers_by_geotile = DataFrames.groupby(glaciers, :geotile)
+    geotiles = getindex.(keys(glaciers_by_geotile), "geotile")
+    
+    # Process each geotile in parallel
+    @showprogress dt=1 desc = "Geotile \"variable\" to glacier..." Threads.@threads for geotile in geotiles
+        # Get glaciers in this geotile
+        geotile_glaciers = glaciers_by_geotile[(geotile,)]
+        
+        # Get valid data range for this geotile
         v0 = var0[At(geotile), :, :]
-        rrange, _ = Altim.validrange(.!isnan.(v0))
-        for glacier0 in eachrow(geotile_glaciers)
-        #glacier = first(eachrow(glaciers))
+        valid_rows, _ = Altim.validrange(.!isnan.(v0))
+        
+        # Skip if no valid data
+        isempty(valid_rows) && continue
+        
+        # Pre-allocate temporary array for this geotile's calculations
+        out = Vector{Float64}(undef, length(valid_rows))
+        
+        # Process each glacier in this geotile
+        for glacier in eachrow(geotile_glaciers)
+            # Get valid area indices
+            area_index = glacier.area_km2 .> 0
+            any(area_index) || continue
             
-            area_index = glacier0.area_km2 .> 0
-            if !any(area_index)
-                continue
+            # Get valid column range and total area
+            valid_cols, = Altim.validrange(area_index)
+            total_area = sum(view(glacier.area_km2, valid_cols))
+            
+            # Calculate area weights once
+            area_weights = view(glacier.area_km2, valid_cols) ./ total_area
+            
+            # Calculate weighted averages for each row
+            @views for (i, row) in enumerate(eachrow(v0[valid_rows, valid_cols]))
+                out[i] = sum(row .* area_weights)
             end
-            crange, = Altim.validrange(area_index)
-            total_area = sum(glacier0.area_km2[crange])
+            
+            # Assign results to glacier
+            glacier[varname][valid_rows] = out
+        end
+    end
+    
+    return glaciers
+end
 
-            out = fill(NaN, length(rrange))
-            for (i, v) in enumerate(eachrow(v0[rrange, crange]))
-                out[i] = sum(v .* glacier0.area_km2[crange] ./ total_area)
+
+
+"""
+    perglacier_geotile2glacier(geotile_perglacier; tsvars=["dh", "smb", "fac", "runoff"])
+
+Convert per-glacier-geotile data to per-glacier data by consolidating values across geotiles.
+
+# Arguments
+- `geotile_perglacier`: DataFrame containing per-glacier-geotile data with columns for RGIId and time series variables
+- `tsvars`: Vector of String column names for the time series variables to consolidate (default: ["dh", "smb", "fac", "runoff"])
+
+# Returns
+- DataFrame with one row per unique glacier (RGIId) and consolidated time series columns
+
+# Notes
+- Creates a new DataFrame with unique RGIIds from input data
+- For each time series variable:
+  - Initializes arrays of zeros with same length as input time series
+  - Copies date metadata from input
+  - For each glacier, sums valid values across all geotiles containing that glacier
+  - If only one geotile contains the glacier, uses those values directly
+  - If multiple geotiles contain valid data, sums the values
+- Uses multi-threading for performance
+"""
+function perglacier_geotile2glacier(geotile_perglacier;  tsvars = ["dh", "smb", "fac", "runoff"])
+        
+    glaciers = DataFrame(RGIId=sort!(unique(geotile_perglacier.RGIId)))
+    glaciers[!, :area_km2] = zeros(nrow(glaciers))
+    # loop for each glacier
+    for tsvar in tsvars
+        glaciers[!, tsvar] = [zeros(length(geotile_perglacier[1, tsvar])) for r in 1:nrow(glaciers)]
+        colmetadata!(glaciers, tsvar, "date", collect(dims(geotile_perglacier[1, tsvar], :date)), style=:note)
+    end
+
+    @showprogress dt = 1 desc = "Per-glacier-geotile to per-glacier..." Threads.@threads :greedy for g in eachrow(glaciers)
+        #g = first(eachrow(glaciers))
+        index = g.RGIId .== geotile_perglacier.RGIId
+        if any(index)
+            for tsvar in tsvars
+                g0 = collect.(geotile_perglacier[index, tsvar])
+                area0 = sum.(geotile_perglacier[index, :area_km2])
+                
+                if length(g0) == 1
+                    g[tsvar] = g0[1]
+                    g[:area_km2] = area0[1]
+                else
+                    valid = [.!all(isnan.(g1)) for g1 in g0]
+                    if any(valid)
+                        # area weighted average
+                        g[tsvar] = sum(g0[valid] .* area0[valid]) ./ sum(area0[valid])
+                        g[:area_km2] = sum(area0[valid])
+                    end
+                end
             end
-            glacier0[varname][rrange] = out
         end
     end
     return glaciers
 end
 
+
+"""
+    mperm2_to_m3s!(glaciers; tsvars=["dh", "smb", "fac", "runoff"])
+
+Convert glacier mass balance variables from meters water equivalent per square meter to cubic meters per second.
+
+# Arguments
+- `glaciers`: DataFrame containing glacier data with time series variables and area_km2 column
+- `tsvars`: Vector of String column names for the time series variables to convert (default: ["dh", "smb", "fac", "runoff"])
+
+# Returns
+- Modified input DataFrame with converted time series values
+
+# Notes
+- Modifies the input DataFrame in-place
+- Converts from m w.e./m² to m³/s by:
+  1. Multiplying by glacier area to get total volume change
+  2. Converting to km³ by dividing by 1000
+  3. Converting to m³/s using the time step between measurements
+- Assumes uniform time steps between measurements
+- Uses multi-threading for performance
+"""
+function mperm2_to_m3s!(glaciers;  tsvars = ["dh", "smb", "fac", "runoff"])
+    
+    # date interval in seconds
+    Threads.@threads for tsvar in tsvars
+        ddate = colmetadata(glaciers, tsvar, "date")
+        Δdate = Second.(unique(Day.(ddate[2:end] .- ddate[1:end-1])))
+
+        if length(Δdate) > 1
+            error("Time steps are not uniform")
+        else
+            Δt = Δdate[1]
+        end
+
+        for g in eachrow(glaciers)
+            #g = first(eachrow(glaciers))
+            # divide by 1000 to convert to m w.e. to km w.e. ... then convert to m^3 s-1 [1E3^3/Δt.value]
+            ro = g[tsvar] .* g[:area_km2]
+            g[tsvar][2:end] = diff(ro)/1000 * (1E3^3/Δt.value)
+        end
+    end
+    return glaciers
+end
+
+
+
+
+function mkm2_to_km3yr!(glaciers;  tsvars = ["dh", "smb", "fac", "runoff"])
+    
+    # date interval in seconds
+    Threads.@threads for tsvar in tsvars
+        ddate = colmetadata(glaciers, tsvar, "date")
+        Δdate = (unique(Day.(ddate[2:end] .- ddate[1:end-1])))
+
+        if length(Δdate) > 1
+            error("Time steps are not uniform")
+        else
+            Δt = Δdate[1]
+        end
+
+        for g in eachrow(glaciers)
+            #g = first(eachrow(glaciers))
+            # divide by 1000 to convert to m w.e. to km w.e. ... then convert to m^3 s-1 [1E3^3/Δt.value]
+            ro = copy(g[tsvar])
+            g[tsvar][2:end] = diff(ro)/1000  / (Δt.value / 365.25)
+        end
+    end
+    return glaciers
+end

@@ -1,3 +1,26 @@
+"""
+Compare ASTER and ArcticDEM elevation data across different regions and land types.
+
+This script performs the following operations:
+1. Loads and processes elevation data from ASTER and ArcticDEM sources
+2. Filters data based on land/ice masks and quality metrics
+3. Bins elevation differences by date and height
+4. Visualizes comparisons through:
+   - Heatmaps of elevation differences
+   - Histograms of differences with median indicators
+   - Time series plots with monthly breakdowns
+
+Parameters:
+- project_id: Project identifier (default: :v01)
+- geotile_width: Width of geotiles for analysis (default: 2)
+- min_frac: Minimum fraction threshold for glacier coverage (default: 0.2)
+- mask: Land type mask (either :landice or :land)
+- rgi: RGI regions to process ("rgi1", "rgi3", "rgi5", "rgi7", "rgi9")
+
+Dependencies:
+Altim, Arrow, DataFrames, NearestNeighbors, Plots, Statistics, DimensionalData, Dates
+"""
+
 begin
     using Altim
     using Arrow

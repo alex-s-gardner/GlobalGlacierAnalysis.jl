@@ -1,3 +1,18 @@
+# This script extracts surface type masks for geotiles:
+#
+# Configuration:
+# - Uses project ID v01 and 2-degree geotile width
+# - Filters to only include geotiles with land ice
+# - Extracts masks for: floating ice, glacier ice, inland water, 
+#   land, land ice, and ocean
+#
+# Processing:
+# 1. Sets up project paths and loads product definitions
+# 2. Filters geotiles to only include those with land ice
+# 3. For each product:
+#    - Extracts mask data using geotile_extract_mask()
+#    - Only processes if force_remake=true or output doesn't exist
+
 # add packages
 using Altim
 
@@ -15,7 +30,6 @@ geotiles = Altim.geotiles_w_mask(geotile_width);
 if domain == :landice
     geotiles = geotiles[geotiles.landice_frac .> 0, :];
 end
-
 
 # --------------------------------------------------------------------------
 #begin

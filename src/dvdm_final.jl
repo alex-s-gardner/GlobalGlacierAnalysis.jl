@@ -1,4 +1,40 @@
 
+"""
+Synthesize and process glacier mass change data from multiple sources.
+
+This script combines and processes glacier mass change data from various sources 
+(altimetry, GRACE, GEMB) to create a comprehensive synthesis dataset. It handles
+data from different regions, missions and processing methods to generate uncertainty
+estimates.
+
+Key operations:
+1. Synthesizes mass change data using multiple processing configurations:
+   - Different surface masks (glacier, glacier_rgi7, glacier_b1km)
+   - Different DEMs (best, COP30)
+   - Various binning methods and parameters
+   - Curvature and amplitude corrections
+2. Combines regions into larger groupings (e.g. High Mountain Asia)
+3. Adds GRACE satellite data and global estimates
+4. Calculates trends and uncertainties
+5. Saves final processed dataset
+
+Parameters:
+- geotile_width: Width of geotiles in degrees (default: 2)
+- project_id: Project identifier (default: :v01) 
+- dvdm_synthesis_id: Identifier for synthesis dataset
+- Various processing parameters for uncertainty estimation
+
+The script outputs:
+- A JLD2 file containing the processed DataFrame with:
+  - Mass changes for each region/mission
+  - Uncertainty estimates
+  - Trends and accelerations
+  - Combined regional estimates
+
+Dependencies:
+Altim, FileIO
+"""
+
 begin
     using Altim
     using FileIO

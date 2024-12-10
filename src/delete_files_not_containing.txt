@@ -1,9 +1,0 @@
-To use them, enable the extglob shell option as follows:
-
-shopt -s extglob
-And just remove all files that don't have the string "fix":
-
-rm !(*fix*)
-If you want to don't delete all the files that don't have the names "fix" and "class":
-
-rm !(*fix*|*class*)

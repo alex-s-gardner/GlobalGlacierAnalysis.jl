@@ -1,4 +1,32 @@
-# build COP30 vrts
+"""
+Build virtual raster (VRT) files for Copernicus DEM 30m data.
+
+This script creates VRT files that combine multiple Copernicus DEM tiles into single virtual datasets.
+It processes all available DEM files and their associated mask files.
+
+The script:
+1. Recursively finds all Copernicus DEM tiles in the input folder
+2. Groups files by type (DEM, water mask, error mask etc)
+3. Creates a VRT file for each data type that virtually merges all tiles
+
+Input data:
+- Copernicus DEM 30m tiles (2021 AWS release or 2019 release)
+- Files include DEM and various mask layers (.tif format)
+
+Output:
+- One VRT file per data type in the input folder:
+  - DEM.vrt: Digital elevation model
+  - WBM.vrt: Water body mask  
+  - EDM.vrt: Editing mask
+  - FLM.vrt: Filling mask
+  - HEM.vrt: Height error mask
+
+Notes:
+- Uses GDAL's buildvrt functionality through ArchGDAL.jl
+- Input data is in WGS84 (EPSG:4326) horizontal and EGM2008 (EPSG:3855) vertical datums
+- Processing large numbers of files can be time intensive
+"""
+
 using ArchGDAL, Altim
 
 # info page

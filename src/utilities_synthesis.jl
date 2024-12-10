@@ -1,0 +1,359 @@
+"""
+    geotile_synthesis_error(;
+        path2runs,
+        outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
+        minimum_error=0.05,
+        force_remake=false
+    )
+
+Calculate synthesis error metrics across multiple model runs for different satellite missions.
+
+# Arguments
+- `path2runs`: Vector of paths to input data files
+- `outfile`: Path where the error metrics will be saved (default: "/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2")
+- `minimum_error`: Minimum allowable error value (default: 0.05)
+- `force_remake`: Boolean to force recalculation even if output file exists (default: false)
+
+# Processing Steps
+1. Loads elevation change data from all input files
+2. Combines data across runs while preserving mission, geotile, date, and height dimensions
+3. Calculates standard deviation across runs for each mission
+4. Applies minimum error threshold
+
+# Outputs
+Creates a JLD2 file containing:
+- `dh_hyps_error`: Dictionary of error estimates for each mission
+- `files_included`: List of input files used in calculation
+
+# Returns
+Path to the output file
+
+# Notes
+- Uses parallel processing for file loading and geotile processing
+- NaN values are properly handled in standard deviation calculations
+- Error estimates are bounded by the minimum_error parameter
+"""
+function geotile_synthesis_error(;
+    path2runs,
+    outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
+    minimum_error=0.05,
+    force_remake=false
+)
+
+    #outfile = "/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2"
+
+    if !isfile(outfile) || force_remake
+
+        #load example file to get dimension and mission info
+        dh = FileIO.load(path2runs[1], "dh_hyps")
+
+        missions = collect(keys(dh))
+        ddate = dims(dh[missions[1]], :date)
+        dheight = dims(dh[missions[1]], :height)
+        dgeotile = dims(dh[missions[1]], :geotile)
+        dfile = Dim{:file}(path2runs)
+
+        dh_all = Dict()
+        for mission in missions
+            dh_all[mission] = fill(NaN, (dfile, dgeotile, ddate, dheight))
+        end
+
+        # this takes about 8 min for length(files) = 96
+        Threads.@threads for filepath in path2runs
+            dh = FileIO.load(filepath, "dh_hyps")
+            for mission in missions
+                dh_all[mission][At(filepath), :, :, :] = dh[mission]
+            end
+        end
+
+        # calculate standard deviation across runs as an error metric
+        dh_all_std = Dict()
+        for mission in missions
+            dh_all_std[mission] = fill(NaN, (dgeotile, ddate, dheight))
+        end
+
+        for mission in missions
+            #mission = "gedi"
+
+            Threads.@threads for geotile in dgeotile
+                #geotile = dgeotile[510]
+
+                # !!! I THINK THIS IS FIXED NOW !!!!
+                # TODO: There is an issue where some missions (ICESat2) has different hight range than the other missions... this cuases issues with non-rectangular error matrix
+                # See this example
+                # heatmap(dh_err["hugonnet"][At("lat[-28-26]lon[-070-068]"),:,:])
+                # heatmap!(dh_err["icesat2"][At("lat[-28-26]lon[-070-068]"),:,:])
+
+                valid1 = dropdims(any(.!isnan.(dh_all[mission][:, At(geotile), :, :]), dims=:file), dims=:file)
+
+                if !(any(valid1))
+                    continue
+                end
+
+                vdate, vheight = Altim.validrange(valid1)
+
+                for date in ddate[vdate]
+
+                    for height in dheight[vheight]
+                        var0 = dh_all[mission][:, At(geotile), At(date), At(height)]
+                        valid2 = .!isnan.(var0)
+
+                        if any(valid2)
+                            dh_all_std[mission][At(geotile), At(date), At(height)] = max(std(var0[valid2]), minimum_error)
+                        end
+                    end
+                end
+            end
+        end
+
+        # save the error so that it can be used in the synthesis of individual model runs
+        save(outfile, Dict("dh_hyps_error" => dh_all_std, "files_included" => path2runs))
+    end
+    return outfile
+end
+
+
+"""
+    geotile_synthesize_runs(;
+        path2runs,
+        path2geotile_synthesis_error,
+        missions2include=["hugonnet", "gedi", "icesat", "icesat2"],
+        showplots=false,
+        force_remake=false
+    )
+
+Synthesize elevation change data from multiple satellite missions into a single dataset.
+
+# Arguments
+- `path2runs`: Vector of paths to input data files
+- `path2geotile_synthesis_error`: Path to file containing error estimates for each mission
+- `missions2include`: Vector of mission names to include in synthesis (default: ["hugonnet", "gedi", "icesat", "icesat2"])
+- `showplots`: Boolean to control plotting of intermediate results (default: false)
+- `force_remake`: Boolean to force recalculation even if output file exists (default: false)
+
+# Processing Steps
+1. Loads error estimates and converts them to weights (1/error²)
+2. Applies GEDI latitude limits (±51.6°)
+3. For each input file:
+   - Loads elevation change data
+   - Computes weighted average across missions
+   - Calculates synthesis uncertainty
+   - Saves results to new file with '_synthesized' suffix
+
+# Outputs
+For each input file, creates a JLD2 file containing:
+- `dh_hyps`: Synthesized elevation change data
+- `dh_hyps_err`: Associated uncertainty estimates
+
+# Notes
+- Uses inverse variance weighting
+- Handles NaN values appropriately
+- Includes special handling for GEDI's latitude limits
+- Can optionally generate diagnostic plots
+"""
+function geotile_synthesize_runs(;
+    path2runs,
+    path2geotile_synthesis_error,
+    missions2include=["hugonnet", "gedi", "icesat", "icesat2"],
+    showplots=false,
+    force_remake=false
+)
+
+    dh_err = load(path2geotile_synthesis_error, "dh_hyps_error")
+    missions = missions2include
+    dgeotile = dims(dh_err[missions2include[1]], :geotile)
+
+    # convert error to weights
+    w = copy(dh_err)
+    for mission in missions
+        #w0 = w[mission];
+        w[mission] = 1 ./ (dh_err[mission] .^ 2)
+
+        # mask GEDI outside of observational latitude limits
+        if mission == "gedi"
+            lat_min = getindex.(Altim.geotile_extent.(dgeotile), :min_y)
+            lat_max = getindex.(Altim.geotile_extent.(dgeotile), :max_y)
+            exclude_gedi = (lat_max .> 51.6) .| (lat_min .< -51.6)
+            w[mission][exclude_gedi, :, :] .= 0
+        end
+
+        w[mission][isnan.(w[mission])] .= 0
+    end
+
+    Threads.@threads for binned_aligned_file in path2runs
+        #binned_aligned_file = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_b1km_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_aligned.jld2"    
+
+        if showplots
+            file_parts = splitpath(binned_aligned_file)
+            binned_folder = joinpath(file_parts[1:findfirst(file_parts .== "2deg")])
+
+            fig_folder = joinpath(binned_folder, "figures")
+            figure_suffix = replace(file_parts[end], ".jld2" => "")
+            binned_synthesized_file = replace(binned_aligned_file, "aligned.jld2" => "synthesized.jld2")
+            params = Altim.binned_filled_fileparts(binned_aligned_file)
+            geotiles = Altim.geotiles_mask_hyps(params.surface_mask, geotile_width)
+        end
+
+        binned_synthesized_file = replace(binned_aligned_file, "aligned.jld2" => "synthesized.jld2")
+
+        if !(isfile(binned_synthesized_file)) || force_remake
+            t1 = time()
+            dh = FileIO.load(binned_aligned_file, "dh_hyps")
+
+            #heatmap(Altim.dh2dv(dh["hugonnet"], geotiles["glacier_b1km"])[510:511,:])
+            #heatmap!(Altim.dh2dv(dh["icesat2"], geotiles["glacier_b1km"])[510:511,:])
+            #heatmap!(Altim.dh2dv(dh["gedi"], geotiles["glacier_b1km"])[510:511,:])
+
+            if showplots
+                p = Altim.plot_height_time(dh; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="final", fig_folder, figure_suffix, mask=params.surface_mask, showplots)
+            end
+
+            dh_synth = fill(0.0, dims(dh[missions[1]]))
+            w_synth = copy(dh_synth)
+
+            for mission in missions
+                w0 = copy(w[mission])
+
+                var0 = dh[mission]
+                nanidx = isnan.(var0)
+                var0[nanidx] .= 0
+                w0[nanidx] .= 0
+
+                # weighting needs to be non-zero for valid 
+                w0[.!nanidx.&(w0.==0)] .= 0.001
+
+                dh_synth += (var0 .* w0)
+
+                w_synth += w0
+            end
+
+            dh_synth = dh_synth ./ w_synth
+            dh_synth_err = sqrt.(1 ./ w_synth)
+            dh_synth_err[isnan.(dh_synth)] .= NaN
+
+            #if plot_dh_as_function_of_time_and_elevation
+            if showplots
+                # load geotiles
+                p = Altim.plot_height_time(dh_synth; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="raw", fig_folder, figure_suffix, mask=params.surface_mask, mission="synthesis", showplots)
+            end
+
+            save(binned_synthesized_file, Dict("dh_hyps" => dh_synth, "dh_hyps_err" => dh_synth_err))
+            println("$binned_aligned_file synthesized: $(round(Int,time() -t1))s")
+        end
+    end
+end
+
+
+"""
+    geotile_zonal_area_hyps(ras, ras_range, zone_geom, geotile_ids; persistent_attribute=:RGIId)
+
+Calculate hypsometric area distribution for each geotile and glacier polygon intersection.
+
+# Arguments
+- `ras`: Input raster (typically elevation data)
+- `ras_range`: Range of elevation bins for hypsometric binning
+- `zone_geom`: DataFrame containing glacier polygons with :geometry column
+- `geotile_ids`: List of geotile IDs to process
+- `persistent_attribute`: Column name in zone_geom to preserve in output (default: :RGIId)
+
+# Returns
+- DataFrame with columns:
+  - geotile: Geotile ID
+  - persistent_attribute: Preserved identifier from input (e.g. RGIId)
+  - area_km2: Area in km² for each geotile-glacier intersection
+
+# Notes
+- Crops raster data to intersection of geotiles and glacier polygons
+- Calculates areas using cell-by-cell accumulation into elevation bins
+- Returns areas in km² after converting from m²
+"""
+function geotile_zonal_area_hyps(ras, ras_range, zone_geom, geotile_ids; persistent_attribute=:RGIId)
+
+    df = DataFrame()
+
+    for geotile_id0 in geotile_ids
+        #geotile = first(geotile_ids)
+        t1 = time()
+        bounding_polygon = Altim.extent2rectangle(Altim.GeoTiles.extent(geotile_id0))
+        index = GeometryOps.intersects.(zone_geom[!, :geometry], Ref(bounding_polygon))
+        if !any(index)
+            println("skipping $(geotile_id0): no intersecting polygons")
+            continue
+        end
+
+        zone_geom0 = DataFrame(zone_geom[index, :])
+        zone_geom0[!, :geotile] .= geotile_id0
+
+        # do a double crop as cropping the polygons themselves is just way to complicated right now
+        ras0 = Rasters.crop(ras, to=zone_geom0)
+        ras0 = Rasters.crop(ras0, to=bounding_polygon)
+
+        ras0 = ras0[:, :]# having issues going from lazy to inmem ... not logical but this works
+
+        rs = RasterStack(ras0, Rasters.cellarea(ras0))
+
+        area_m2 = Altim.mapzonal(Base.Fix2(geotile_zonal_area_hyps, ras_range), identity, rs; of=zone_geom0[!, :geometry])
+        zone_geom0[!, :area_km2] = area_m2 * (1E-3)^2
+
+        println("$(geotile_id0) zonal area hyps done: $(round(Int,time() -t1))s")
+
+        append!(df, zone_geom0[:, [:geotile, persistent_attribute, :area_km2]]; promote=true)
+    end
+    return df
+end
+
+
+
+"""
+    geotile_zonal_area_hyps(x, y, bins::StepRange)
+
+Bin values into elevation bins and accumulate the values within each bin.
+
+# Arguments
+- `x`: Vector of elevation values to bin
+- `y`: Vector of values to accumulate in each bin (e.g. areas)
+- `bins`: StepRange defining the bin edges
+
+# Returns
+- Vector containing accumulated values for each elevation bin
+
+# Notes
+- Values outside the bin range are excluded
+- Each value in `y` is added to its corresponding elevation bin based on `x`
+- Output length is number of bins minus 1 (n-1 bins from n edges)
+"""
+function geotile_zonal_area_hyps(x, y, bins::StepRange)
+    n = length(bins) - 1
+    bin_index = @. ceil(Int64, ($n) * (x - $first(bins)) / ($last(bins) - $first(bins)))
+
+    binned = zeros(eltype(y), n)
+    for (idx, bin_idx) in enumerate(bin_index)
+        if bin_idx > 0 && bin_idx < (n + 1)
+            binned[bin_idx] += y[idx]
+        end
+    end
+
+    return binned
+end
+
+
+"""
+    geotile_zonal_area_hyps(nt, x_bin_edges)
+
+Dispatch of `geotile_zonal_area_hyps` that accepts a NamedTuple input.
+
+# Arguments
+- `nt`: NamedTuple containing elevation values in first field and values to accumulate in second field
+- `x_bin_edges`: StepRange defining the bin edges
+
+# Returns
+- Vector containing accumulated values for each elevation bin
+
+# Notes
+- Extracts values from NamedTuple fields using getindex and passes to main implementation
+- See main `geotile_zonal_area_hyps` function for full details
+"""
+function geotile_zonal_area_hyps(nt, x_bin_edges)
+    binned = geotile_zonal_area_hyps(getindex.(nt, 1), getindex.(nt, 2), x_bin_edges)
+    return binned
+end

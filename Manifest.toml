@@ -2,7 +2,7 @@
 
 julia_version = "1.11.1"
 manifest_format = "2.0"
-project_hash = "3e5e6b6b28b3ea9a6e806e79a6dcaeaceb924f4f"
+project_hash = "5878d9640c5b027de662282ceea0d99bd76b0a3e"
 
 [[deps.ARFFFiles]]
 deps = ["CategoricalArrays", "Dates", "Parsers", "Tables"]
@@ -110,7 +110,9 @@ version = "0.4.1"
 
 [[deps.ArchGDAL]]
 deps = ["CEnum", "ColorTypes", "Dates", "DiskArrays", "Extents", "GDAL", "GeoFormatTypes", "GeoInterface", "GeoInterfaceMakie", "GeoInterfaceRecipes", "ImageCore", "Tables"]
-git-tree-sha1 = "0504a357f95f37497b69bf282a137410f6be3b9c"
+git-tree-sha1 = "466148ae61542254f8973e8bf5fca7423f0e7dd8"
+repo-rev = "patch-3"
+repo-url = "https://github.com/asinghvi17/ArchGDAL.jl"
 uuid = "c9ce4bd3-c3d5-55b8-8973-c0e20141b8c3"
 version = "0.10.4"
 weakdeps = ["Makie"]
@@ -617,6 +619,7 @@ version = "1.16.0"
 [[deps.DataFrames]]
 deps = ["Compat", "DataAPI", "DataStructures", "Future", "InlineStrings", "InvertedIndices", "IteratorInterfaceExtensions", "LinearAlgebra", "Markdown", "Missings", "PooledArrays", "PrecompileTools", "PrettyTables", "Printf", "Random", "Reexport", "SentinelArrays", "SortingAlgorithms", "Statistics", "TableTraits", "Tables", "Unicode"]
 git-tree-sha1 = "fb61b4812c49343d7ef0b533ba982c46021938a6"
+repo-rev = "main"
 uuid = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 version = "1.7.0"
 
@@ -949,12 +952,6 @@ repo-url = "https://github.com/alex-s-gardner/FastGeoProjections.jl"
 uuid = "981663e8-0c94-46dd-b2cf-efc8480900ec"
 version = "0.0.2"
 
-[[deps.FastRunningMedian]]
-deps = ["DataStructures"]
-git-tree-sha1 = "72109ef417ec83067efe92a59637eed1da1638f9"
-uuid = "3a47ddbd-112b-4cc1-b00e-3746ec434ee5"
-version = "0.3.0"
-
 [[deps.FieldMetadata]]
 git-tree-sha1 = "c279c6eab9767a3f62685e5276c850512e0a1afd"
 uuid = "bf96fef3-21d2-5d20-8afa-0e7d4c32a885"
@@ -1202,10 +1199,11 @@ uuid = "7472b188-6dde-460e-bd07-96c4bc049f7e"
 version = "0.3.4"
 
 [[deps.GeoDataFrames]]
-deps = ["ArchGDAL", "DataAPI", "DataFrames", "GeoFormatTypes", "GeoInterface", "Pkg", "Tables"]
-git-tree-sha1 = "64129e8eb34af7eccaa8b9dbeae3f0a902eb54fb"
+deps = ["ArchGDAL", "DataAPI", "DataFrames", "Extents", "GeoFormatTypes", "GeoInterface", "Pkg", "Reexport", "Tables"]
+git-tree-sha1 = "c657717987f68eeef1538ee42ff47f772ec8f633"
+repo-rev = "main"
 uuid = "62cb38b5-d8d2-4862-a48e-6a340996859f"
-version = "0.3.10"
+version = "0.3.11"
 
 [[deps.GeoFormatTypes]]
 git-tree-sha1 = "59107c179a586f0fe667024c5eb7033e81333271"
@@ -2475,6 +2473,12 @@ git-tree-sha1 = "1a0fa0e9613f46c9b8c11eee38ebb4f590013c5e"
 uuid = "71a1bf82-56d0-4bbc-8a3c-48b961074391"
 version = "0.1.5"
 
+[[deps.NaturalEarth]]
+deps = ["Downloads", "GeoJSON", "Pkg", "Scratch"]
+git-tree-sha1 = "3f75210ac08fe4496a55f9694b95859c40b8eaea"
+uuid = "436b0209-26ab-4e65-94a9-6526d86fea76"
+version = "0.1.0"
+
 [[deps.NaturalNeighbours]]
 deps = ["ChunkSplitters", "DelaunayTriangulation", "ElasticArrays", "LinearAlgebra", "Random"]
 git-tree-sha1 = "c07721e921b9973c550e8560725bef98580e6555"
@@ -2972,6 +2976,16 @@ git-tree-sha1 = "b9039e93773ddcfc828f12aadf7115b4b4d225f5"
 uuid = "b3c3ace0-ae52-54e7-9d0b-2c1406fd6b9d"
 version = "0.3.2"
 
+[[deps.RangeExtractor]]
+deps = ["DocStringExtensions", "ProgressMeter", "SortTileRecursiveTree", "SpatialIndexing", "Tables", "TimerOutputs"]
+git-tree-sha1 = "4c6149067ebd408f0472deb73981a20880a63f25"
+uuid = "0151565a-6c01-463c-b553-c2b2e3b729c0"
+version = "0.1.0"
+weakdeps = ["Rasters"]
+
+    [deps.RangeExtractor.extensions]
+    RangeExtractorRastersExt = "Rasters"
+
 [[deps.Rasters]]
 deps = ["Adapt", "ColorTypes", "CommonDataModel", "ConstructionBase", "Dates", "DimensionalData", "DiskArrays", "Extents", "FillArrays", "Flatten", "GeoFormatTypes", "GeoInterface", "GeometryOpsCore", "LinearAlgebra", "Missings", "Mmap", "OffsetArrays", "ProgressMeter", "RecipesBase", "Reexport", "Setfield"]
 git-tree-sha1 = "aebf6d522e302af8eb08931e3ee54befcabaf9b0"
@@ -3294,6 +3308,11 @@ deps = ["Libdl", "LinearAlgebra", "Random", "Serialization", "SuiteSparse_jll"]
 uuid = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 version = "1.11.0"
 
+[[deps.SpatialIndexing]]
+git-tree-sha1 = "84efe17c77e1f2156a7a0d8a7c163c1e1c7bdaed"
+uuid = "d4ead438-fe20-5cc5-a293-4fd39a41b74c"
+version = "0.1.6"
+
 [[deps.SpecialFunctions]]
 deps = ["IrrationalConstants", "LogExpFunctions", "OpenLibm_jll", "OpenSpecFun_jll"]
 git-tree-sha1 = "2f5d4697f21388cbe1ff299430dd169ef97d7e14"
@@ -3420,11 +3439,9 @@ version = "0.7.4"
 
 [[deps.Stencils]]
 deps = ["Adapt", "ConstructionBase", "Dates", "KernelAbstractions", "LinearAlgebra", "Random", "SparseArrays", "StaticArrays", "UnicodeGraphics"]
-git-tree-sha1 = "a2871b274f507f1dc34dc11847e744a4965487d8"
-repo-rev = "rectangle"
-repo-url = "https://github.com/rafaqz/Stencils.jl.git"
+git-tree-sha1 = "b899b022a312826ba8aced0db55cb36cb53892cb"
 uuid = "264155e8-78a8-466a-aa59-c9b28c34d21a"
-version = "0.2.4"
+version = "0.3.3"
 
 [[deps.StrideArraysCore]]
 deps = ["ArrayInterface", "CloseOpenIntervals", "IfElse", "LayoutPointers", "LinearAlgebra", "ManualMemory", "SIMDTypes", "Static", "StaticArrayInterface", "ThreadingUtilities"]

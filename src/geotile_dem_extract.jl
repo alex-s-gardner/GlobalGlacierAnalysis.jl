@@ -1,6 +1,16 @@
-"""
-    Extract point elevations, slopes and curvature from global DEMS
-"""
+# This script extracts elevation data and derivatives from global DEMs:
+#
+# Configuration:
+# - Uses project ID v01 and 2-degree geotile width
+# - Extracts slope and curvature in addition to elevation
+# - Processes 4 DEMs: REMA v2, COP30 v2, ArcticDEM v4, NASADEM v1
+#
+# Processing:
+# 1. Sets up project paths and loads product definitions
+# 2. Filters geotiles to only include those with land ice
+# 3. Extracts DEM data for each geotile using Altim.geotile_extract_dem()
+#    - Includes elevation, slope and curvature
+#    - Only processes if force_remake=true or output doesn't exist
 
 using Altim
 #using Infiltrator

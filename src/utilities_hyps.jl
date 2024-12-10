@@ -15,7 +15,13 @@ const lb1 = [-10.0, -3.0, -2.0, -0.05, -0.0001, -1.0, -7.0, -0.05, -0.001];
 const ub1 = [+10.0, +3.0, +2.0, +0.05, +0.0001, +1.0, +7.0, +0.05, +0.001];
 
 # seasonal only 
-model1_seasonal::Function = model1_seasonal(x, p) = sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* (p[7] .+ p[8] .* x[:, 2] .* p[9] .* x[:, 2] .^ 2)
+model1_seasonal::Function = model1_seasonal(x, p) = 
+    sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* 
+    (p[7] .+ p[8] .* x[:, 2] .* p[9] .* x[:, 2] .^ 2)
+
+# linear trend
+model_trend::Function = model1_trend(h, p) = p[1] .+ p[2] .* h;
+const p_trend = zeros(2);
 
 # including quadratic for seasonal does not improve std(anom)
 #(p[6] .* cos.(2 .* pi .* x[:, 1]) .+  p[7].* sin.(2 .* pi .* x[:, 1])) .* (1 .+ p[8] .* x[:, 2] .+ p[9] .* x[:, 2] .^ 2)
@@ -34,6 +40,14 @@ const p3 = zeros(5)
 
 model4::Function = model4(t, p) = p[1] .+ p[2] .* sin.(2 .* pi .* (t .+ p[3]))
 const p4 = zeros(3)
+
+offset_trend_seasonal::Function =
+    offset_trend_seasonal(t, p) =
+    p[1] .+ 
+    p[2] .* t .+ 
+    p[3] .* sin.(2 .* pi .* (t .+ p[4]))
+
+const p_offset_trend_seasonal = zeros(4)
 
 function geotiles_mutually_exclusive_rgi!(geotiles) 
     reg = names(geotiles);
@@ -55,6 +69,28 @@ function geotiles_mutually_exclusive_rgi!(geotiles)
     return geotiles, reg
 end
 
+"""
+    hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max=5, smooth_n=9, smooth_h2t_length_scale=800, variogram_range_ratio = false)
+
+Fill gaps in hypsometric elevation change data by fitting and interpolating models.
+
+# Arguments
+- `dh1`: Dictionary mapping mission names to elevation change DimArrays
+- `nobs1`: Dictionary mapping mission names to observation count DimArrays
+- `params`: Dictionary mapping mission names to parameter DataFrames
+- `bincount_min`: Minimum bin count threshold for valid data points (default: 5)
+- `model1_madnorm_max`: Maximum MAD normalized residual threshold for outlier filtering (default: 5)
+- `smooth_n`: Number of nearest neighbors for smoothing (default: 9)
+- `smooth_h2t_length_scale`: Length scale for height/time distance weighting in smoothing (default: 800)
+- `variogram_range_ratio`: If true, compute and return variogram range ratios instead of filling data (default: false)
+
+# Returns
+- If `variogram_range_ratio=true`: Dictionary mapping mission names to range ratio DimArrays
+- Otherwise: Nothing, modifies input arrays in-place
+
+Fits elevation change models to valid data points, filters outliers, and interpolates residuals 
+to fill gaps in the data. Uses a combination of global parametric models and local smoothing.
+"""
 function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max=5, smooth_n=9, smooth_h2t_length_scale=800, variogram_range_ratio = false)
 
     if smooth_h2t_length_scale < 1
@@ -2392,9 +2428,9 @@ function glacier_discharge(; datadir=Altim.pathlocal[:data_dir])
     patagonia[!, :"Longitude"]  .= NaN;
     df.Name[ismissing.(df.Name)] .= "junk"
     patagonia.Names = replace.(patagonia.Names, "Témpano" => "Tempano")
-    patagonia.Names[contains.(patagonia.Names, "Grey")] .= "Grey + Dickson"
-    patagonia.Names[contains.(patagonia.Names, "Upsala")] .= "Upsala + Cono"
-    patagonia.Names[contains.(patagonia.Names, "O'Higgins")] .= "OHiggins"
+    patagonia.Names[Base.contains.(patagonia.Names, "Grey")] .= "Grey + Dickson"
+    patagonia.Names[Base.contains.(patagonia.Names, "Upsala")] .= "Upsala + Cono"
+    patagonia.Names[Base.contains.(patagonia.Names, "O'Higgins")] .= "OHiggins"
 
     for r in eachrow(patagonia)
         index = findfirst((r.Names .== df.Name) .| (r.Names .==  df.RGIId))
@@ -2420,6 +2456,19 @@ end
 
 
 # set dischage to smb
+"""
+    discharge2smb(glaciers; discharge2smb_max_latitude=-60, discharge2smb_equilibrium_period=(Date(1979), Date(2000)))
+
+Calculate discharge from surface mass balance (SMB) trends for glaciers below a specified latitude.
+
+# Arguments
+- `glaciers`: DataFrame containing glacier data with columns :CenLat, :CenLon, :smb, and :area_km2
+- `discharge2smb_max_latitude`: Maximum latitude threshold for calculating discharge (default: -60)
+- `discharge2smb_equilibrium_period`: Time period for equilibrium calculation (default: 1979-2000)
+
+# Returns
+- `discharge0`: DataFrame with columns :latitude, :longitude, :discharge_gtyr, :discharge_err_gtyr, :frontal_ablation_gtyr
+"""
 function discharge2smb(glaciers; discharge2smb_max_latitude=-60, discharge2smb_equilibrium_period=(Date(1979), Date(2000)))
     index_discharge2smb = glaciers.CenLat .< discharge2smb_max_latitude
 
@@ -2548,14 +2597,10 @@ end
 
 
 
-function gemb_bestfit_regional(dv_altim, smb, fac, discharge, geotiles)
+function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; troubleshoot_geotile = nothing)
 
-    # there are issues with calibrating the smb model to individual geotiles as dischage 
-    # is assigned at a point but can cross multiple geotiles. To tackle this issue we 
-    # calibrate the model at a regional scale.
-    cnames = names(geotiles)
-    cnames = cnames[Base.contains.(cnames, Ref("rgi"))]
-
+    # there are issues with calibrating the smb model to individual geotiles as glaciers
+    # can cross multiple geotiles. To tackle this issue we to disconected geotile groups
 
     ddate = dims(dv_altim, :date)
     dΔheight = dims(smb, :Δheight)
@@ -2582,15 +2627,22 @@ function gemb_bestfit_regional(dv_altim, smb, fac, discharge, geotiles)
     geotiles[!, :Δheight] .= 0.0;
     geotiles[!, :mad] .= 0.0;
 
-    # loop for each region
-    #Threads.@threads for cname in cnames
-    for cname in cnames
-        #cname = first(cnames)
+    if .!isnothing(troubleshoot_geotile)
+        verbose = true
+        ind = geotiles.id .== troubleshoot_geotile;
+        geotiles = geotiles[geotiles.group .== geotiles[ind, :group], :]
+    else
+        verbose = false
+    end
+
+    # loop for each group
+    # NOTE: do not do a groupby on geotiles as you need to keep the original geotiles order
+    Threads.@threads for grp in unique(geotiles.group)
 
         discharge_km3yr = 0.0
-        cindex = geotiles[:, cname] .> 0
+        gindex = grp .== geotiles.group
 
-        for geotile = eachrow(geotiles[cindex, :])
+        for geotile = eachrow(geotiles[gindex, :])
 
             # total discharge D in Gt/yr converted to km3/yr
             index = Altim.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
@@ -2604,23 +2656,39 @@ function gemb_bestfit_regional(dv_altim, smb, fac, discharge, geotiles)
         Δheight0 = 0
         mad0 = Inf
 
-        dv0 = dv_altim[At(geotiles[cindex, :id]), index_dv]
+        dv0 = dv_altim[At(geotiles[gindex, :id]), index_dv]
         dv0 = dropdims(sum(dv0, dims=:geotile), dims=:geotile)
-        #p = plot(dv0)
+        
+        if verbose
+            best_fit = zeros(size(dv0))
+            best_smb = zeros(size(dv0))
+            best_fac = zeros(size(dv0))
+            best_discharge = zeros(size(dv0))
+            best_offset = 0.
+
+            f = Figure(size=(1000, 1000))
+            p = f[1, 1] = CairoMakie.Axis(f)
+        end
+
         for pscale in dpscale
             #pscale = first(dpscale)
 
             for Δheight in dΔheight
                 #Δheight = first(dΔheight)
-                smb0 = smb[At(geotiles[cindex, :id]), index_gemb, At(pscale), At(Δheight)] ./ volume2mass
+                smb0 = smb[At(geotiles[gindex, :id]), index_gemb, At(pscale), At(Δheight)] ./ volume2mass
                 smb0 = dropdims(sum(smb0, dims=:geotile), dims=:geotile)
 
-                fac0 = fac[At(geotiles[cindex, :id]), index_gemb, At(pscale), At(Δheight)]
+                fac0 = fac[At(geotiles[gindex, :id]), index_gemb, At(pscale), At(Δheight)]
                 fac0 = dropdims(sum(fac0, dims=:geotile), dims=:geotile)
 
                 res = dv0 .- (smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear))
 
-                #plot!((smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear)))
+                # align the center of the residual distribution to zero
+                res0 = res[ceil(Int, length(res) / 2)]
+                res = res .- res0;
+
+                verbose && CairoMakie.lines!((smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear)) .+ res0)
+
                 if any(isnan.(res))
                     display(dv0)
                     display(discharge_km3yr)
@@ -2635,16 +2703,43 @@ function gemb_bestfit_regional(dv_altim, smb, fac, discharge, geotiles)
                     mad0 = mad1
                     pscale0 = pscale
                     Δheight0 = Δheight
+
+                    if verbose
+                        best_fit = (smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear)) .+ res0
+                        best_smb = smb0
+                        best_fac = fac0
+                        # thi is +/- is done to get dates right for ploting
+                        best_discharge = discharge_km3yr .* Δdecyear .+ best_fac .- best_fac 
+                        best_offset = res0
+                    end
                 end
             end
         end
 
-        #plot!((dv_gemb0 .- (geotile.discharge_km3yr .* Δdecyear)); linewidth=8)
-        #display(p)
+        if verbose
+            CairoMakie.lines!(dv0; color = :black)
+            CairoMakie.lines!(best_fit; color=:red)
+            CairoMakie.lines!(best_fit; color=:red)
+            display(f)
 
-        geotiles[cindex, :pscale] .= pscale0
-        geotiles[cindex, :Δheight] .= Δheight0
-        geotiles[cindex, :mad] .= mad0
+            f2 = Figure(size=(1000, 1000))
+            p2 = f2[1, 1] = CairoMakie.Axis(f2, title="best fit for $troubleshoot_geotile", xlabel="year", ylabel="km3")
+
+            CairoMakie.lines!(best_smb; label="smb")
+            CairoMakie.lines!(best_fac; label="fac")
+            CairoMakie.lines!(best_discharge; label="discharge")
+            CairoMakie.lines!(dv0 .- best_offset; label="dh - obs", color = :black, linewidth = 2)
+            CairoMakie.lines!(best_fit .- best_offset; label="dh - model", color=:red, linewidth=2)
+
+            f[1, 2] = Legend(f2[1, 1], p2, framevisible=false)
+            
+            display(f2)
+        end
+
+        geotiles[gindex, :pscale] .= pscale0
+        geotiles[gindex, :Δheight] .= Δheight0
+        geotiles[gindex, :mad] .= mad0
     end
     return geotiles[:, [:id, :extent, :pscale, :Δheight, :mad]]
+    
 end

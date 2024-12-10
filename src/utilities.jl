@@ -4136,3 +4136,160 @@ function extent2rectangle(extent)
     rectangle = GeoInterface.Wrappers.Polygon([[(xbounds[1], ybounds[1]), (xbounds[1], ybounds[2]), (xbounds[2], ybounds[2]), (xbounds[2], ybounds[1]), (xbounds[1], ybounds[1])]])
     return rectangle
 end
+
+
+"""
+    df_tsfit!(df, tsvars)
+
+Fits a seasonal trend model to time series variables in a DataFrame and adds the fitted parameters as new columns.
+
+For each time series variable in `tsvars`, fits a model of the form:
+    y = offset + trend*t + amplitude*cos(2π*t + phase)
+
+The fitted parameters are added as new columns with suffixes:
+- `_offset`: Mean offset
+- `_trend`: Linear trend
+- `_amplitude`: Seasonal amplitude 
+- `_phase`: Seasonal phase
+
+# Arguments
+- `df`: DataFrame containing time series variables to fit
+- `tsvars`: Vector of column names (Symbols or Strings) containing the time series data
+
+# Notes
+- Requires date metadata for each time series variable stored via `colmetadata`
+- Uses parallel processing with `Threads.@threads`
+- Fits are performed using `curve_fit` from LsqFit
+- NaN values are handled by filtering to valid data points before fitting
+"""
+function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
+    prog = progress ? ProgressMeter.Progress(length(tsvars); desc="Fitting LSQ model to timeseries...") : nothing
+
+    for tsvar in tsvars
+        ddate = colmetadata(df, tsvar, "date")
+        x = Altim.decimalyear.(ddate)
+        x = x .- mean(x)
+
+        out_var_offset = string(tsvar)*"_offset"
+        out_var_trend = string(tsvar)*"_trend"
+        out_var_amp = string(tsvar)*"_amplitude"
+        out_var_phase = string(tsvar)*"_phase"
+
+        df[!, out_var_offset] = zeros(nrow(df))
+        df[!, out_var_trend] = zeros(nrow(df))
+        df[!, out_var_amp] = zeros(nrow(df))
+        df[!, out_var_phase] = zeros(nrow(df))
+
+        date_index = (ddate .> datelimits[1]) .& (ddate .< datelimits[2])
+
+        Threads.@threads for g in eachrow(df)
+            y = g[tsvar];
+            valid = .!isnan.(y) .& date_index
+
+            fit = curve_fit(
+                Altim.offset_trend_seasonal, 
+                x[valid], 
+                y[valid], 
+                Altim.p_offset_trend_seasonal
+                )
+
+            g[out_var_offset] = fit.param[1]
+            g[out_var_trend] = fit.param[2]
+            g[out_var_amp] = fit.param[3]
+            g[out_var_phase] = fit.param[4]
+        end
+
+        # Update the progress meter
+        progress && update!(prog, prog.counter .+ 1)
+    end
+end
+
+
+"""
+    validgaps(valid)
+
+Find gaps in a boolean array between first and last valid points.
+
+# Arguments
+- `valid::AbstractVector{Bool}`: Boolean array indicating valid/invalid points
+
+# Returns
+- `validgap::AbstractVector{Bool}`: Boolean array with true values indicating gaps between first and last valid points
+"""
+function validgaps(valid)
+    validgap = falses(length(valid))
+    if any(valid) && !all(valid)
+        sind = findfirst(valid)
+        eind = findlast(valid)
+        validgap[sind:eind] = .!valid[sind:eind]
+    end
+    return validgap
+end
+
+
+"""
+    connected_groups(connectivity)
+
+Groups connected indicies into distinct groups based on their connectivity.
+
+# Arguments
+- `connectivity`: Vector of vectors containing indices of connected items
+
+# Returns
+- Vector of group IDs, where each element corresponds to the group assignment for that grouping
+
+# Details
+This function takes a connectivity list where each element contains indices of tiles that are 
+connected to the tile at that index. It then assigns each tile to a group such that all 
+connected tiles belong to the same group. Tiles with no connections are assigned their own 
+unique group.
+"""
+function connected_groups(connectivity)
+
+    # Track which tiles have been assigned to groups
+    assigned = falses(length(connectivity))
+    group_id = zeros(Int64, length(connectivity))
+
+    # Initialize group counter
+    group_id0 = 1
+
+    while !all(assigned)
+        # Find first unassigned tile with intersections
+        start_idx = findfirst(.!assigned)
+
+        if isempty(connectivity[start_idx])
+            assigned[start_idx] = true
+            group_id[start_idx] = group_id0
+            group_id0 += 1
+            continue
+        end
+
+        # Build group starting from this tile
+        current_group = Int64[start_idx]
+        assigned[start_idx] = true
+        group_id[start_idx] = group_id0
+
+        # Keep expanding group until no more intersections found
+        expanded = true
+        while expanded
+            expanded = false
+
+            # Check all tiles in current group
+            for tile_idx in current_group
+                # Look at all intersecting tiles
+                for intersect_idx in connectivity[tile_idx]
+                    if !assigned[intersect_idx]
+                        push!(current_group, intersect_idx)
+                        assigned[intersect_idx] = true
+                        group_id[intersect_idx] = group_id0
+                        expanded = true
+                    end
+                end
+            end
+        end
+
+        group_id0 += 1
+    end
+
+    return group_id
+end

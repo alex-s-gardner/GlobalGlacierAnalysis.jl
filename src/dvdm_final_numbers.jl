@@ -1,34 +1,61 @@
-#begin
-    using Altim
-    using FileIO
-    using CairoMakie
-    using DataFrames
-    using Statistics
-    geotile_width = 2;
-    project_id = :v01
-    daterange = (2000, 2024)
+"""
+Analyze and compare mass change trends between glaciers and ice sheets.
 
-    final_data_dir = joinpath(Altim.pathlocal.data_dir, "altim_final", "$(geotile_width)_$(project_id)")
-    final_filename = "dvdm.jld2"
-    final_figure_dir = joinpath(Altim.pathlocal.data_dir, "altim_final", "$(geotile_width)_$(project_id)", "figures")
+This script processes and analyzes mass change data for glaciers and ice sheets,
+calculating total mass changes, trends, and accelerations. It compares synthesis
+data with GRACE satellite measurements.
 
-    df = load(joinpath(final_data_dir, final_filename), "df")
+Key operations:
+1. Loads and processes glacier mass change data from JLD2 files
+2. Calculates total mass changes and uncertainties for different regions/products
+3. Computes mass change trends and accelerations
+4. Compares glacier and ice sheet mass changes using GRACE data
 
-    df = Altim.dvdm_crop2dates!(df, daterange)
+Parameters:
+- geotile_width: Width of geotiles in degrees (default: 2)
+- project_id: Project identifier (default: :v01)
+- daterange: Analysis time period (default: 2000-2024)
 
-    # recompute trends after crop2dates!(df, daterange)
-    df = Altim.geotile_dvdm_add_trend!(df; iterations=1000)
+The script outputs:
+- Total mass changes with uncertainties for glaciers and firn/accumulation
+- Mass change trends and accelerations for glaciers vs ice sheets
+- Temporal comparisons between synthesis and GRACE data
 
-    dates = DataFrames.metadata(df, "date")
-    decyear = Altim.decimalyear.(dates)
+Dependencies:
+Altim, FileIO, CairoMakie, DataFrames, Statistics
+"""
 
-    rgi = "global"
-    mission = "synthesis"
-    var = "dm"
-    index = findfirst((df.rgi .== rgi) .& (df.mission .== mission) .& (df.var .== var))
-    nonnan = .!isnan.(df[index, :].mid)
-    dmass_mid = round(Int, df[index, :].mid[findlast(nonnan)] - df[index, :].mid[findfirst(nonnan)])
-    err = round(Int, sqrt((df[index, :].low[findfirst(nonnan)] - df[index, :].mid[findfirst(nonnan)]).^2 + (df[index, :].low[findlast(nonnan)] - df[index, :].mid[findlast(nonnan)]).^2))
+using Altim
+using FileIO
+using CairoMakie
+using DataFrames
+using Statistics
+
+geotile_width = 2;
+project_id = :v01
+daterange = (2000, 2024)
+
+final_data_dir = joinpath(Altim.pathlocal.data_dir, "altim_final", "$(geotile_width)_$(project_id)")
+final_filename = "dvdm.jld2"
+final_figure_dir = joinpath(Altim.pathlocal.data_dir, "altim_final", "$(geotile_width)_$(project_id)", "figures")
+
+df = load(joinpath(final_data_dir, final_filename), "df")
+
+df = Altim.dvdm_crop2dates!(df, daterange)
+
+# recompute trends after crop2dates!(df, daterange)
+df = Altim.geotile_dvdm_add_trend!(df; iterations=1000)
+
+dates = DataFrames.metadata(df, "date")
+decyear = Altim.decimalyear.(dates)
+
+rgi = "global"
+mission = "synthesis"
+var = "dm"
+index = findfirst((df.rgi .== rgi) .& (df.mission .== mission) .& (df.var .== var))
+nonnan = .!isnan.(df[index, :].mid)
+dmass_mid = round(Int, df[index, :].mid[findlast(nonnan)] - df[index, :].mid[findfirst(nonnan)])
+err = round(Int, sqrt((df[index, :].low[findfirst(nonnan)] - df[index, :].mid[findfirst(nonnan)]).^2 + (df[index, :].low[findlast(nonnan)] - df[index, :].mid[findlast(nonnan)]).^2))
 
 # total glacier loss
 println("mission = $mission, rgi = $rgi, variable = $var: $dmass_mid ± $err $(df[index,:unit]) between $(dates[findfirst(nonnan)]) & $(dates[findlast(nonnan)])")
@@ -57,9 +84,6 @@ nonnan = .!isnan.(df[index, :].mid)
 dmass_mid = round(Int, df[index, :].mid[findlast(nonnan)] - df[index, :].mid[findfirst(nonnan)])
 err = round(Int, sqrt((df[index, :].low[findfirst(nonnan)] - df[index, :].mid[findfirst(nonnan)]) .^ 2 + (df[index, :].low[findlast(nonnan)] - df[index, :].mid[findlast(nonnan)]) .^ 2))
 
-
-
-# 
 
 
 # compare to ice sheets

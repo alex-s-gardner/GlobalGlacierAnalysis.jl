@@ -369,28 +369,92 @@ function gemb_classes_densify!(df; n_densify = 4)
 end
 
 
-function gembscale(var0, gemb_fit)
-    # initialize fields and group
-    height_step = step(dims(var0, :height))
-    var2 = similar(var0[:, :, :, 1])
+"""
+    _matrix_shift_ud!(matrix, shift)
 
-    # doing as DimensionalData adds NO increase in processing time
-    for geotile in dims(var0, :geotile)
-        ind = findfirst(gemb_fit.id .== geotile)
-        Δheight = gemb_fit[ind, :Δheight]
-        pscale = gemb_fit[ind, :pscale]
+Shifts a matrix up or down by a specified number of rows, with linear extrapolation at boundaries.
 
-        # select appropriate precipitation scaling 
-        var2[At(geotile), :, :] = var0[At(geotile), :, :, At(pscale)]
+# Arguments
+- `matrix`: Input matrix to be shifted in-place
+- `shift`: Integer number of rows to shift. Positive shifts down, negative shifts up.
 
-        # shift elevation to simulate lowering and raising the elevation of the model
-        height_shift = round(Int16(Δheight / height_step))
+# Details
+For positive shifts, values are shifted down and linear extrapolation is used to fill the top rows.
+For negative shifts, values are shifted up and linear extrapolation is used to fill the bottom rows.
+The extrapolation uses a linear fit based on normalized height coordinates.
 
-        if height_shift > 0
-            var2[At(geotile), :, 1:(end-height_shift)] = var2[At(geotile), :, (height_shift+1):end]
-        elseif height_shift < 0
-            var2[At(geotile), :, (-height_shift+1):end] = var2[At(geotile), :, 1:(end+height_shift)]
+# Returns
+The modified input matrix
+"""
+function _matrix_shift_ud!(matrix, shift; exclude_zeros_in_extrapolation = false)
+
+    n = size(matrix, 2)
+    h0 = (1.:n)./n .- 0.5
+    M = hcat(ones(n),h0)
+
+    # shift with linear extrapolation
+    if shift > 0 # shift values down 
+        # shift values down
+        matrix[:, 1:(end-shift)] = matrix[:, (shift+1):end]
+
+        # extrapolate upper boundary
+        M0 = @view M[1:(end-shift), :]
+
+        for i in axes(matrix, 1)
+            param1 = M0 \ matrix[i, 1:(end-shift)]
+                matrix[i, (end-shift+1):end] = param1[1] .+ param1[2] .* h0[(end-shift+1):end]
+        end
+
+    elseif shift < 0 # shift values up
+       
+        # shift values up
+        matrix[:, (1-shift):end] = matrix[:, 1:(end+shift)]
+
+        # extrapolate lower boundary
+        M0 = @view M[(1-shift):end, :]
+
+        for i in axes(matrix, 1)
+            y0 = @view matrix[i, (1-shift):end]
+            if exclude_zeros_in_extrapolation
+                valid = y0 .!= 0
+                if any(valid)
+                    param1 = M0[valid, :] \ y0[valid]
+                else
+                    matrix[i, 1:(-shift)] .= 0
+                    continue
+                end
+            else
+                param1 = M0 \ y0
+            end
+
+            matrix[i, 1:(-shift)] = param1[1] .+ param1[2] .* h0[1:(-shift)]
         end
     end
-    return var2
+    return matrix
+end
+
+
+function gemb_rate_physical_constraints!(gemb)
+    acc = gemb["acc"]
+    acc[acc.<0] .= 0
+
+    rain = gemb["rain"]
+    rain[rain.<0] .= 0
+
+    melt = gemb["melt"]
+    melt[melt.<0] .= 0
+
+    refreeze = gemb["refreeze"]
+    refreeze[refreeze.<0] .= 0
+
+    # refreeze can not exceed melt
+    refreeze[refreeze.>melt] = melt[refreeze.>melt]
+
+    # runoff must equal melt - refreeze [rain is not included in runoff calculation]
+    gemb["runoff"] = melt .- refreeze;
+
+    # SMB must equal acc - runoff - ec [rain is not included in SMB calculation]
+    gemb["smb"] = acc .- gemb["runoff"] .- gemb["ec"];
+
+    return gemb
 end
