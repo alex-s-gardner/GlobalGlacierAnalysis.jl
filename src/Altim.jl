@@ -22,7 +22,7 @@ module Altim
     using GeoTiles
     using NearestNeighbors
     using Stencils  
-    using Infiltrator
+    #using Infiltrator
     using Rasters
     using MAT
     using ScatteredInterpolation
@@ -39,6 +39,8 @@ module Altim
     using Distributions
     using Images
     using FlexiJoins
+    using ProgressMeter
+    using Loess
 
     using LinearAlgebra
     using Rotations
@@ -49,25 +51,25 @@ module Altim
     using AbstractTrees
     using ProgressMeter
     using Random
-    using SortTileRecursiveTree
     using AbstractTrees
+    using RangeExtractor
 
-    using MLJ
-    using MLJLinearModels
+    #using MLJ
+    #using MLJLinearModels
     using LazyGrids
 
     using LibGEOS
     using GeoInterface
     using Shapefile
     using FileIO
-    using Plots
+    #using Plots
 
     import GeometryOps as GO
     import GeoInterface as GI
     import GeoFormatTypes as GFT
     import GeometryOpsCore
     import LibGEOS as LG
-import GeometryOpsCore as GOC
+    import GeometryOpsCore as GOC
 
     #include("utilities.jl")
     include("utilities.jl")

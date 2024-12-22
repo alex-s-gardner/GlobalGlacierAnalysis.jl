@@ -141,7 +141,7 @@ function plot_multiregion_dvdm(df;
     y2ticks = zeros(n)
     y2ticklabels = fill("", n)
     y2ticklabelcolor = palette.color
-    yticklabels = [Altim.rgi2label[r] for r in dfX.rgi]
+    yticklabels = [Altim.rgi2label[rginum2txt[r]] for r in dfX.rgi]
 
     # this is a hack... axes need to be defined early or things break
     ax1 = CairoMakie.Axis(f[1, 1];
@@ -226,7 +226,6 @@ function plot_multiregion_dvdm(df;
         ylims = [ymin, ymax]
     end
 
-  
     CairoMakie.ylims!(minimum(ylims), maximum(ylims))
     CairoMakie.reset_limits!(ax1) # this is needed to be able to retrive limits
 
@@ -239,7 +238,14 @@ function plot_multiregion_dvdm(df;
     ax1.ygridvisible = showlines
 
     #!showlines && CairoMakie.hidexdecorations!(ax1,)
-    ax2.yticks = (y2ticks, y2ticklabels)
+    try
+        ax2.yticks = (y2ticks, y2ticklabels)
+    catch e
+        printstyled("NOTE: if you end up here there is a bug with CairoMakie in which a cryptic error is thrown when the ytick positions exceed the yaxis limits\n"; color=:red)
+        rethrow(e)
+    end
+
+
     ax2.yticklabelcolor = y2ticklabelcolor
 
     foo = ax1.yaxis.attributes.limits.val
@@ -277,6 +283,30 @@ function plot_multiregion_dvdm(df;
 end
 
 
+
+
+
+"""
+    geotile_filled_dv_reg(dh, nobs0, geotiles, reg)
+
+Calculate volume change per geotile and combine into regional estimates.
+
+# Arguments
+- `dh`: Dictionary mapping mission names to arrays of elevation changes
+- `nobs0`: Dictionary mapping mission names to arrays of observation counts
+- `geotiles`: DataFrame containing geotile information including area and region assignments
+- `reg`: Vector of region identifiers
+
+# Returns
+- `dv_reg`: Array of volume changes per mission, region and date
+- `nobs_reg`: Array of observation counts per mission, region and date  
+- `area_reg`: Vector of total area per region
+
+# Details
+For each geotile, calculates volume change by multiplying elevation change by area.
+Then aggregates geotile volume changes into regional totals based on region assignments.
+Handles NaN values and zero-filling appropriately.
+"""
 function geotile_filled_dv_reg(dh, nobs0, geotiles, reg)
 
     vars = keys(dh)

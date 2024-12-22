@@ -224,74 +224,6 @@ function gemb2dataframe(;
     return df
 end
 
-function gem_Δvolume!_old(df)
-
-    volume2mass = Altim.δice / 1000
-    dates = DataFrames.metadata(df, "date")
-    decyear = Altim.decimalyear.(dates)
-    Δdecyear = decyear .- decyear[1]
-
-    index_smb = df.var .== "smb_km3"
-    index_fac = df.var .== "fac_km3"
-
-    df_smb = df[index_smb, :]
-    df_fac = df[index_fac, :]
-
-    df_dv = copy(df_smb)
-    df_dv[!, :var] .= "dv_km3"
-    df_dv[!, :val] .= [fill(NaN, length(decyear))]
-    df_dv[!, :nobs] .= [fill(0, length(decyear))]
-
-    df_dm = copy(df_dv)
-    df_dm[!, :var] .= "dm_gt"
-
-    Threads.@threads for i in 1:nrow(df_dv)
-
-        smb = df_smb[i, :val]
-        fac = df_fac[i, :val]
-        rgi = df_smb[i, :rgi]
-        nobs0 = df_smb[i, :nobs]
-
-        discharge = Altim.discharge_gtyr[rgi]
-
-        if isnan(discharge) && (rgi == "rgi19")
-            # discharge set equal to mass balance from icesat period
-            index = (decyear .> 2003) .& (decyear .<= 2009)
-            x = Δdecyear[index] .- mean(Δdecyear[index])
-            y = smb[index] .- mean(smb[index])
-            discharge = x \ y * volume2mass
-
-            println(discharge)
-
-            # println("Δheight = $(r.Δheight), pscale = $(r.pscale): discharge = $discharge Gt")
-        elseif isnan(discharge) && (rgi == "rgi12")
-            # discharge set equal to mass balance from icesat period
-            index = (decyear .> 2000) .& (decyear .<= 2005)
-            x = Δdecyear[index] .- mean(Δdecyear[index])
-            y = smb[index] .- mean(smb[index])
-            discharge = x \ y * volume2mass
-
-            #println("Δheight = $(r.Δheight), pscale = $(r.pscale): discharge = $discharge Gt")
-        end
-
-        discharge = discharge * Δdecyear
-
-        dv_km3 = (smb / volume2mass) .+ fac .- (discharge / volume2mass)
-        df_dv[i, :val] = dv_km3
-        df_dv[i, :nobs] = nobs0
-
-        dm_gt = smb .- discharge
-        df_dm[i, :val] = dm_gt
-        df_dm[i, :nobs] = nobs0
-    end
-
-    df = append!(df, df_dv)
-    df = append!(df, df_dm)
-
-    return df
-end
-
-
 function gemb_classes_densify!(df; n_densify = 4)
 
     # interpolate between gemb classes
@@ -386,7 +318,7 @@ The extrapolation uses a linear fit based on normalized height coordinates.
 # Returns
 The modified input matrix
 """
-function _matrix_shift_ud!(matrix, shift; exclude_zeros_in_extrapolation = false)
+function _matrix_shift_ud!(matrix, shift; exclude_zeros_in_extrapolation=false, npts_linear_extrapolation=Inf)
 
     n = size(matrix, 2)
     h0 = (1.:n)./n .- 0.5
@@ -401,8 +333,23 @@ function _matrix_shift_ud!(matrix, shift; exclude_zeros_in_extrapolation = false
         M0 = @view M[1:(end-shift), :]
 
         for i in axes(matrix, 1)
-            param1 = M0 \ matrix[i, 1:(end-shift)]
-                matrix[i, (end-shift+1):end] = param1[1] .+ param1[2] .* h0[(end-shift+1):end]
+            y0 = @view matrix[i, 1:(end-shift)]
+            if exclude_zeros_in_extrapolation
+                valid = y0 .!= 0
+                if any(valid)
+                    if sum(valid) > npts_linear_extrapolation
+                        valid = findall(valid)[(end-npts_linear_extrapolation+1):end]
+                    end
+                    param1 = M0[valid, :] \ y0[valid] 
+                else
+                    matrix[i, (end-shift+1):end] .= 0
+                    continue
+                end
+            else
+                param1 = M0 \ y0
+            end
+            
+            matrix[i, (end-shift+1):end] = param1[1] .+ param1[2] .* h0[(end-shift+1):end]
         end
 
     elseif shift < 0 # shift values up
@@ -418,6 +365,9 @@ function _matrix_shift_ud!(matrix, shift; exclude_zeros_in_extrapolation = false
             if exclude_zeros_in_extrapolation
                 valid = y0 .!= 0
                 if any(valid)
+                    if sum(valid) > npts_linear_extrapolation
+                        valid = findall(valid)[1:npts_linear_extrapolation]
+                    end
                     param1 = M0[valid, :] \ y0[valid]
                 else
                     matrix[i, 1:(-shift)] .= 0
@@ -457,4 +407,259 @@ function gemb_rate_physical_constraints!(gemb)
     gemb["smb"] = acc .- gemb["runoff"] .- gemb["ec"];
 
     return gemb
+end
+
+
+
+function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_model_fits = nothing)
+
+    # there are issues with calibrating the smb model to individual geotiles as glaciers
+    # can cross multiple geotiles. To tackle this issue we to disconected geotile groups
+
+    ddate = dims(dv_altim, :date)
+    dΔheight = dims(smb, :Δheight)
+    dpscale = dims(smb, :pscale)
+    ddate_gemb = dims(smb, :date)
+    dgeotile = dims(smb, :geotile)
+
+    volume2mass = Altim.δice / 1000
+
+    if .!isnothing(examine_model_fits)
+        geotile_ref = examine_model_fits
+    else
+        geotile_ref = dgeotile[1]
+    end
+
+    # find common overlap 
+    index = .!isnan.(smb[At(geotile_ref), :, 1, 1])
+    ex_gemb = extrema(ddate_gemb[index])
+    index = .!isnan.(dv_altim[At(geotile_ref), :])
+    ex_dv = extrema(ddate[vec(index)])
+    ex = (max(ex_gemb[1], ex_dv[1]), min(ex_gemb[2], ex_dv[2]))
+    index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
+    index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
+
+    decyear = Altim.decimalyear.(ddate_gemb[index_gemb])
+    Δdecyear = decyear .- mean(decyear)
+
+    # loop for each geotile
+    geotiles = copy(geotiles)
+    geotiles[!, :pscale] .= 1.0;
+    geotiles[!, :Δheight] .= 0.0;
+    geotiles[!, :mad] .= 0.0;
+
+    if .!isnothing(examine_model_fits)
+        verbose = true
+        ind = geotiles.id .== examine_model_fits;
+        geotiles = geotiles[geotiles.group .== geotiles[ind, :group], :]
+    else
+        verbose = false
+    end
+
+    # loop for each group
+    # NOTE: do not do a groupby on geotiles as you need to keep the original geotiles order
+
+    # !!! POSSABLY NOT SAVE TO MULTI THREAD ON THIS LOOP !!!
+    Threads.@threads for grp in unique(geotiles.group)
+
+        discharge_km3yr = 0.0
+        gindex = grp .== geotiles.group
+
+        for geotile = eachrow(geotiles[gindex, :])
+
+            # total discharge D in Gt/yr converted to km3/yr
+            index = Altim.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
+
+            if any(index)
+                discharge_km3yr += sum(discharge[index, :discharge_gtyr]) ./ volume2mass
+            end
+        end
+
+        pscale0 = 1
+        Δheight0 = 0
+        mad0 = Inf
+
+        dv0 = dv_altim[At(geotiles[gindex, :id]), index_dv]
+        dv0 = dropdims(sum(dv0, dims=:geotile), dims=:geotile)
+        
+        if verbose
+            best_fit = zeros(size(dv0))
+            best_smb = zeros(size(dv0))
+            best_fac = zeros(size(dv0))
+            best_discharge = zeros(size(dv0))
+            best_offset = 0.
+
+            f = Figure(size=(1000, 1000))
+            f[1, 1] = CairoMakie.Axis(f)
+        end
+
+        for pscale in dpscale
+            #pscale = first(dpscale)
+
+            for Δheight in dΔheight
+                #Δheight = first(dΔheight)
+                smb0 = smb[At(geotiles[gindex, :id]), index_gemb, At(pscale), At(Δheight)] # smb is in unit of m ice equivalent [m i.e.]
+                smb0 = dropdims(sum(smb0, dims=:geotile), dims=:geotile)
+
+                fac0 = fac[At(geotiles[gindex, :id]), index_gemb, At(pscale), At(Δheight)]
+                fac0 = dropdims(sum(fac0, dims=:geotile), dims=:geotile)
+
+                res = dv0 .- (smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear))
+
+                # align the center of the residual distribution to zero
+                #res0 = round(Int,mean(res))
+                res0 = res[ceil(Int, length(res) / 2)]
+                res0 = median(res)
+                res = res .- res0;
+
+                verbose && CairoMakie.lines!((smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear)) .+ res0)
+
+                if any(isnan.(res))
+                    display(dv0)
+                    display(discharge_km3yr)
+                    println(cname)
+
+                    error()
+                end
+
+                mad1 = Altim.mad(res)
+
+                if mad1 < mad0
+                    mad0 = mad1
+                    pscale0 = pscale
+                    Δheight0 = Δheight
+
+                    if verbose
+                        best_fit = (smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear)) .+ res0
+                        best_smb = smb0
+                        best_fac = fac0
+                        # thi is +/- is done to get dates right for ploting
+                        best_discharge = discharge_km3yr .* Δdecyear .+ best_fac .- best_fac 
+                        best_offset = res0
+                    end
+                end
+            end
+        end
+
+
+        if verbose
+            CairoMakie.lines!(dv0; color = :black)
+            CairoMakie.lines!(best_fit; color=:red)
+            CairoMakie.lines!(best_fit; color=:red)
+            display(f)
+
+            f2 = Figure(size=(1000, 1000))
+            p2 = f2[1, 1] = CairoMakie.Axis(f2, title="best fit for $examine_model_fits [pscale = $pscale0, Δheight = $Δheight0, mad = $(round(mad0; digits=2))]", xlabel="year", ylabel="km3")
+
+            CairoMakie.lines!(best_smb; label="smb")
+            CairoMakie.lines!(best_fac; label="fac")
+            CairoMakie.lines!(best_discharge; label="discharge")
+            CairoMakie.lines!(dv0 .- best_offset; label="dh - obs", color = :black, linewidth = 2)
+            CairoMakie.lines!(best_fit .- best_offset; label="dh - model", color=:red, linewidth=2)
+
+            f2[1, 2] = Legend(f2[1, 1], p2, framevisible=false)
+            
+            display(f2)
+        end
+
+        geotiles[gindex, :pscale] .= pscale0
+        geotiles[gindex, :Δheight] .= Δheight0
+        geotiles[gindex, :mad] .= mad0
+    end
+    return geotiles[:, [:id, :extent, :pscale, :Δheight, :mad]]
+    
+end
+
+
+# this function is used to add pscale classes gemb 
+function add_pscale_classes(var0, dpscale_new; allow_negative=false)
+
+    ddate = dims(var0, :date)
+    dheight = dims(var0, :height)
+    dpscale = dims(var0, :pscale)
+    dΔheight = dims(var0, :Δheight)
+
+    interpolate_index = (dpscale_new .>= minimum(dpscale)) .& (dpscale_new .<= maximum(dpscale))
+    extrapolate_lower_index = .!interpolate_index
+    extrapolate_lower_index[findfirst(interpolate_index):end] .= false
+    extrapolate_upper_index = .!interpolate_index
+    extrapolate_upper_index[1:findlast(interpolate_index)] .= false
+    extrapolate_index = extrapolate_lower_index .| extrapolate_upper_index
+    x = collect(dpscale)
+    x_new = collect(dpscale_new)
+
+    # this can be removed after code rerun
+    x_sort_perm = sortperm(x)
+    x = x[x_sort_perm]
+
+    M = hcat(ones(length(x)), x)
+
+    gemb_new = fill(NaN, (ddate, dheight, dpscale_new, dΔheight))
+
+    valid_range, = Altim.validrange(.!isnan.(var0[:, 1, 1, 1]))
+
+    Threads.@threads for date in ddate[valid_range]
+        #date = ddate[820]
+
+        y_new = fill(NaN, length(x_new))
+
+        for height in dheight
+            #height = 1050
+
+            for Δheight in dΔheight
+                #Δheight = 0
+
+                y = var0[At(date), At(height), :, At(Δheight)]
+
+                # this can be removed after code rerun
+                y[:] = y[x_sort_perm]
+
+                if !allow_negative
+                    valid_interp = y .>= 0
+                end
+
+                if sum(valid_interp) >= 2
+
+                    # Loess interpolation on so few points == linear interpolation but is much slower
+                    #model = Loess.loess(x, y, span=0.3)
+                    #y_new[interpolate_index] = Loess.predict(model, x_new[interpolate_index])
+
+                    model = DataInterpolations.LinearInterpolation(y, x)
+                    y_new[interpolate_index] = model(x_new[interpolate_index])
+
+                    x0 = x[valid_interp]
+                    y0 = y[valid_interp]
+                    M0 = M[valid_interp, :]
+
+                    if length(x0) > 3
+                        lowest_pts = 1:3
+                        highest_pts = length(x0)-2:length(x0)
+
+                        param1 = M0[lowest_pts, :] \ y0[lowest_pts]
+                        y_new[extrapolate_lower_index] = param1[1] .+ x_new[extrapolate_lower_index] .* param1[2]
+
+                        param2 = M0[highest_pts, :] \ y0[highest_pts]
+                        y_new[extrapolate_upper_index] = param2[1] .+ x_new[extrapolate_upper_index] .* param2[2]
+                    else
+                        param1 = M0 \ y0
+                        y_new[extrapolate_index] = param1[1] .+ x_new[extrapolate_index] .* param1[2]
+                    end
+                
+                    if !allow_negative
+                        y_new[y_new.<0] .= 0
+                    end
+
+                    # sanity check
+                    # p = lines(x_new, y_new);
+                    # CM.plot!(x,collect(y))
+                else
+                    y_new[:] .= 0
+                end
+
+                gemb_new[At(date), At(height), :, At(Δheight)] = y_new
+            end
+        end
+    end
+
+    return gemb_new
 end

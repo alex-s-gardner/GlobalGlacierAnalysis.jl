@@ -69,11 +69,14 @@ rivers[!, :geometry_buffered] = geometry_buffered
 g = rivers.geometry_buffered[1]
 g0 =  [GI.Polygon(GI.LinearRing(GI.getgeom(g.geom[1])))]
 geometry_buffered_cropped = [];
-p = plot(g0[1])
+#p = plot(g0[1])
 
 @showprogress dt = 1 desc = "buffering rivers..." for (i, g) in enumerate(rivers.geometry_buffered[2:end])
-    #g = rivers.geometry_buffered[88]
-    println(i)
+
+    #g = rivers.geometry_buffered[40]
+    #i = 36
+#println(i)
+#g = rivers.geometry_buffered[i+1]
 
     # find intersection of geometry with all previous geometries
     g = GI.Polygon(GI.LinearRing(GI.getgeom(g.geom[1])))
@@ -91,8 +94,8 @@ p = plot(g0[1])
         gdiff = GO.difference(g, gx; target=GI.PolygonTrait())
     end
     
-    plot!(gdiff[1])
-    push!(geometry_buffered_cropped, gdiff[1])
+   #plot!(gdiff[1])
+    push!(geometry_buffered_cropped, gdiff)
 
     # union with all previous geometries
     g0 = GO.union(g0[1], g; target=GI.PolygonTrait())

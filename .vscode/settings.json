@@ -1,4 +1,4 @@
 {
     "githubRepositories.autoFetch.enabled": false,
-    "julia.NumThreads": 48
+    "julia.NumThreads": 128
 }

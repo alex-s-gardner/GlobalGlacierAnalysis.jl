@@ -1,3 +1,5 @@
+## NOTE: raw REMB output is in unit of m ice equivalent assuing an ice density of 910 kg/m3
+
 # This script processes GEMB (Glacier Energy Mass Balance) model data into geotiles and regions.
 # Key processing steps:
 #
@@ -21,7 +23,7 @@
 #    - Fills missing values across elevations using LOESS smoothing
 #    - Creates new elevation classes through height shifts
 #    - Applies physical constraints on variables
-#    - Calculates volume changes using glacier areas
+#    - Calculates volume changes using glacier hysometry
 #    - Saves filled data for each geotile
 #
 # 5. Regional Aggregation (~11 sec):
@@ -32,11 +34,10 @@
 #
 # Total runtime is approximately 9.5 hours, with most time spent on gap filling
 # and creating height classes in step 4.
-
-
-@time begin
-    # set force_remake == true to redo all steps from scratch
+#@time begin
+    # set force_remake == true to redo all steps from scratch 
     force_remake = true;
+
 
     # This section initializes the GEMB (Glacier Energy Mass Balance) model:
     #
@@ -299,7 +300,7 @@
         dheight = Dim{:height}(height_center)
         ddate = Dim{:date}(date_center)
         dgeotile = Dim{:geotile}(geotiles.id)
-        dpscale = Dim{:pscale}(unique_precipitation_scale)
+        dpscale = Dim{:pscale}(sort(unique_precipitation_scale))
 
         gemb0 = Dict();
         for k in vars
@@ -402,17 +403,20 @@
     #
     # NOTE: Linear extrapolation over long distances is not ideal and requires
     # running GEMB for a wider range of elevation classes to improve results.
+    
     if .!(isfile(filename_gemb_geotile_filled_dv)) || force_remake
 
-        printstyled("!!!!! FILLING GEMB GEOTILES, THIS WILL TAKE ~9 HRS !!!!!\n", color=:red)
+        printstyled("!!!!! FILLING GEMB GEOTILES ADD ADDING ΔHEIGHT CLASSES, THIS WILL TAKE ~4 HRS using 48 threads !!!!!\n", color=:red)
         
         # fill filename_gemb_geotile
         gemb = load(filename_gemb_geotile)
-        dgeotile = dims(gemb[first(keys(gemb))], :geotile)
-        ddate = dims(gemb[first(keys(gemb))], :date)
-        dheight = dims(gemb[first(keys(gemb))], :height)
-        dpscale = dims(gemb[first(keys(gemb))], :pscale)
+        k = first(keys(gemb))
+        dgeotile = dims(gemb[k], :geotile)
+        ddate = dims(gemb[k], :date)
+        dheight = dims(gemb[k], :height)
+        dpscale = dims(gemb[k], :pscale)
         x = collect(dheight);
+        npts_linear_extrapolation = 7;
 
         # NOTE: smb and runoff are excluded from the filling and extrapolation as they are derivatives 
         # of melt, refreeze and acc. To maitain mass conservation "smb" and "runoff" are 
@@ -423,23 +427,33 @@
         ### !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! ###
         if false
             gtids = ["lat[-14-12]lon[-076-074]", "lat[-10-08]lon[-078-076]", "lat[+28+30]lon[+082+084]", "lat[+58+60]lon[-136-134]", "lat[+68+70]lon[-070-068]", "lat[+62+64]lon[-044-042]", "lat[+32+34]lon[+076+078]", "lat[+28+30]lon[+092+094]", "lat[-46-44]lon[+168+170]", "lat[-70-68]lon[-068-066]", "lat[-52-50]lon[-074-072]"]
-
+            
+            #gtids = ["lat[-44-42]lon[+170+172]"]
+            
             test_ind = [findfirst(isequal(gtid), dgeotile.val) for gtid in gtids]
             dgeotile = dgeotile[test_ind]
         end
         ### !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! ###
 
-        # This take 36 minutes
-        for k in vars
-        #k = "acc"
-            @showprogress desc="Smoothing and extrapolating $k for all heights... "  Threads.@threads for geotile in dgeotile   
-            #geotile = "lat[+34+36]lon[+076+078]"
+        # This take 36 minutes        
+        @showprogress desc="Smoothing and extrapolating across all heights... "  Threads.@threads for geotile in dgeotile   
+        #geotile = first(dgeotile)
 
+            for k in vars
+            #k = "fac"
                 for pscale in dpscale
                 #pscale = 1
 
-                    # there is an issue with the interpolating the cumulitive variables... interpolation needs to be done on rates to ensure they are physical
+                    # there is an issue with the interpolating the cumulitive variables... 
+                    # interpolation needs to be done on rates to ensure they are physical
                     var0 = gemb[k][At(geotile), :, :, At(pscale)]
+
+                    dheight = dims(var0, :height)
+
+                    # for LSQ fitting
+                    x0 = (1:length(dheight))./length(dheight) .- 0.5
+                    M0 =  M = hcat(ones(length(x0)), x0);
+                    npts = npts_linear_extrapolation; # just so I can use as shorthand
 
                     # sanity check
                     #CairoMakie.heatmap(var0)
@@ -450,15 +464,20 @@
                     end
 
                     # calculate rates
-                    ind = findfirst(.!vec(all(isnan.(var0), dims=:height))) - 1
-                    var0[ind, :] .= 0
-                    var0_rate = var0[2:end,:] .- collect(var0[1:end-1,:])
+                    if k == "fac"
+                        # do not compute rates for interpolating FAC
+                        var0_rate = var0[2:end,:];
+                    else
+                        ind = findfirst(.!vec(all(isnan.(var0), dims=:height))) - 1
+                        var0[ind, :] .= 0
+                        var0_rate = var0[2:end,:] .- collect(var0[1:end-1,:])
+                    end
 
                     # sanity check
                     #CairoMakie.heatmap(var0_rate)
 
                     for date in dims(var0_rate, :date)
-                    #date = ddate[925]
+                    #date = ddate[920]
 
                         #println((; k, geotile, date, pscale))
                         y = var0_rate[At(date), :]
@@ -468,53 +487,103 @@
                 
                         valid = .!isnan.(collect(y))
                     
-                        # only positive rates are valid for these variables
-                        if k in ("acc", "refreeze", "melt", "rain")
+                        if all(valid) || !any(valid)
+                            continue
+                        end
+                    
+                        
+                        if k in ("acc", "refreeze", "melt", "rain", "fac")
+                            # only positive rates are valid for these variables
+                            # remember, "fac" is not a rate
                             valid = valid .& (y .>= 0)
                         end
 
                         if all(valid) || !any(valid)
-                            continue
-                        end
-
-                        # smooth variables with height and interpolate gaps
-                        validgap = Altim.validgaps(valid)
-
-                        # NOTE: interplation increases per variable time from 1 min to 6 min 
-                        if sum(valid) > 3
-                            model = loess(x[valid], y[valid], span=0.3)
-                            y[valid .| validgap]  = predict(model, x[valid .| validgap])
-                        end
-
-                        fill_index = isnan.(collect(y))
-                        if (k == "ec") || (k == "fac")
-                            valid_interp_index = .!fill_index
+                            y[:] .= 0
                         else
-                            # do not include zeros in linear extrapolation as a funciton of elevation
-                            valid_interp_index = .!fill_index .& (y .!= 0)
-                        end
+                            # smooth variables with height and interpolate gaps
+                            validgap = Altim.validgaps(valid)
 
-                        # linearly extrapolate the data
-                        # simple linear extrapolation is crude but robust... more precipitation and melt classes are needed in future 
-                        if any(fill_index) &&  sum(valid_interp_index) > 2
-                            x0 = (x .- mean(x[valid_interp_index]))/1000
-                            # apply a functional fit to extrapolate data [this does not work well for melt]
-                            M = hcat(ones(sum(valid_interp_index)), x0[valid_interp_index]);
-                            param1 = M\y[valid_interp_index]
+                            # NOTE: interplation increases per variable time from 1 min to 6 min 
+                            if sum(valid) > 4
+                                model = loess(x[valid], y[valid], span=0.3)
+                                y[valid .| validgap]  = predict(model, x[valid .| validgap])
+                            end
 
-                            y[fill_index] = max.(param1[1] .+ x0[fill_index].*param1[2], 0)
-                        else
-                            y[fill_index] .= 0
+                            # sanity check
+                            #lines!(y)
+
+                            fill_index = isnan.(collect(y))
+                            if (k == "ec")
+                                valid_interp_index = .!fill_index
+                            else
+                                # do not include zeros in linear extrapolation as a funciton of elevation
+                                valid_interp_index = .!fill_index .& (y .!= 0)
+                            end
+
+                            # linearly extrapolate the data
+                            # simple linear extrapolation is crude but robust... 
+                            # more precipitation and melt classes are needed in future 
+                            if any(fill_index) &&  (sum(valid_interp_index) > 3)
+                                if sum(valid_interp_index) < npts+2
+                                    # apply a functional fit to extrapolate data [this does not work well for melt]
+                                    M = @view M0[valid_interp_index,:]
+                                    param1 = M\y[valid_interp_index]
+
+                                    y[fill_index] = param1[1] .+ x0[fill_index].*param1[2]
+              
+                                else
+                                    # split into upper and lower extrapolations
+                                    fill_index_lower = copy(fill_index)
+                                    fill_index_lower[findfirst(.!fill_index):end] .= false
+                                    
+                                    fill_index_upper = copy(fill_index)
+                                    fill_index_upper[1:findfirst(.!fill_index_upper)] .= false
+
+                                    valid_interp_index_lower = findall(valid_interp_index)[1:npts]
+                                    valid_interp_index_upper = findall(valid_interp_index)[end-npts+1:end]
+
+                                    if any(fill_index_lower)
+                                        M = @view M0[valid_interp_index_lower,:]
+                                        param1 = M\y[valid_interp_index_lower]
+
+                                        y[fill_index_lower] = param1[1] .+ x0[fill_index_lower].*param1[2]
+                                    end
+
+                                    if any(fill_index_upper)
+                                        M = @view M0[valid_interp_index_upper,:]
+                                        param1 = M\y[valid_interp_index_upper]
+                                        y[fill_index_upper] = param1[1] .+ x0[fill_index_upper].*param1[2]
+                                    end
+                                end
+
+                                if k in ("acc", "refreeze", "melt", "rain", "fac")
+                                    y[y.<0] .= 0
+                                end
+
+                            else
+                                y[fill_index] .= 0
+                            end
+
+                            # sanity check
+                            #lines!(y)
+                            #p
                         end
 
                         gemb[k][At(geotile), At(date), :, At(pscale)] = y;
                     end
                 end
             end
+            #sanity check
+            #for k in vars
+            #    p = CairoMakie.heatmap(gemb[k][At(geotile), :, :, At(pscale)])
+            #    display(p)
+            #end      
         end
 
-        # set some physcial constraints
+        # set some physcial constraints [I think this is redundent now]
         gemb = Altim.gemb_rate_physical_constraints!(gemb)
+        gemb["fac"][gemb["fac"] .< 0] .= 0 #fac is handled seperately as it is not a rate
 
         # create a DD for volume change results
         gemb_dv = Dict()
@@ -523,68 +592,72 @@
         end
 
         # add height classes and save to disk for each geotile [THIS TAKES 8 HRS]
-        @showprogress desc="Adding height classes [expect 9 hrs]..." for geotile in dgeotile
-
+        @showprogress desc="Adding Δheight classes [expect 4 on 48 threads]..." Threads.@threads for geotile in dgeotile
+        #geotile = first(dgeotile)
+            
             filename_gemb_geotile_filled = replace(filename_gemb_geotile, ".jld2" => "_$(geotile)_filled.jld2")
 
-            gemb_gt = Dict()
-            for k in vars
-                gemb_gt[k] = fill(NaN, (ddate, dheight, dpscale, dΔheight))
-            end
+            if !isfile(filename_gemb_geotile_filled) || force_remake
 
-            Threads.@threads for k in vars
-            #k = "runoff"
-                for Δheight in dΔheight
-                #Δheight = dΔheight[7]
-            
-                    for pscale in dpscale
-                    #pscale = dpscale[5]
-        
-                        if k == "nobs"
-                            gemb_gt[k][:,:,At(pscale),At(Δheight)] = gemb[k][At(geotile), :, :, At(pscale)]
-                        else
-                            var0 = copy(gemb[k][At(geotile), :, :, At(pscale)])
-            
-                            # shift elevation
-                            height_shift = round(Int16(Δheight / height_bin_interval))
-
-                            if (k == "ec") || (k == "fac")
-                                gemb_gt[k][:,:,At(pscale),At(Δheight)] = Altim._matrix_shift_ud!(var0, height_shift; exclude_zeros_in_extrapolation = false)
-                            else
-                                gemb_gt[k][:,:,At(pscale),At(Δheight)] = Altim._matrix_shift_ud!(var0, height_shift; exclude_zeros_in_extrapolation = true)
-                            end
-                        end
-                    end
+                gemb0 = Dict()
+                for k in vars
+                    gemb0[k] = deepcopy(gemb[k][At(geotile), :, :, :])
                 end
-            end
 
-            gemb_gt = Altim.gemb_rate_physical_constraints!(gemb_gt)
-            
-            # transform back into cumulative variables
-            for k in setdiff(collect(keys(gemb_gt)), ["nobs"])
+                gemb_gt = Dict()
+                for k in vars
+                    gemb_gt[k] = fill(NaN, (ddate, dheight, dpscale, dΔheight))
+                end
+
+                for k in vars
+                #k = "melt"
+
+                    if (k == "ec")
+                        exclude_zeros_in_extrapolation = false
+                    else
+                        exclude_zeros_in_extrapolation = true
+                    end
+
+                    for Δheight in dΔheight
+                    #Δheight = +2000
                 
-                for height in dheight
-                #height = dheight[20]
-
-                    for pscale in dpscale
-                    #pscale = first(dpscale)
-                        
-                        for Δheight in dΔheight
-                            y = gemb_gt[k][:,At(height),At(pscale),At(Δheight)]
-                            valid = .!isnan.(y)
-                            if any(valid)
-                                gemb_gt[k][valid, At(height), At(pscale), At(Δheight)] = cumsum(y[valid], dims = :date);
+                        for pscale in dpscale
+                        #pscale = 1
+                            if k == "nobs"
+                                gemb_gt[k][:,:,At(pscale),At(Δheight)] = gemb0[k][:, :, At(pscale)]
+                            else              
+                                # shift elevation
+                                height_shift = round(Int16(Δheight / height_bin_interval))
+   
+                                gemb_gt[k][:,:,At(pscale),At(Δheight)] = Altim._matrix_shift_ud!(deepcopy(gemb0[k][:, :, At(pscale)]), height_shift; exclude_zeros_in_extrapolation, npts_linear_extrapolation)
                             end
                         end
                     end
                 end
-            end     
 
-            # save to disk
-            # NOTE: files saved to disk are only used if the hypsometric method is used for 
-            # geotile2glacier downscaling].. as of now the defualt method is by AREA so the 
-            # files are not used.
-            save(filename_gemb_geotile_filled, gemb_gt)
+                gemb_gt = Altim.gemb_rate_physical_constraints!(gemb_gt)
+                gemb["fac"][gemb["fac"] .< 0] .= 0 #fac is handled seperately as it is not a rate
+                
+                #sanity check
+                #for k in vars
+                #    p = CairoMakie.heatmap(gemb_gt[k][:, :, At(1), At(+200)]); display(p)
+                #    p = CairoMakie.heatmap(gemb_gt[k][:, :, At(1), At(-200)]); display(p)
+                #end  
+
+                # transform back into cumulative variables
+                for k in setdiff(collect(keys(gemb_gt)), ["nobs", "fac"])
+                    sindex = findfirst(.!isnan.(gemb_gt[k][:, 1, 1, 1]))
+                    gemb_gt[k][sindex:end, :, :, :] = cumsum(gemb_gt[k][sindex:end, :, :, :], dims=:date)
+                end
+
+                # save to disk
+                # NOTE: files saved to disk are used calculating ice discahge for unmeasured glaciers 
+                # AND for geotile2glacier downscaling if the hypsometric method is used
+                save(filename_gemb_geotile_filled, gemb_gt)
+            else
+                println("direct read from $filename_gemb_geotile_filled")
+                gemb_gt = load(filename_gemb_geotile_filled)
+            end
 
             # create volume change time series for each geotile
             df_index = findfirst(isequal(geotile), geotiles.id)
@@ -605,56 +678,104 @@
         save(filename_gemb_geotile_filled_dv, gemb_dv)
     end
 
+#end
 
-    # Aggregates GEMB data into regional volume metrics
-    #
-    # This section:
-    # 1. Loads the geotile-level volume change data
-    # 2. Creates dimensions for RGI regions, dates, precipitation scales and height deltas
-    # 3. Aligns geotile dataframe indices with DimArrays
-    # 4. For each RGI region:
-    #    - Calculates total glacier area in km2
-    #    - Sums volume changes across all geotiles in the region
-    # 5. Saves regional aggregated data to file
-    #
-    # Takes ~11 seconds to run
-    if .!(isfile(filename_gemb_geotile_filled_dv_reg)) || force_remake
-        println("calculate volume anomaly for regions, this will take ~11 sec")
+    # Try creating new `pscale` classes
+   begin
+        printstyled("!!!!! ADDING PSCALE CLASSES, THIS WILL TAKE ~4 HRS using 48 threads !!!!!\n", color=:red)
+            
+        dpscale_new = Dim{:pscale}(0.25:0.25:4.0)
 
-        gemb = load(filename_gemb_geotile_filled_dv)
-        drgi = Dim{:rgi}(reg)
-        dpscale = dims(gemb[first(keys(gemb))], :pscale)
-        dΔheight = dims(gemb[first(keys(gemb))], :Δheight)
-        ddate = dims(gemb[first(keys(gemb))], :date)
-        vars = collect(keys(gemb))
+        filename_gemb_geotile_filled = replace(filename_gemb_geotile, ".jld2" => "_$(geotiles.id[1])_filled.jld2")
+        gembX = load(filename_gemb_geotile_filled)
+        
+        k = first(keys(gembX))
+        dpscale = dims(gembX[k], :pscale)
+        dΔheight = dims(gembX[k], :Δheight)
+        ddate = dims(gembX[k], :date)
+        dgeotile = Dim{:geotile}(geotiles.id)
 
-        # align geotile dataframe with DimArrays [this is overly cautious]
-        gt = collect(dims(gemb[first(keys(gemb))], :geotile))
-        gt_ind = [findfirst(geotiles.id .== g0) for g0 in gt]
-        geotiles = geotiles[gt_ind, :]
+        # create a DD for volume change results
+        gemb_dv = Dict()
+        for k in keys(gembX)
+            gemb_dv[k] = fill(NaN, (dgeotile, ddate, dpscale_new, dΔheight))
+        end 
 
-        # create or extract dimensions
-        gemb0 = Dict();
-        for k in vars
-            gemb0[k] = fill(NaN, (drgi, ddate, dpscale, dΔheight))
-        end
+        filename_gemb_geotile_filled_extra_dv = replace(filename_gemb_geotile, ".jld2" => "_filled_extra_dv.jld2")
+        
+        #index = Altim.within.(Ref(Altim.Extent(X=(-154,-131), Y=(57, 64))), mean.(getindex.(geotiles.extent,1)), mean.(getindex.(geotiles.extent,2)))
+        #geotiles = geotiles[index, :]
+        
 
-        area_km2 = fill(0., (drgi))
+        # Threads.@threads is being used lower down... 
+        @showprogress desc = "Adding pscale classes [expect 4 on 48 threads]..."  for geotile in geotiles.id
 
-        for rgi in drgi
-            #rgi = first(drgi)
-            index = geotiles[:, rgi] .> 0.0
+            println("\n$geotile")
 
-            area_km2[At(rgi)] = sum(reduce(hcat, geotiles.area_km2[index]))
+            filename_gemb_geotile_filled = replace(filename_gemb_geotile, ".jld2" => "_$(geotile)_filled.jld2")
+            filename_gemb_geotile_filled_extra = replace(filename_gemb_geotile, ".jld2" => "_$(geotile)_filled_extra.jld2")
+            
+            if !isfile(filename_gemb_geotile_filled_extra)
+                gemb = load(filename_gemb_geotile_filled)
+                vars = setdiff(collect(keys(gemb)), ["nobs", "smb", "runoff"]);
+        
+                gemb_new = Dict()
+                for k in vars
+                    if k in ("acc", "refreeze", "melt", "rain", "fac")
+                        allow_negative = false
+                    else
+                        allow_negative = true
+                    end
 
-            for k in vars
-            #k = "runoff"
-                gemb0[k][At(rgi), :, :, :] = sum(gemb[k][index, :, :, :], dims = :geotile)
+                    # all variables are converted to rates except for fac
+                    if k != "fac"
+                        sind = findfirst(.!isnan.(gemb[k][:, 1, 1, 1]))-1
+                        if sind > 2
+                            gemb[k][findfirst(.!isnan.(gemb[k][:, 1, 1, 1]))-1, :, :, :] .= 0
+                        end
+
+                        gemb[k][2:end, :, :, :] = gemb[k][2:end, :, :, :] .- collect(gemb[k][1:end-1, :, :, :])
+
+                        if sind > 2
+                            gemb[k][findfirst(.!isnan.(gemb[k][:, 1, 1, 1]))-1, :, :, :] .= NaN
+                        end
+                    end
+
+                    gemb_new[k] = Altim.add_pscale_classes(deepcopy(gemb[k][:, :, :, :]), dpscale_new; allow_negative=false)
+                end
+
+                gemb_new = Altim.gemb_rate_physical_constraints!(gemb_new)
+                gemb_new["fac"][gemb_new["fac"] .< 0] .= 0 #fac is handled seperately as it is not a rate
+
+                # transform back into cumulative variables
+                for k in setdiff(collect(keys(gemb_new)), ["nobs", "fac"])
+                    # restore to cumulative variable if it was converted to a rate
+                    sindex = findfirst(.!isnan.(gemb_new[k][:, 1, 1, 1]))
+                    gemb_new[k][sindex:end, :, :, :] = cumsum(gemb_new[k][sindex:end, :, :, :], dims=:date)
+                end
+
+                save(filename_gemb_geotile_filled_extra, gemb_new)
+            else
+                gemb_new = load(filename_gemb_geotile_filled_extra)
+            end
+
+            # create volume change time series for each geotile
+            df_index = findfirst(isequal(geotile), geotiles.id)
+            area = ones(length(ddate), 1) * hcat(geotiles[df_index, :area_km2])' ./ 1000 # divide by 1000 so that result in km3 (NOTE: vars are in mwe)
+            for k in collect(keys(gemb_new))
+                for pscale in dpscale_new
+                #pscale = first(dpscale)            
+                    for Δheight in dΔheight
+                        if k == "nobs"
+                            gemb_dv[k][At(geotile), :, At(pscale), At(Δheight)] =  sum(gemb_new[k][:,:,At(pscale),At(Δheight)], dims = :height);
+                        else
+                            gemb_dv[k][At(geotile), :, At(pscale), At(Δheight)] =  sum(gemb_new[k][:,:,At(pscale),At(Δheight)] .* area , dims = :height);
+                        end
+                    end
+                end
             end
         end
 
-        gemb0["area_km2"] = area_km2;
-
-        save(filename_gemb_geotile_filled_dv_reg, gemb0)
+        save(filename_gemb_geotile_filled_extra_dv, gemb_dv)
     end
 end

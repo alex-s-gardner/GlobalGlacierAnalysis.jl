@@ -4082,6 +4082,31 @@ rgi2label = Dict(
     "hll_ep" => "ASTER, ICESat/-2 no periphery: rgi 1, 3, 4, 6, 7, ,8, 9",
 )
 
+
+rginum2txt = Dict(
+    1 => "rgi1" ,
+    2 => "rgi2" ,
+    3 => "rgi3" ,
+    4 => "rgi4" ,
+    5 => "rgi5",
+    6 => "rgi6" ,
+    7 => "rgi7" ,
+    8 => "rgi8" ,
+    9 => "rgi9" ,
+    10 => "rgi10" ,
+    11 => "rgi11" ,
+    12 => "rgi12" ,
+    13 => "rgi13" ,
+    14 => "rgi14" ,
+    15 => "rgi15" ,
+    16 => "rgi16" ,
+    17 => "rgi17" ,
+    18 => "rgi18" ,
+    19 => "rgi19" ,
+    98 => "hma" ,
+)
+
+
 unit2areaavg = Dict(
     "km⁻³"=>"m", 
     "Gt"=>"m w.e."
@@ -4187,7 +4212,7 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
             valid = .!isnan.(y) .& date_index
 
             fit = curve_fit(
-                Altim.offset_trend_seasonal, 
+                Altim.offset_trend_seasonal2, 
                 x[valid], 
                 y[valid], 
                 Altim.p_offset_trend_seasonal
@@ -4195,13 +4220,14 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
 
             g[out_var_offset] = fit.param[1]
             g[out_var_trend] = fit.param[2]
-            g[out_var_amp] = fit.param[3]
-            g[out_var_phase] = fit.param[4]
+            g[out_var_amp] = hypot(fit.param[3], fit.param[4])
+            g[out_var_phase] = 365.25 * (mod(0.25 - atan(fit.param[4], fit.param[3]) / (2π), 1))
         end
 
         # Update the progress meter
         progress && update!(prog, prog.counter .+ 1)
     end
+    return df
 end
 
 
@@ -4292,4 +4318,49 @@ function connected_groups(connectivity)
     end
 
     return group_id
+end
+
+
+
+"""
+    mie2cubicms!(glaciers; tsvars=["dh", "smb", "fac", "runoff"])
+
+Convert glacier variables from meters ice equivalent (mie) to cubic meters per second (m³/s).
+
+# Arguments
+- `glaciers`: DataFrame containing glacier data with time series variables
+- `tsvars`: Vector of String column names for variables to convert (default: ["dh", "smb", "fac", "runoff"])
+
+# Returns
+- Modified glaciers DataFrame with converted values
+
+# Notes
+- Converts from meters ice equivalent (mie) to volume using glacier area
+- Converts volume to mass using ice density
+- Takes temporal derivative and converts to m³/s flow rate
+- Operates in-place on the input DataFrame
+- Requires uniform time steps between measurements
+"""
+function mie2cubicms!(glaciers; tsvars=["dh", "smb", "fac", "runoff"])
+    volume2mass = Altim.δice / 1000
+
+    # date interval in seconds
+    Threads.@threads for tsvar in tsvars
+        ddate = colmetadata(glaciers, tsvar, "date")
+        Δdate = Second.(unique(Day.(ddate[2:end] .- ddate[1:end-1])))
+
+        if length(Δdate) > 1
+            error("Time steps are not uniform")
+        else
+            Δt = Δdate[1]
+        end
+
+        for g in eachrow(glaciers)
+            #g = first(eachrow(glaciers))
+            # divide by 1000 to convert to m w.e. to km w.e. ... then convert to m^3 s-1 [1E3^3/Δt.value] ..
+            ro = g[tsvar] .* g[:area_km2] .* volume2mass # convert from mie -> volume -> mass
+            g[tsvar][2:end] = diff(ro) / 1000 * (1E3^3 / Δt.value)
+        end
+    end
+    return glaciers
 end

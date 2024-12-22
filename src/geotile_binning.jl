@@ -200,6 +200,7 @@
         force_remake = false,
     )
     
+    # [This might not be valid anymore... this is now handled in synthesis.jl]
     # Calculates regional volume change by aggregating geotile data [~3 min]
     @time Altim.geotile_regional_dv(;
         project_id,

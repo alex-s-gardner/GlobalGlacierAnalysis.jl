@@ -47,6 +47,14 @@ offset_trend_seasonal::Function =
     p[2] .* t .+ 
     p[3] .* sin.(2 .* pi .* (t .+ p[4]))
 
+
+offset_trend_seasonal2::Function =
+    offset_trend_seasonal2(t, p) =
+        p[1] .+
+        p[2] .* t .+
+        p[3] .* sin.(2π .* t) .+
+        p[4] .* cos.(2π .* t)
+
 const p_offset_trend_seasonal = zeros(4)
 
 function geotiles_mutually_exclusive_rgi!(geotiles) 
@@ -2593,153 +2601,4 @@ function gemb_bestfit(dv_altim, smb, fac, discharge, geotiles)
     end
 
     return geotiles[:, [:id, :extent, :pscale, :Δheight, :mad, :discharge_km3yr]]
-end
-
-
-
-function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; troubleshoot_geotile = nothing)
-
-    # there are issues with calibrating the smb model to individual geotiles as glaciers
-    # can cross multiple geotiles. To tackle this issue we to disconected geotile groups
-
-    ddate = dims(dv_altim, :date)
-    dΔheight = dims(smb, :Δheight)
-    dpscale = dims(smb, :pscale)
-    ddate_gemb = dims(smb, :date)
-
-    volume2mass = Altim.δice / 1000
-
-    # find common overlap 
-    index = .!isnan.(smb[1, :, 1, 1])
-    ex_gemb = extrema(ddate_gemb[index])
-    index = .!isnan.(dv_altim[1, :])
-    ex_dv = extrema(ddate[vec(index)])
-    ex = (max(ex_gemb[1], ex_dv[1]), min(ex_gemb[2], ex_dv[2]))
-    index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
-    index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
-
-    decyear = Altim.decimalyear.(ddate_gemb[index_gemb])
-    Δdecyear = decyear .- mean(decyear)
-
-    # loop for each geotile
-    geotiles = copy(geotiles)
-    geotiles[!, :pscale] .= 1.0;
-    geotiles[!, :Δheight] .= 0.0;
-    geotiles[!, :mad] .= 0.0;
-
-    if .!isnothing(troubleshoot_geotile)
-        verbose = true
-        ind = geotiles.id .== troubleshoot_geotile;
-        geotiles = geotiles[geotiles.group .== geotiles[ind, :group], :]
-    else
-        verbose = false
-    end
-
-    # loop for each group
-    # NOTE: do not do a groupby on geotiles as you need to keep the original geotiles order
-    Threads.@threads for grp in unique(geotiles.group)
-
-        discharge_km3yr = 0.0
-        gindex = grp .== geotiles.group
-
-        for geotile = eachrow(geotiles[gindex, :])
-
-            # total discharge D in Gt/yr converted to km3/yr
-            index = Altim.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
-
-            if any(index)
-                discharge_km3yr += sum(discharge[index, :discharge_gtyr]) ./ volume2mass
-            end
-        end
-
-        pscale0 = 1
-        Δheight0 = 0
-        mad0 = Inf
-
-        dv0 = dv_altim[At(geotiles[gindex, :id]), index_dv]
-        dv0 = dropdims(sum(dv0, dims=:geotile), dims=:geotile)
-        
-        if verbose
-            best_fit = zeros(size(dv0))
-            best_smb = zeros(size(dv0))
-            best_fac = zeros(size(dv0))
-            best_discharge = zeros(size(dv0))
-            best_offset = 0.
-
-            f = Figure(size=(1000, 1000))
-            p = f[1, 1] = CairoMakie.Axis(f)
-        end
-
-        for pscale in dpscale
-            #pscale = first(dpscale)
-
-            for Δheight in dΔheight
-                #Δheight = first(dΔheight)
-                smb0 = smb[At(geotiles[gindex, :id]), index_gemb, At(pscale), At(Δheight)] ./ volume2mass
-                smb0 = dropdims(sum(smb0, dims=:geotile), dims=:geotile)
-
-                fac0 = fac[At(geotiles[gindex, :id]), index_gemb, At(pscale), At(Δheight)]
-                fac0 = dropdims(sum(fac0, dims=:geotile), dims=:geotile)
-
-                res = dv0 .- (smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear))
-
-                # align the center of the residual distribution to zero
-                res0 = res[ceil(Int, length(res) / 2)]
-                res = res .- res0;
-
-                verbose && CairoMakie.lines!((smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear)) .+ res0)
-
-                if any(isnan.(res))
-                    display(dv0)
-                    display(discharge_km3yr)
-                    println(cname)
-
-                    error()
-                end
-
-                mad1 = Altim.mad(res)
-
-                if mad1 < mad0
-                    mad0 = mad1
-                    pscale0 = pscale
-                    Δheight0 = Δheight
-
-                    if verbose
-                        best_fit = (smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear)) .+ res0
-                        best_smb = smb0
-                        best_fac = fac0
-                        # thi is +/- is done to get dates right for ploting
-                        best_discharge = discharge_km3yr .* Δdecyear .+ best_fac .- best_fac 
-                        best_offset = res0
-                    end
-                end
-            end
-        end
-
-        if verbose
-            CairoMakie.lines!(dv0; color = :black)
-            CairoMakie.lines!(best_fit; color=:red)
-            CairoMakie.lines!(best_fit; color=:red)
-            display(f)
-
-            f2 = Figure(size=(1000, 1000))
-            p2 = f2[1, 1] = CairoMakie.Axis(f2, title="best fit for $troubleshoot_geotile", xlabel="year", ylabel="km3")
-
-            CairoMakie.lines!(best_smb; label="smb")
-            CairoMakie.lines!(best_fac; label="fac")
-            CairoMakie.lines!(best_discharge; label="discharge")
-            CairoMakie.lines!(dv0 .- best_offset; label="dh - obs", color = :black, linewidth = 2)
-            CairoMakie.lines!(best_fit .- best_offset; label="dh - model", color=:red, linewidth=2)
-
-            f[1, 2] = Legend(f2[1, 1], p2, framevisible=false)
-            
-            display(f2)
-        end
-
-        geotiles[gindex, :pscale] .= pscale0
-        geotiles[gindex, :Δheight] .= Δheight0
-        geotiles[gindex, :mad] .= mad0
-    end
-    return geotiles[:, [:id, :extent, :pscale, :Δheight, :mad]]
-    
 end

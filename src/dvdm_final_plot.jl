@@ -77,6 +77,7 @@ Altim, FileIO, CairoMakie, StatsBase, ColorSchemes, DataFrames
         title="$(Altim.var2label[variable]): $(Altim.mission2label[featured_mission])"
     )
 
+
     begin
         for variable in ["dm", "dv"]
             for featured_mission in unique(df.mission)

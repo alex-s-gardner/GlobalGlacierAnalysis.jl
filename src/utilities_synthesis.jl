@@ -275,7 +275,10 @@ function geotile_zonal_area_hyps(ras, ras_range, zone_geom, geotile_ids; persist
         #geotile = first(geotile_ids)
         t1 = time()
         bounding_polygon = Altim.extent2rectangle(Altim.GeoTiles.extent(geotile_id0))
-        index = GeometryOps.intersects.(zone_geom[!, :geometry], Ref(bounding_polygon))
+        
+        geom_name = GI.geometrycolumns(zone_geom)[1]
+
+        index = GeometryOps.intersects.(zone_geom[!, geom_name], Ref(bounding_polygon))
         if !any(index)
             println("skipping $(geotile_id0): no intersecting polygons")
             continue
@@ -356,4 +359,95 @@ Dispatch of `geotile_zonal_area_hyps` that accepts a NamedTuple input.
 function geotile_zonal_area_hyps(nt, x_bin_edges)
     binned = geotile_zonal_area_hyps(getindex.(nt, 1), getindex.(nt, 2), x_bin_edges)
     return binned
+end
+
+
+"""
+    geotile_grouping!(geotiles0, glaciers, min_area_km2; geotile_groups_manual=nothing)
+
+Group geotiles based on their glacier intersections and manual overrides.
+
+# Arguments
+- `geotiles0`: DataFrame containing geotile information with columns for id, extent, and area
+- `glaciers`: DataFrame containing glacier information with geometry and Area columns
+- `min_area_km2`: Minimum glacier area in km² to consider for grouping
+- `geotile_groups_manual`: Optional vector of vectors containing geotile IDs to manually group together
+
+# Processing Steps
+1. Identifies glaciers larger than min_area_km2
+2. Uses spatial indexing to efficiently find glacier-geotile intersections
+3. Groups geotiles that share glaciers
+4. Applies manual grouping overrides if provided
+5. Converts geotile extents to rectangles
+
+# Returns
+Modified copy of input geotiles DataFrame with:
+- Added :group column indicating connected components
+- Geometry column containing rectangular representations
+- Removed intermediate columns used in processing
+
+# Notes
+- Uses parallel processing for intersection testing
+- Handles both automated grouping based on glacier overlap and manual grouping overrides
+- Preserves original geotile IDs while adding grouping information
+"""
+function geotile_grouping!(geotiles0, glaciers, min_area_km2; geotile_groups_manual=nothing)
+
+    # Initialize columns to store discharge indices and geotile intersections
+    geotiles0[!, :glacier_overap_ind] .= [Int64[]]
+    geotiles0[!, :geotile_intersect] .= [Int64[]]
+
+    glaciers_large = glaciers[glaciers.Area.>min_area_km2, :]
+    geometry_column = first(GI.geometrycolumns(glaciers_large))
+
+    # Build spatial index tree for efficient intersection testing
+    tree = STRtree(glaciers_large[:, geometry_column]; nodecapacity=3)
+
+    # For each geotile, find intersecting glaciers
+    @showprogress dt = 1 desc = "Match glaciers_large with geotiles ..." Threads.@threads for gt in eachrow(geotiles0)
+        # Query tree for potential intersecting glaciers
+        potential_idxs = SortTileRecursiveTree.query(tree, gt.extent)
+
+        # Find glaciers that actually intersect the geotile
+        intersecting = findall(Base.Fix1(GO.intersects, Altim.extent2rectangle(gt.extent)),
+            view(glaciers_large[:, geometry_column], potential_idxs))
+
+        gt.glacier_overap_ind = potential_idxs[intersecting]
+    end
+
+    # Group geotiles that share glaciers
+    @showprogress dt = 1 desc = "Group geotiles by glaciers_large ..." for (i, gt) in enumerate(eachrow(geotiles0))
+        if .!isempty(gt.glacier_overap_ind)
+            # Find other geotiles that share glaciers with this one
+            intersecting_geotiles = .!isdisjoint.(Ref(gt.glacier_overap_ind), geotiles0.glacier_overap_ind)
+            intersecting_geotiles[i] = false
+
+            if any(intersecting_geotiles)
+                gt.geotile_intersect = findall(intersecting_geotiles)
+            end
+        end
+    end
+
+    # Identify connected groups of geotiles
+    connectivity = geotiles0.geotile_intersect
+    geotiles0[!, :group] = Altim.connected_groups(geotiles0.geotile_intersect)
+
+
+    # Assign new group numbers to manual overrides
+    if !isnothing(geotile_groups_manual)
+        group0 = maximum(geotiles0.group)
+        for grp in geotile_groups_manual
+            for g in grp
+                geotiles0[findfirst(geotiles0.id .== g), :group] = group0
+            end
+            group0 += 1
+        end
+    end
+
+    # Convert geotile extents to rectangles 
+    geometry_column = first(GI.geometrycolumns(geotiles0))
+    geotiles0[!, geometry_column] = Altim.extent2rectangle.(geotiles0.extent)
+
+
+    return geotiles0[:, Not(:extent, :area_km2, :glacier_overap_ind, :geotile_intersect)]
 end

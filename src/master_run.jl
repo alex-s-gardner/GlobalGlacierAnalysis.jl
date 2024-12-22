@@ -95,7 +95,7 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_mask_extract.jl")
 #    - Uses nodata value of 255
 include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_canopyh_extract.jl")
 
-# geotile_hyps.jl extracts canopy height data for geotiles:
+# geotile_hyps.jl bins raw data into time-elevation geotile datacubes
 #
 # Configuration:
 # - Uses project ID v01 and 2-degree geotile width

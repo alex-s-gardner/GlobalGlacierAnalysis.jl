@@ -73,6 +73,9 @@ begin
     # Time conversion constant
     SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60
 
+    #NOTE: glacier variables are in unit of m i.e.
+    volume2mass = Altim.δice / 1000
+
     # Load local configuration paths
     paths = Altim.pathlocal
 
@@ -108,7 +111,14 @@ begin
     glacier_melt_rivers_runoff_qout_path_fgb = replace(glacier_melt_rivers_runoff_qout_path, ".arrow" => ".fgb")
     glacier_sinks_path = joinpath(paths.data_dir, "glacier_sinks.fgb")
     glacier_sinks_grouped_path = joinpath(paths.data_dir, "glacier_sinks_grouped.fgb")
-    glacier_vars_fn = "/mnt/bylot-r3/data/binned/2deg/glacier_dh_best_cc_meanmadnorm3_v01_filled_ac_p2_synthesized_perglacier.jld2"
+
+
+    path2runs_override = ["/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_synthesized.jld2"]
+    binned_synthesized_file = path2runs_override[1]
+
+    # for sanity checking in QGIS
+    glacier_vars_fn = replace(binned_synthesized_file, ".jld2" => "_perglacier.jld2")
+
     glacier_vars_interpolated_fn = replace(glacier_vars_fn, ".jld2" => "_interpolated.arrow")
 
     # Filter river paths to only include shapefiles
@@ -311,7 +321,7 @@ begin
             colmetadata!(glaciers, tsvar, "date", colmetadata(glaciers0, tsvar, "date"), style=:note)
         end
     
-        glaciers = Altim.mperm2_to_m3s!(glaciers; tsvars)
+        glaciers = Altim.mie2cubicms!(glaciers; tsvars)
     end
 
     # interpolate glacier runoff to the 15th of every month
@@ -600,8 +610,8 @@ begin
             colmetadata!(glaciers, tsvar, "date", colmetadata(glaciers0, tsvar, "date"), style=:note)
         end
 
-        # Convert units from m/year to m³/s
-        glaciers = Altim.mperm2_to_m3s!(glaciers; tsvars)
+        # Convert units from mie/year to m³/s
+        glaciers = Altim.mie2cubicms!(glaciers; tsvars)
     end
 
     # Flag terminal points (where rivers/glaciers end)
@@ -664,7 +674,7 @@ end
 # 4. Filters out grid cells with no runoff
 # 5. Saves the aggregated results to file for plotting
 begin
-    sink = GeoDataFrames.read(glacier_sinks_path)
+    sinks = GeoDataFrames.read(glacier_sinks_path)
     
     Δdeg = 5.0
     lat = (-90+Δdeg/2):Δdeg:(90-Δdeg/2)
