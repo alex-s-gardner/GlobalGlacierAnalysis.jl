@@ -10,7 +10,7 @@ Altim.jl provides an end-to-end workflow for processing satellite altimetry data
 
 ```julia
 using Pkg
-Pkg.add("Altim")
+Pkg.add("https://github.com/alex-s-gardner/Altim.jl")
 ```
 
 ## Processing Pipeline
