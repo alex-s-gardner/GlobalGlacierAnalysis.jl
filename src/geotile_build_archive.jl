@@ -32,27 +32,32 @@
 # add packages
 using Altim
 using Statistics
+using Dates
 
-# set paths
-rebuild_geotiles_dataframe = false;
 
+# Parameters: user defined 
+force_remake = true
 project_id = :v01;
 geotile_width = 2;
+domain = :glacier; # :glacier -or- :landice
+missions = (:icesat2,); # (:icesat2, :icesat, :gedi, :hugonnet)
 
-paths = project_paths(project_id = project_id);
-products = project_products(project_id = project_id);
+after = nothing # only search for after this date
+rebuild_geotiles_dataframe = true;
+
+# Initialize: paths, products, geotiles
+paths = project_paths(; project_id);
+products = project_products(; project_id);
 geotiles = Altim.geotiles_w_mask(geotile_width);
 
-geotiles = geotiles[geotiles.landice_frac .> 0, :];
+# Subset: region & mission 
+geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
+isa(missions, Tuple) || error("missions must be a tuple... maybe you forgot a trailing comma for single-element tuples?")
+products = getindex(products, missions)
 
-## -------------------------------------
-#products = (icesat=products.icesat,);
-#products = (icesat2=products.icesat2,);
-#ext = Extent(X=(-126.9, -126.1), Y=(51.1, 51.8));
-#geotiles = project_geotiles(; geotile_width=geotile_width, domain=domain, extent=ext);
-## -------------------------------------
-
+# Execute: find granules, download granules, build geotiles
 for product in products
+#product = first(products)
     
     # make directly if it doesn't exist
     if !isdir(paths[product.mission].raw_data)
@@ -64,7 +69,7 @@ for product in products
     end
 
     ## 'find' can run in parallel.. therfore run first [GLAH06 = 30 min from scratch]
-    geotile_search_granules(geotiles, product.mission, product.name, product.version, paths[product.mission].granules_remote; rebuild_dataframe=rebuild_geotiles_dataframe)
+    geotile_search_granules(geotiles, product.mission, product.name, product.version, paths[product.mission].granules_remote; rebuild_dataframe=rebuild_geotiles_dataframe, after =after)
 
     # load remote granule list
     geotile_granules = granules_load(paths[product.mission].granules_remote, product.mission; geotiles = geotiles)

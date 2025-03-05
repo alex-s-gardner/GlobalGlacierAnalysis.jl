@@ -1,0 +1,287 @@
+# Route runoff from the average of 3 Land Surface Models through river reaches.
+# 1. download GLDAS LSMs
+# 2. load basins and river reaches
+# 3. load and average runoff from all LSMs
+# 4. route runoff through river network
+# 5. subset to glacier river reaches
+# 6. save river flux 
+# 7. [optional] compare with discharge from Collins et al. 2024
+
+begin
+    using Altim
+    using NCDatasets
+    using Rasters
+    using Arrow
+    using DataFrames
+    import GeoInterface as GI
+    using CairoMakie
+    import GeometryOps as GO
+    using GeoDataFrames
+    using SortTileRecursiveTree
+    using ProgressMeter
+    using Rasters.Lookups
+    using Dates
+    using Statistics
+    using NCDatasets
+    using FileIO
+
+    # YOU NEED YOU NEED TO MAKE SURE YOU ARE LOGGED INTO EARTHDATA
+    # AND HAVE THE NETRC FILE SET UP
+
+    # GLDAS LSM folder
+    gldas_folder = "/mnt/devon-r2/data/GLDAS/"
+    download_lsm_files = false
+    lsm_names = ["GLDAS_CLSM10", "GLDAS_VIC10", "GLDAS_NOAH10"]
+
+
+    #grid resolution
+    grid_res = 1.
+
+    paths = Altim.pathlocal
+    rivers_path = joinpath(paths.data_dir, "rivers/MERIT_Hydro_v07_Basins_v01")
+    rivers_paths = Altim.allfiles(rivers_path; fn_startswith="riv_pfaf", fn_endswith= "MERIT_Hydro_v07_Basins_v01.shp")
+    basins_paths = Altim.allfiles(rivers_path; fn_startswith="cat_pfaf", fn_endswith=".shp")
+    glacier_rivers_path = joinpath(rivers_path, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
+
+    glacier_rivers_runoff_path = replace(glacier_rivers_path, ".arrow" => "_runoff.arrow")
+    glacier_rivers_runoff_path_jld2 = replace(glacier_rivers_runoff_path, ".arrow" => "_runoff.jld2")
+
+    glacier_outlines_path = "/mnt/bylot-r3/data/GlacierOutlines/rgi60/rgi60_Global.gpkg"
+    glacier_routing_path = replace(glacier_outlines_path, ".gpkg" => "_routing.arrow")
+   
+    # Use uncorrected ensemble simulations only
+    river_Q_path_ens = joinpath(paths.data_dir, "rivers/Collins2024/Qout_pfaf_ii_GLDAS_ENS_M_1980-01_2009-12_utc/")
+    river_Q_files = readdir(river_Q_path_ens; join=true)
+
+    # Total runoff is the sum of subsurface runoff “Qsb_tavg” and surface runoff “Qs_tavg”.
+    runoff_vars = [[:Qs_acc, :Qsb_acc],  [:Qsm_acc]]
+    glacier_rivers_land_flux_paths = [
+        joinpath(rivers_path, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_Qs_acc_Qsb_acc.nc"), 
+        joinpath(rivers_path, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_Qsm_acc.nc")]
+end
+
+# download GLDAS LSMs
+if download_lsm_files   
+    # find list of urls that were downloaded from https://disc.gsfc.nasa.gov/datasets?keywords=GLDAS
+    gldas_file_urls = Altim.allfiles(gldas_folder; fn_endswith = "_.txt")
+    downloadstreams = 6;
+
+    # download the files
+    for file_urls in gldas_file_urls
+    #file_urls = last(gldas_file_urls)
+
+        cmd = `aria2c --max-tries=10 --retry-wait=1 -x $downloadstreams -k 1M -j 1 -i --max-connection-per-server 15 -c -d $gldas_folder -i $file_urls`
+
+        println(cmd)
+        run(cmd)
+
+        # jll doesn't seem to work    
+        #=    
+        cmd = `$(aria2_jll.aria2c()) -i $f -c -d $gldas_folder`
+        local io
+        try
+            io = run(pipeline(cmd, stdout = stdout, stderr = stderr), wait = false)
+            while process_running(io)
+                sleep(1)
+            end
+        catch e
+            kill(io)
+            println()
+            throw(e)
+        end
+        =#
+    end
+end
+
+# load basin and river data
+begin #[~2 min]
+    # load in basins and find the centroids and area of each basin
+    basins = fill(DataFrame(),length(basins_paths))
+    Threads.@threads for i in eachindex(basins_paths) # [~1 min] 
+        basins[i] = GeoDataFrames.read(basins_paths[i])
+    end
+    basins = reduce(vcat, basins)
+    sort!(basins, [:COMID])
+
+    # load in river reaches
+    rivers = fill(DataFrame(),length(rivers_paths))
+    col_names = ["geometry", "COMID", "NextDownID", "maxup"]
+    Threads.@threads for i in eachindex(rivers_paths)
+        rivers[i] = GeoDataFrames.read(rivers_paths[i])[:, col_names]
+    end
+    rivers = reduce(vcat, rivers)
+    sort!(rivers, [:COMID])
+
+    if nrow(rivers) == nrow(basins)
+        basins[!,:NextDownID] = rivers[:,:NextDownID]
+        basins[!,:HeadBasin] = rivers[:, :maxup] .== 0
+    else
+        # add next downstream id and head basin flag (head basin = no river inputs)
+        basins[!,:NextDownID] = zeros(eltype(rivers[1, :NextDownID]), length(basins.COMID))
+        basins[!,:HeadBasin] = falses(length(basins.COMID))
+        
+        Threads.@threads for r in eachrow(basins)
+            ind = searchsortedfirst(rivers.COMID,r.COMID)
+            r.NextDownID = rivers[ind, :NextDownID]
+            r.HeadBasin = rivers[ind, :maxup] .== 0
+        end
+    end
+    
+    # map cells to each downstream rivers (i.e. get list of inputs to each river)
+    basins[!, :basin02] = floor.(Int16, basins.COMID./1000000)
+    basins[!, :centroid] = GO.centroid.(basins.geometry)
+end
+
+
+for i in eachindex(runoff_vars) 
+    # load gridded runoff data
+    begin # [~6 min]
+        # add fluxes 
+        files = Altim.allfiles(gldas_folder; fn_endswith=".nc4", fn_startswith = lsm_names[1])
+        Q = cat(Raster.(files; name=runoff_vars[i][1])...; dims=Ti)
+        for lsm_name in lsm_names
+            files = Altim.allfiles(gldas_folder; fn_endswith=".nc4", fn_startswith = lsm_name)
+            for runoff_var in runoff_vars[i]
+                if (lsm_name == lsm_names[1]) && (runoff_var == runoff_vars[i][1])
+                    continue
+                else
+                    Q .+= cat(Raster.(files; name=runoff_var)...; dims=Ti)
+                end
+            end
+        end
+
+        # take average accross lsms 
+        Q ./= length(lsm_names)
+
+        # devide by 1000 to go from kg m-2 to m m-2
+        Q ./= 1000
+        
+        # Multiply flux by the area of the gridcell
+        #grid_res = abs(dims(Q, :X)[1] - dims(Q, :X)[2])
+        #d = grid_res / 2
+        #dimz = X(Projected(-180.0+d:grid_res:180.0-d; sampling=Intervals(), crs=EPSG(4326))),
+        #Y(Projected(-90.0+d:grid_res:90.0-d; sampling=Intervals(), crs=EPSG(4326)))
+        #A = zeros(eltype(rivers.COMID), dimz)
+        #A = Rasters.cellarea(A)
+        #A = Rasters.resample(A; to=Q[:,:,1], method=:nearest)# area looks correct
+        #Q .*= A
+
+        # divide by seconds to get m3 s-1
+
+        # For accumulated variables such as Qs_acc, the monthly mean surface runoff is the
+        # average 3-hour accumulation over all 3-hour intervals in April 1979. To compute
+        # monthly accumulation, use this formula:
+        # Qs_acc (April){kg/m2} = Qs_acc (April){kg/m2/3hr} * 8{3hr/day} * 30{days}
+        # so we need to devide by 8*30 to get m3 s-1 per m2
+
+        # so in our case to get m3 s-1 per m2 we simply devide by the number of seconds in a 3hr interval
+        dt = 60*60*3
+        Q ./= dt
+
+        # replace missing values with 0
+        Q = coalesce.(Q, 0)
+    end
+
+    # deteremine runoff entering each basin 
+    # [does not yet account for entering stream flow, that is the next step]
+    begin #[~4.5 min for 2.3M basins]
+        dcomid = Dim{:COMID}(basins.COMID)
+        dTi = dims(Q, :Ti)
+
+        # make time column major 
+        river_inputs = zeros(eltype(Q), dTi, dcomid)
+
+        @showprogress dt = 5 desc = "Adding surface + subsurface runoff to each basin ..." Threads.@threads for r in eachrow(basins) #[2 min]
+            # multiply by area in m2 to get m3 s-1 [raw area is in km2]
+            river_inputs[:, At(r.COMID)] = Q[Near(r.centroid[1]), Near(r.centroid[2]), :] .* (r.unitarea .* 1e6)
+        end
+    end
+
+    
+
+
+    river_flux = Altim.flux_accumulate!(river_inputs, basins.COMID, basins.NextDownID, basins.HeadBasin, basins.basin02) #[2 min]
+
+    # subset to glacier river reaches for saving 
+    glacier_rivers = GeoDataFrames.read(glacier_routing_path)
+
+    glacier_rivers = unique(vcat(glacier_rivers.RiverIDTrace...))
+    glacier_river_land_flux = river_flux[:,At(glacier_rivers)]
+
+    # save data as netcdf
+    begin #[4 seconds]
+        # data needs to be Float32 (not Real) for saving as netcdf
+        data = Float32.(glacier_river_land_flux)
+
+        # save as netcdf
+        NCDataset(glacier_rivers_land_flux_paths[i],"c") do ds
+            data_dims = dims(data)
+
+            # First all dimensions need to be defined
+            for dim in data_dims
+                dname = string(DimensionalData.name(dim));
+                defDim(ds, dname, length(dim))
+            end
+
+            # now add the variables
+            for dim in data_dims
+                dname = string(DimensionalData.name(dim));
+                defVar(ds, dname, val(val(dim)), (dname,))
+            end
+
+            v = defVar(ds, "flux", parent(data), string.(DimensionalData.name.(data_dims)))
+            v.attrib["units"] = "m3 s-1"
+            v.attrib["long_name"] = "river flux"
+
+            # add global attributes
+            ds.attrib["title"] = "river flux from the average of 3 land surface models: CLSM, VIC, and NOAH"
+        end
+    end
+end
+
+
+# sanity check
+validate_output = false
+if validate_output # [5 min]
+    # load in river discharge data and map to the glacier river reaches
+    # get dimensions
+    fn = river_Q_files[1]
+    ds = Dataset(fn, "r")
+    t = collect(ds[:time])
+
+    #for fn in river_Q_files [m3 s-1]
+    dti = Dim{:Ti}(t)
+    dcomid= Dim{:COMID}(basins.COMID)
+    riverQ = zeros(Float32, (dti, dcomid))
+
+    # using Treads causes crash
+    # 5 min on single thread
+    @showprogress dt = 5 desc = "Load river discharge from Collin's et al. 2024..." for fn in river_Q_files
+    #fn = river_Q_files[1]
+        
+        Dataset(fn, "r") do ds
+        #ds = Dataset(fn, "r")
+        
+            # need to read into memory first to make this efficient
+            Qout = collect(ds["Qout"].var)
+            rivids = collect(ds["rivid"].var)
+            matching_rivids = intersect(dcomid, rivids)
+
+            if !isempty(matching_rivids)
+                for rid in matching_rivids
+                    riverQ[:, At(rid)] = Qout[findfirst(rivids .== rid), :]
+                end
+            end
+        end
+    end
+
+    # sanity check
+    a = extrema(dims(riverQ, :Ti))
+    b = extrema(dims(river_flux, :Ti))
+    c = (max(a[1], b[1]), min(a[2], b[2]))
+
+    Qindx = dims(riverQ, :Ti) .> c[1] .&& dims(riverQ, :Ti) .< c[2]
+    fluxindx = dims(river_flux, :Ti) .> c[1] .&& dims(river_flux, :Ti) .< c[2]
+
+    plot(collect(dropdims(mean(riverQ[Qindx, :], dims=:Ti), dims=:Ti)), collect(dropdims(mean(river_flux[fluxindx, :], dims=:Ti), dims=:Ti)))
+end

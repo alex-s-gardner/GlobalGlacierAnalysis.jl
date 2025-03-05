@@ -72,7 +72,6 @@ begin
     using DataInterpolations
     include("utilities_synthesis.jl")
 
-
     # 1. Loads local configuration paths
     # 2. Sets key parameters:
     #    - Geotile width of 2 degrees
@@ -88,14 +87,13 @@ begin
     reference_run = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_synthesized.jld2"
     path2runs_override = nothing #[reference_run]
 
-
     # to include in uncertainty
     project_id = ["v01"]
     surface_mask=["glacier", "glacier_rgi7"]
-    dem_id=["best" "cop30_v2"]
-    curvature_correct=[false true]
+    dem_id=["best", "cop30_v2"]
+    curvature_correct=[false, true]
     amplitude_correct=[true]
-    binning_method=["median" "meanmadnorm5" "meanmadnorm3"] # ["median" "meanmadnorm10" "meanmadnorm5" "meanmadnorm3"]
+    binning_method = ["median" "meanmadnorm10" "meanmadnorm5" "meanmadnorm3"]
     paramater_set=[1, 2, 3, 4]
     binned_folder=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg")
 
@@ -106,7 +104,7 @@ begin
 
     geotile_groups_fn = joinpath(paths.data_dir, "project_data", "geotile_groups.arrow")
 
-    globaldischage_fn = joinpath(paths.data_dir, "GlacierOutlines/GlacierDischarge/global_glacier_dischage.jld2")
+    globaldischarge_fn = joinpath(paths.data_dir, "GlacierOutlines/GlacierDischarge/global_glacier_discharge.jld2")
 
     # for latitudes below this set discharge2smb
     discharge2smb_max_latitude = -60;
@@ -231,7 +229,7 @@ end
 #    - Sets negative discharge values to zero
 # 5. Saves the final combined discharge data to file
 
-if .!isfile(globaldischage_fn) || force_remake # Load RGI6 glacier hypsometry data from previously generated file glacier_geotile_hyps_fn = joinpath(paths.data_dir, "GlacierOutlines/rgi60/rgi60_Global.gpkg")
+if .!isfile(globaldischarge_fn) || force_remake # Load RGI6 glacier hypsometry data from previously generated file glacier_geotile_hyps_fn = joinpath(paths.data_dir, "GlacierOutlines/rgi60/rgi60_Global.gpkg")
     sm = "glacier"
     
     glaciers0 = load(glacier_geotile_hyps_fn[sm], "glaciers")
@@ -305,10 +303,10 @@ if .!isfile(globaldischage_fn) || force_remake # Load RGI6 glacier hypsometry da
     discharge[discharge.discharge_gtyr.<0, :discharge_gtyr] .= 0
 
     # Save the combined measured and estimated discharge data
-    save(globaldischage_fn, Dict("discharge"=>discharge))
+    save(globaldischarge_fn, Dict("discharge"=>discharge))
 else
     # If file exists, just load the discharge data
-    discharge = load(globaldischage_fn, "discharge")
+    discharge = load(globaldischarge_fn, "discharge")
 end
 
 
@@ -341,6 +339,7 @@ path2geotile_synthesis_error = geotile_synthesis_error(;
 #    - Weight contributions from each mission
 #    - Account for varying uncertainties
 # 4. Can force reprocessing of synthesis with force_remake flag
+# rm.(allfiles("/mnt/bylot-r3/data/binned/2deg/"; fn_endswith = "synthesized.jld2"))
 geotile_synthesize_runs(;
     path2runs,
     path2geotile_synthesis_error, 
@@ -390,7 +389,7 @@ end
 
 # IDENTIFY GEOTILE GROUPINGS FOR MODEL CALLIBRATION
 # 1. Initializes columns in geotiles dataframe to store:
-#    - Indices of intersecting glaciers (dischage_ind)
+#    - Indices of intersecting glaciers (discharge_ind)
 #    - Indices of connected geotiles (geotile_intersect)
 #
 # 2. Finds intersections between large glaciers (>100 km2) and geotiles:
@@ -650,7 +649,7 @@ end
 
 begin
     # Load synthesized data and GEMB fit parameters
-    discharge = load(globaldischage_fn, "discharge")
+    discharge = load(globaldischarge_fn, "discharge")
     volume2mass = Altim.δice / 1000
 
     has_glacier = Dict()
@@ -807,282 +806,39 @@ begin
     binned_synthesized_file = reference_run
     binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
 
-    geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
+    outfile = joinpath(paths.data_dir, "project_data", "geotiles_rates.fgb");
 
-    vars_no_write = setdiff(names(geotiles0), ["id", "glacier_frac", "landice_frac", "floating_frac", "geometry", "group", "pscale", "Δheight", "mie2cubickm", "rgiid"])
-    vars_ts = setdiff(vars_no_write, ["extent", "area_km2"])
-    
+    if !isfile(outfile) || force_remake
+        geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
 
-    # Fit temporal trends to all variables
-    geotiles0 = Altim.df_tsfit!(geotiles0, vars_ts; datelimits = (DateTime(2000,1,1), DateTime(2023,1,1)))
-    
-    # Export results, excluding raw time series
-    source_crs1 = GFT.EPSG(4326)
-    isvec = []
-    for i = 1:ncol(geotiles0)
-        push!(isvec, typeof(geotiles0[1,12]) >: Vector)
+        vars_no_write = setdiff(names(geotiles0), ["id", "glacier_frac", "landice_frac", "floating_frac", "geometry", "group", "pscale", "Δheight", "mie2cubickm", "rgiid"])
+        vars_ts = setdiff(vars_no_write, ["extent", "area_km2"])
+        
+
+        # Fit temporal trends to all variables
+        geotiles0 = Altim.df_tsfit!(geotiles0, vars_ts; datelimits = (DateTime(2000,1,1), DateTime(2023,1,1)))
+        
+        # Export results, excluding raw time series
+        source_crs1 = GFT.EPSG(4326)
+        isvec = []
+        for i = 1:ncol(geotiles0)
+            push!(isvec, typeof(geotiles0[1,12]) >: Vector)
+        end
+
+        GeoDataFrames.write(joinpath(paths.data_dir, "project_data", "geotiles_rates_km3yr.fgb"), geotiles0[:, Not(vars_no_write)]; crs=source_crs1)
+
+
+        # now do the same but for area averaged rates of change 
+        for varname in vars_ts
+            geotiles0[:, varname] ./= geotiles0[:, :mie2cubickm]
+        end
+
+        # Fit temporal trends to all variables (easier than finding all of the fits and then multiplying by mie2cubickm)
+        geotiles0 = Altim.df_tsfit!(geotiles0, vars_ts; datelimits = (DateTime(2000,1,1), DateTime(2023,1,1)))
+
+        GeoDataFrames.write(outfile, geotiles0[:, Not(vars_no_write)]; crs=source_crs1)
     end
-
-    GeoDataFrames.write(joinpath(paths.data_dir, "project_data", "geotiles_rates_km3yr.fgb"), geotiles0[:, Not(vars_no_write)]; crs=source_crs1)
-
-
-    # now do the same but for area averaged rates of change 
-    for varname in vars_ts
-        geotiles0[:, varname] ./= geotiles0[:, :mie2cubickm]
-    end
-
-    # Fit temporal trends to all variables (easier than finding all of the fits and then multiplying by mie2cubickm)
-    geotiles0 = Altim.df_tsfit!(geotiles0, vars_ts; datelimits = (DateTime(2000,1,1), DateTime(2023,1,1)))
-
-    GeoDataFrames.write(joinpath(paths.data_dir, "project_data", "geotiles_rates.fgb"), geotiles0[:, Not(vars_no_write)]; crs=source_crs1)
 
     # Sync command for reference
     # rsync -rav devon:/mnt/bylot-r3/data/project_data/ ~/data/Altim/project_data/
-end
-
-# make multi-region plot
-#begin
-    
-
-    
-
-    # read in example file
-    regions = FileIO.load(replace(reference_run, ".jld2" => "_gembfit_dv.jld2"), "geotiles")
-    varnames = setdiff(names(geotiles0), ["id", "extent", "glacier_frac", "area_km2", "discharge", "landice_frac", "floating_frac", "geometry", "group", "pscale", "Δheight", "mie2cubickm", "rgiid"])
-
-    drun = Dim{:run}([last(splitpath.(path2run)) for path2run in path2runs])
-    drgi = Dim{:rgi}([1:19;98])
-    regions0 = Dict()
-    for varname in varnames
-        ddate = Dim{:date}(colmetadata(regions, varname, "date"))
-        regions0[varname] = fill(NaN, drun, drgi, ddate)
-    end
-
-
-    @time for binned_synthesized_file in path2runs
-    #binned_synthesized_file = path2runs[1]
-        run = splitpath(binned_synthesized_file)[end]
-        binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
-        
-        println(run)
-
-        geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
-
-        # group by rgi and sum
-        geotiles_reg = groupby(geotiles0, :rgiid)
-
-        # sum across timeseries
-        regions = DataFrames.combine(geotiles_reg, varnames .=> Ref ∘ sum; renamecols=false)
-
-        # add an HMA region 
-        index = (regions[:, :rgiid] .<= 15) .& (regions[:, :rgiid] .>= 13)
-        regions = append!(regions, DataFrames.combine(regions[index, :], vcat("rgiid", varnames) .=> Ref ∘ sum; renamecols=false))
-        regions[end, :rgiid] = 98
-
-        for varname in varnames
-            regions0[varname][At(run),At(regions.rgiid),:] = reduce(hcat,regions[!,varname])'
-        end
-    end
-
-    # create df for reference run
-    binned_synthesized_file = reference_run
-    binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
-    
-    geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
-
-    # group by rgi and sum
-    geotiles_reg = groupby(geotiles0, :rgiid)
-
-    # sum across timeseries
-    regions = DataFrames.combine(geotiles_reg, varnames .=> Ref ∘ sum; renamecols=false)
-
-    # add an HMA region 
-    index = (regions[:, :rgiid] .<= 15) .& (regions[:, :rgiid] .>= 13)
-    regions = append!(regions, DataFrames.combine(regions[index, :], vcat("rgiid", varnames) .=> Ref ∘ sum; renamecols=false))
-    regions[end, :rgiid] = 98
-
-    # copy metadata
-    for varname in names(regions)[2:end]
-        cmetadata = colmetadata(geotiles0, varname, "date")
-        regions = colmetadata!(regions, varname, "date", cmetadata; style=:note)
-    end
-
-    # add error columns to regions
-    #for varname in varnames
-    varname = "dv"
-        varname_err = "$(varname)_err"
-
-        foo = std(regions0[varname], dims = :run)
-
-        ### There are lots of regaions with all NaNs.. and volume change needs to be centered around zero
-        CairoMakie.heatmap(regions0[varname][:,9,:])
-
-        regions[!, varname_err] = eachrow(collect(dropdims(std(regions0[varname], dims = :run), dims = :run)))
-        regions = colmetadata!(regions, varname_err, "date", colmetadata(regions, varname, "date"); style=:note)
-    end
-    
-    # read in GRACE data
-    grace = Altim.read_grace_rgi(; datadir=setpaths()[:grace_rgi])
-
-    regions[!, :dm_grace] = [fill(NaN, length(grace["rgi1"]["dM_gt_mdl_fill"])) for _ in 1:nrow(regions)]
-    gdate = vec(Altim.datenum2date.(grace["rgi1"]["dM_gt_mdl_fill_date"]));
-    regions = colmetadata!(regions, :dm_grace, "date", gdate; style=:note)
-    regions[!, :dm_grace_err] = [fill(NaN, length(grace["rgi1"]["dM_gt_mdl_fill"])) for _ in 1:nrow(regions)]
-    regions = colmetadata!(regions, :dm_grace_err, "date", gdate; style=:note)
-
-    for r in eachrow(regions)
-        #r = first(eachrow(regions))
-        if r.rgiid == 98
-            rgi = "HMA"
-        else
-            rgi = "rgi$(r.rgiid)"
-        end
-
-        haskey(grace, rgi) || continue
-
-        r.dm_grace = vec(grace[rgi]["dM_gt_mdl_fill"])
-        r.dm_grace_err = vec(grace[rgi]["dM_sigma_gt_mdl_fill"])
-    end
-
-    # reformat for plotting
-    varnames = setdiff(names(regions), ["rgiid"])
-    dates = DateTime(2000, 1, 15):Month(1):DateTime(2023, 1, 15)
-    dates_decyear = Altim.decimalyear.(dates)
-    df = DataFrame()
-
-    for varname in varnames
-        #varname = "discharge"
-
-        date0 = Altim.decimalyear.(colmetadata(regions, varname, "date"))
-        v = fill(NaN, length(dates_decyear))
-
-        if Base.contains(varname, "altim")
-            mission = "synthesis"
-        elseif Base.contains(varname, "grace")
-            mission = "grace"
-        else
-            mission = "gemb"
-        end
-
-        if Base.contains(varname,"dm")
-            if !Base.contains(varname,"err")
-                varname_out = "dm"
-            else
-                varname_out = "dm_err"
-            end
-        elseif Base.contains(varname,"dv")
-            if !Base.contains(varname,"err")
-                varname_out = "dv"
-            else
-                varname_out = "dv_err"
-            end
-        else
-            varname_out = varname
-        end
-
-        for r in eachrow(regions)
-            #r = first(eachrow(regions))
-            model = LinearInterpolation(r[varname], date0)
-            index = (dates_decyear .> minimum(date0)) .& (dates_decyear .< maximum(date0))
-            v[index] = model(dates_decyear[index])
-            varname_mid = "$(varname)"
-            df = vcat(df, DataFrame("rgi" => r[:rgiid], "mission" => mission, "var" => varname_out, "mid" => Ref(copy(v))))
-        end
-    end
-
-    # set GRACE to NaN for Greenland and Antarctica
-    index = findfirst((df.rgi .== 5) .& (df.mission .== "grace"))
-    df[index, :mid] .= NaN
-    index = findfirst((df.rgi .== 19) .& (df.mission .== "grace"))
-    df[index, :mid] .= NaN
-
-    df[!, :low] = deepcopy(df[!, :mid])
-    df[!, :high] = deepcopy(df[!, :mid])
-    df[!, :unit] .= "gt"
-    metadata!(df, "date", dates; style=:note)
-
-    gdf = groupby(df, "rgi")
-
-    #for g in gdf
-    g = gdf[3]
-        #for mission in unique(g.mission)
-        mission = unique(g.mission)[1]
-            mission_index = g.mission .== mission
-
-            vars = unique(g[mission_index, :var])
-            vars = vars[.!Base.contains.(vars, Ref("err"))]
-
-            #for var0 in vars
-            var0 = vars[2]
-                var_index = g.var .== var0
-                ind_mid = findfirst(var_index .& mission_index)
-                ind_err = findfirst((g.var .== "$(var0)_err") .& mission_index)
-                if !isnothing(ind_err)
-                    g[ind_mid, :low] .-= g[ind_err, :mid]
-                    g[ind_mid, :high] .+= g[ind_err, :mid]
-                end
-            end
-        end
-    end
-
-    # remove "dm_grace_err"
-    df = df[.!Base.contains.(df.var, Ref("err")), :]
-
-    # align to altim
-    gdf = groupby(df, "rgi")
-    for g in gdf
-        #g = gdf[1]
-        index_var = g.var .== "dm"
-
-        grace0 = g[findfirst((g.mission .== "grace") .& index_var), :mid]
-        altim0 = g[findfirst((g.mission .== "synthesis") .& index_var), :mid]
-        gemb0 = g[findfirst((g.mission .== "gemb") .& index_var), :mid]
-
-        index = .!isnan.(altim0)
-        for ts in (grace0, gemb0)
-            index2 = .!isnan.(ts)
-            if any(index2)
-                index = index .& index2
-            end
-        end
-
-        delta = mean(altim0[index])
-        g[findfirst((g.mission .== "synthesis") .& index_var), :mid] .-= delta
-        g[findfirst((g.mission .== "synthesis") .& index_var), :low] .-= delta
-        g[findfirst((g.mission .== "synthesis") .& index_var), :high] .-= delta
-
-        delta = mean(grace0[index])
-        g[findfirst((g.mission .== "grace") .& index_var), :mid] .-= delta
-        g[findfirst((g.mission .== "grace") .& index_var), :low] .-= delta
-        g[findfirst((g.mission .== "grace") .& index_var), :high] .-= delta
-
-        delta = mean(gemb0[index])
-        g[findfirst((g.mission .== "gemb") .& index_var), :mid] .-= delta
-        g[findfirst((g.mission .== "gemb") .& index_var), :low] .-= delta
-        g[findfirst((g.mission .== "gemb") .& index_var), :high] .-= delta
-    end
-
-    # exclude rgi 13, 14, 15
-    index = .!((df.rgi .== 13) .| (df.rgi .== 14) .| (df.rgi .== 15))
-    df = df[index, :]
-
-
-exclude_mission = df.mission .== "gemb"
-f, rgi, offset, ylims = Altim.plot_multiregion_dvdm(df[.!exclude_mission, :];
-    variable="dm",
-    featured_mission="synthesis",
-    regions=unique(df.rgi),
-    showlines=false,
-    showmissions=true,
-    fontsize=15,
-    cmap=:Dark2_4,
-    regions_ordered=false,
-    region_offsets=nothing,
-    ylims=nothing,
-    title=nothing,
-    palette=nothing,
-    delta_offset=nothing,
-)
-f
-
 end

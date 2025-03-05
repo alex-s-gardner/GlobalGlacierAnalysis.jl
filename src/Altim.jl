@@ -30,7 +30,7 @@ module Altim
     using LsqFit
     using CSV
     using NCDatasets
-    using GeoStats
+    #using GeoStats
     using Distances
     using DataInterpolations
     using ColorSchemes
@@ -52,7 +52,7 @@ module Altim
     using ProgressMeter
     using Random
     using AbstractTrees
-    using RangeExtractor
+    #using RangeExtractor
 
     #using MLJ
     #using MLJLinearModels

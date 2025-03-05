@@ -182,7 +182,7 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/gemb_classes_binning.jl")
 #
 # Total runtime is approximately 3.5 hours, with most time spent on
 # gap filling and mission alignment steps.
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_binning.jl")
+@time include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_binning.jl")
 
 # geotile_synthesis.jl performs synthesis and analysis of glacier elevation change data.
 # Key processing steps:
@@ -227,6 +227,16 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_binning.jl")
 # synthesis error calculation and multi-mission synthesis steps.
 include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_synthesis.jl")
 
+# land_surface_model_routing.jl downloads GLDAS LSMS and routes runoff through river network
+# 1. download GLDAS LSMs
+# 2. load basins and river reaches
+# 3. load and average runoff from all LSMs
+# 4. route runoff through river network
+# 5. subset to glacier river reaches
+# 6. save river flux 
+# 7. [optional] compare with discharge from Collins et al. 2024
+
+include("/home/gardnera/Documents/GitHub/Altim.jl/src/land_surface_model_routing.jl")
 
 # glacier_routing.jl analyzes glacier meltwater routing and discharge by:
 #

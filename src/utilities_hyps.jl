@@ -14,7 +14,8 @@ const p1 = zeros(9);
 const lb1 = [-10.0, -3.0, -2.0, -0.05, -0.0001, -1.0, -7.0, -0.05, -0.001];
 const ub1 = [+10.0, +3.0, +2.0, +0.05, +0.0001, +1.0, +7.0, +0.05, +0.001];
 
-# seasonal only 
+
+# seasonal only [amplitude is a quadratic function of elevation]
 model1_seasonal::Function = model1_seasonal(x, p) = 
     sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* 
     (p[7] .+ p[8] .* x[:, 2] .* p[9] .* x[:, 2] .^ 2)
@@ -54,6 +55,14 @@ offset_trend_seasonal2::Function =
         p[2] .* t .+
         p[3] .* sin.(2π .* t) .+
         p[4] .* cos.(2π .* t)
+
+offset_trend_acceleration_seasonal2::Function =
+    offset_trend_acceleration_seasonal2(t, p) =
+        p[1] .+
+        p[2] .* t .+
+        p[3] .* t.^2 .+
+        p[4] .* sin.(2π .* t) .+
+        p[5] .* cos.(2π .* t)
 
 const p_offset_trend_seasonal = zeros(4)
 
@@ -331,10 +340,10 @@ function hyps_amplitude_normalize!(dh1, params; mission_reference = "icesat2")
 
             p0 = df0.param_m1
             pr = dfr.param_m1
-            Δp = pr .- p0
-            Δp[1:6] = p0[1:6]
+            pr[1:5] = p0[1:5] # coeffients 1 to 5 are unrelated to seasonal cycle
 
-            delta = model1_seasonal(hcat(t0[:], h0x[:]), Δp)
+            delta = model1_seasonal(hcat(t0[:], h0x[:]), pr) .- model1_seasonal(hcat(t0[:], h0x[:]), p0)
+
             if !any(isnan.(delta)) # there seem to be rare cases where model1_seasonal returns nans.
                 dh1[mission][At(geotile), rrange, crange] = dh0[:] .+ delta
             end

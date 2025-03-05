@@ -16,34 +16,26 @@
 # add packages
 using Altim
 
-# set paths
-force_remake = false
-
+# Parameters: user defined 
+force_remake = true
 project_id = :v01;
 geotile_width = 2;
-domain = :landice;
+domain = :glacier; # :glacier -or- :landice
+missions = (:icesat2,); # (:icesat2, :icesat, :gedi, :hugonnet)
 
+vars2extract = [:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean];
+
+# Initialize: paths, products, geotiles
 paths = project_paths(; project_id);
 products = project_products(; project_id);
-
 geotiles = Altim.geotiles_w_mask(geotile_width);
-if domain == :landice
-    geotiles = geotiles[geotiles.landice_frac .> 0, :];
-end
 
-# --------------------------------------------------------------------------
-#begin
-# @warn "--- only processing a subset of geotiles ----"
-#    region = :RGI02;
-#    ext, epsg = region_extent(region);
-#    geotiles = geotile_subset!(geotiles, ext);
-#    products = (hugonnet=products.hugonnet, )
-#end
-# --------------------------------------------------------------------------
+# Subset: region & mission 
+geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
+isa(missions, Tuple) || error("missions must be a tuple... maybe you forgot a trailing comma for single-element tuples?")
+products = getindex(products, missions)
 
-# geotiles = geotiles[ind,:]
-vars = [:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean];
-
+# Execute: extract masks
 for product in products
-    geotile_extract_mask(geotiles, paths[product.mission].geotile; vars=vars, job_id=product.mission, force_remake=force_remake)
+    geotile_extract_mask(geotiles, paths[product.mission].geotile; vars=vars2extract, job_id=product.mission, force_remake=force_remake)
 end

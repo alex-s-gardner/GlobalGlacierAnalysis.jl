@@ -13,28 +13,28 @@
 #    - Only processes if force_remake=true or output doesn't exist
 
 using Altim
-#using Infiltrator
 
-force_remake = false;
+# Parameters: user defined 
+force_remake = true
 project_id = :v01;
 geotile_width = 2;
+domain = :glacier; # :glacier -or- :landice
+missions = (:icesat2,); # (:icesat2, :icesat, :gedi, :hugonnet)
+
 slope = true;
 curvature = true;
+dems2extract = [:rema_v2_10m, :cop30_v2, :arcticdem_v4_10m, :nasadem_v1]
 
-extent = nothing
-dems = [:rema_v2_10m, :cop30_v2, :arcticdem_v4_10m, :nasadem_v1]
-
+# Initialize: paths, products, geotiles
 paths = project_paths(; project_id);
-geotiles = Altim.geotiles_w_mask(geotile_width);
 products = project_products(; project_id);
+geotiles = Altim.geotiles_w_mask(geotile_width);
 
-geotiles = geotiles[geotiles.landice_frac .> 0, :];
+# Subset: region & mission 
+geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
+isa(missions, Tuple) || error("missions must be a tuple... maybe you forgot a trailing comma for single-element tuples?")
+products = getindex(products, missions)
 
-# <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><><><><><><>
-# products = (icesat = products.hugonnet,)
-#ind = findfirst(geotiles.id .== "lat[+54+56]lon[+096+098]")
-#geotiles = geotiles[ind:ind,:]
-#dems = [:arcticdem_v4_10m]
+# Execute: extract dems
+Altim.geotile_extract_dem(products, dems2extract, geotiles, paths; slope, curvature, force_remake)
 
-# <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-Altim.geotile_extract_dem(products, dems, geotiles, paths; slope, curvature, force_remake)

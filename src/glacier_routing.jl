@@ -97,32 +97,27 @@ begin
         rivers_paths = readdir(rivers_path1; join=true)
         rivers_paths = reduce(vcat, (rivers_paths, readdir(rivers_path2; join=true)))
         glacier_rivers_path = joinpath(rivers_path1, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
+
+        # Filter river paths to only include shapefiles
+        rivers_paths = rivers_paths[Base.contains.(rivers_paths, ".shp")]
     else
         # Uncorrected river paths (currently used)
         rivers_path = joinpath(paths.data_dir, "rivers/MERIT_Hydro_v07_Basins_v01")
-        rivers_paths = readdir.(rivers_path; join=true)
+        rivers_paths = Altim.allfiles(rivers_path; fn_endswith= "MERIT_Hydro_v07_Basins_v01.shp")
         glacier_rivers_path = joinpath(rivers_path, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
     end
 
     # Output paths for processed data
     glacier_rivers_runoff_path = replace(glacier_rivers_path, ".arrow" => "_runoff.arrow")
-    glacier_rivers_runoff_path_jld2 = replace(glacier_rivers_runoff_path, ".arrow" => "_runoff.jld2")
-    glacier_melt_rivers_runoff_qout_path = replace(glacier_rivers_runoff_path, ".arrow" => "_qout.arrow")
-    glacier_melt_rivers_runoff_qout_path_fgb = replace(glacier_melt_rivers_runoff_qout_path, ".arrow" => ".fgb")
+    glacier_rivers_runoff_qout_path = replace(glacier_rivers_runoff_path, ".arrow" => "_qout.nc")
     glacier_sinks_path = joinpath(paths.data_dir, "glacier_sinks.fgb")
     glacier_sinks_grouped_path = joinpath(paths.data_dir, "glacier_sinks_grouped.fgb")
-
 
     path2runs_override = ["/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_synthesized.jld2"]
     binned_synthesized_file = path2runs_override[1]
 
     # for sanity checking in QGIS
     glacier_vars_fn = replace(binned_synthesized_file, ".jld2" => "_perglacier.jld2")
-
-    glacier_vars_interpolated_fn = replace(glacier_vars_fn, ".jld2" => "_interpolated.arrow")
-
-    # Filter river paths to only include shapefiles
-    rivers_paths = rivers_paths[Base.contains.(rivers_paths, ".shp")]
 
     # GLDAS flux data configuration
     use_corrected_flux = false
@@ -286,50 +281,57 @@ if !isfile(glacier_rivers_path)
 end
 
 
-
-#TODO: At the time of writing, DataFrame metadata could not be easily saved... in arrow or in jld2... there are therfore lots of gymnastics required to track metadata, save and restore metadata. As soon a the PR to automatically save metadata with arrow files 
-# is merged, these section can and should be simplified. Search for metadatagymnastics in the codebase.
-
-
-
-# This section processes glacier variables and interpolates them to a consistent time series:
+# This section processes glacier variables, interpolates them to a consistent time series, routes runoff to rivers and saves the results:
 #
-# 1. Reads glacier routing data and per-glacier geotile variables
+# 1. Reads glacier river network and per-glacier geotile variables
 # 2. Converts per-glacier geotile data (where glaciers can span multiple geotiles) into single values per glacier
 # 3. Verifies glacier IDs match between datasets and copies over area and time series variables
 # 4. Converts units from m/year to m³/s for relevant variables
-# 5. Interpolates glacier variables (dh, smb, fac, runoff) to the 15th of every month:
+# 5. Interpolates glacier variables (runoff) to the 1st of every month:
 #    - Uses quadratic B-spline interpolation
 #    - Handles missing data (NaN values)
 #    - Ensures runoff remains non-negative
-# 6. Saves the processed and interpolated data to both Arrow and JLD2 formats
-#if !isfile(glacier_vars_interpolated_fn)
-begin
+# 6. Routes glacier runoff by:
+#    - Copying runoff values to corresponding river segments
+#    - Summing runoff from multiple glaciers per segment
+#    - Accumulating flow downstream through river network
+# 7. Saves results as NetCDF with:
+#    - River segment IDs
+#    - Monthly glacier runoff flux (m3/s)
+#    - Metadata and attributes
+#
+# The output NetCDF contains:
+# - Dimensions: time and river segment ID (COMID)
+# - Variables: glacier runoff flux in m3/s
+# - Attributes: units, descriptions, etc.
+
+
+begin # [4 minutes]
     glaciers = GeoDataFrames.read(glacier_routing_path)
     geotile_perglacier = load(glacier_vars_fn, "glaciers")
 
-    tsvars=["dh",  "smb", "fac", "runoff"]
-    begin
-        # convert from perglacier geotile (glacier can call in multiple geotiles) to perglacier
-        glaciers0 = Altim.perglacier_geotile2glacier(geotile_perglacier; tsvars)
+    tsvars=["runoff", "dm"]
 
-        # ensure that glaciers0 RGIId order matches glaciers order
-        @assert glaciers0.RGIId == glaciers.RGIId
-        glaciers[!, :area_km2] = glaciers0[:, :area_km2]
-        for tsvar in tsvars
-            glaciers[!, tsvar] = glaciers0[:, tsvar]
-            colmetadata!(glaciers, tsvar, "date", colmetadata(glaciers0, tsvar, "date"), style=:note)
-        end
-    
-        glaciers = Altim.mie2cubicms!(glaciers; tsvars)
+    # convert from perglacier geotile (glacier can call in multiple geotiles) to perglacier
+    glaciers0 = Altim.perglacier_geotile2glacier(geotile_perglacier; tsvars) #[1 min]
+
+    # ensure that glaciers0 RGIId order matches glaciers order
+    @assert glaciers0.RGIId == glaciers.RGIId
+    glaciers[!, :area_km2] = glaciers0[:, :area_km2]
+
+    for tsvar in tsvars
+        glaciers[!, tsvar] = glaciers0[:, tsvar]
+        glaciers = colmetadata!(glaciers, tsvar, "date", colmetadata(glaciers0, tsvar, "date"), style=:note)
     end
 
-    # interpolate glacier runoff to the 15th of every month
-    for tsvar in tsvars
+    glaciers = Altim.mie2cubicms!(glaciers; tsvars)
+
+    # interpolate glacier runoff to the 1st of every month
+    @time for tsvar in tsvars # [30 seconds]
     #tsvar = "runoff"
         t = colmetadata(glaciers, tsvar, "date")
         yrange = extrema(Dates.year.(t))
-        t0 = [Dates.DateTime(y,m,15) for m in 1:12, y in yrange[1]:yrange[2]][:];
+        t0 = [Dates.DateTime(y,m,1) for m in 1:12, y in yrange[1]:yrange[2]][:];
 
         tms = Dates.datetime2epochms.(t)
         dt = unique(tms[2:end] .- tms[1:end-1])
@@ -340,7 +342,7 @@ begin
         #scale for efficiency of interpolation
         t0ms = (t0ms .- tms[1]) ./  dt[1] .+ 1
 
-        @showprogress dt=1 desc="Interpolating glacier $(tsvar)..." Threads.@threads for g in eachrow(glaciers)
+        @showprogress dt=1 desc="Interpolating glacier $(tsvar)..." Threads.@threads for g in eachrow(glaciers) #[30 seconds]
             A = g[tsvar];
             valid = .!isnan.(A)
             if any(valid)
@@ -354,83 +356,81 @@ begin
         end
         
         #update column metadata
-        colmetadata!(glaciers, tsvar, "date", t0)
-    end
-
-
-    GeoDataFrames.write(glacier_vars_interpolated_fn, glaciers; geom_columns=(:geom,))
-    
-    # metadatagymnastics
-    metadata = Dict()
-    for n in colmetadatakeys(glaciers)
-        metadata[n[1]] = colmetadata(glaciers, n[1], collect(n[2])[1])
-    end
-    FileIO.save(replace(glacier_vars_interpolated_fn, ".arrow"=> "metadata.jld2"), Dict("metadata" => metadata))
-end
-
-
-# This section of code handles routing glacier runoff to rivers. Here's what it does:
-
-# 1. Loads glacier data from interpolated files (both Arrow and JLD2 formats)
-# 2. Transfers metadata between the file formats to ensure consistency
-# 3. Loads river network data that glaciers flow into
-# 4. Initializes arrays to store glacier runoff for each river segment
-# 5. Routes glacier runoff to the appropriate river segments by:
-#    - Copying runoff values from glaciers to their corresponding river segments
-#    - Handling both single values and time series of runoff
-#    - Summing runoff from multiple glaciers that flow to the same river segment
-# 6. Calculates monthly mean runoff rates for each river segment
-# 7. Saves the results in both Arrow and JLD2 formats for later use
-#if !isfile(glacier_rivers_runoff_path)
-begin
-    in_fn = glacier_vars_interpolated_fn
-    glaciers = GeoDataFrames.read(in_fn)
-    
-    # metadatagymnastics
-    metadata = FileIO.load(replace(in_fn, ".arrow" => "metadata.jld2"), "metadata")
-    # transfer the metadata
-    for k in keys(metadata)
-        colmetadata!(glaciers, k, "date", metadata[k], style=:note)
+        colmetadata!(glaciers, tsvar, "date", t0; style=:note)
     end
 
     # this takes 1 min to load
     rivers = GeoDataFrames.read(glacier_rivers_path)
 
-    # add glacier runoff to the rivers
-    rivers[!,  :glacier_runoff] = [zeros(length(glaciers[1,:runoff])) for r in 1:nrow(rivers)]
-    colmetadata!(rivers, :glacier_runoff, "date", colmetadata(glaciers, :runoff, "date"), style=:note)
+    rivers[!, :basin02] = floor.(Int16, rivers.COMID./1000000)
+    rivers[!, :headbasin] = rivers.up1 .== 0
 
-    # this takes 2 min to run
-    @showprogress dt=1 desc="Routing glacier runoff to rivers..." Threads.@threads for r in eachrow(rivers)
-        rrunoff = glaciers[r.glacier_table_row, :runoff]
-        if length(rrunoff) == 1
-            r.glacier_runoff = rrunoff[1]
-        else
-            index = .!all.([isnan.(k) for k in rrunoff])
-            if any(index)
-                r.glacier_runoff = sum(rrunoff[index])
-            end
+    # if there is no input from upstream then it is a head basin
+    # This is needed as only a subset of the full river network is routed
+    rivers[!, :headbasin] .|= .!in.(rivers.COMID, Ref(unique(rivers.NextDownID)))
+
+    # add glacier runoff to the rivers
+    for tsvar in tsvars
+        rivers[!,  tsvar] = [zeros(length(glaciers[1,tsvar])) for r in 1:nrow(rivers)]
+        colmetadata!(rivers, tsvar, "date", colmetadata(glaciers, tsvar, "date"), style=:note)
+    end
+    
+    # glacier inputs to rivers
+    valid_temporal_range = falses(size(glaciers[1,first(tsvars)]))
+    map(tsvar -> valid_temporal_range .|= (.!isnan.(glaciers[1, tsvar])), tsvars)
+
+    dcomid = Dim{:COMID}(rivers.COMID)
+    dTi = Ti(colmetadata(glaciers, first(tsvars), "date")[valid_temporal_range])
+    river_inputs = Dict()
+    river_flux = Dict()
+    
+    for tsvar in tsvars
+        river_inputs[tsvar] = zeros(eltype(glaciers[1,tsvar]), (dTi, dcomid))
+
+        # need to sum as multiple glaciers can flow into the same river
+        for r in eachrow(glaciers[glaciers.RiverID .!= 0, :])
+            river_inputs[tsvar][:, At(r.RiverID)] .+= r[tsvar][valid_temporal_range]
+        end
+
+        # accululate inputs downstream
+        river_flux[tsvar] = Altim.flux_accumulate!(river_inputs[tsvar], rivers.COMID, rivers.NextDownID, rivers.headbasin,  rivers.basin02) #[< 1 second]
+
+        # save data as netcdf
+        # data needs to be Float32 (not Real) for saving as netcdf
+        river_flux[tsvar] = Float32.(river_flux[tsvar])
+    end
+
+    # save as netcdf
+
+    NCDataset(glacier_rivers_runoff_qout_path,"c") do ds
+        data_dims = dims(river_flux[first(tsvars)])
+
+        # First all dimensions need to be defined
+        for dim in data_dims
+            dname = string(DimensionalData.name(dim));
+            defDim(ds, dname, length(dim))
+        end
+
+        # now add the variables
+        for dim in data_dims
+            dname = string(DimensionalData.name(dim));
+            defVar(ds, dname, val(val(dim)), (dname,))
+        end
+
+        for tsvar in tsvars
+            v = defVar(ds, "$tsvar", parent(river_flux[tsvar]), string.(DimensionalData.name.(data_dims)))
+            v.attrib["units"] = "m3 s-1"
+            v.attrib["long_name"] = "glacier $tsvar river flux"
+
+            # add global attributes
+            ds.attrib["title"] = "river flux from modeled glacier $tsvar"
         end
     end
-
-    # monthly mean rates
-    rivers[!, :glacier_runoff_monthly] = [zeros(12) for r in 1:nrow(rivers)]
-    ddate = Dim{:date}(colmetadata(rivers, :glacier_runoff, "date"))
-    for r in eachrow(rivers)
-        r.glacier_runoff_monthly = Altim.nanmean.(groupby(DimArray(r.glacier_runoff, ddate), ddate => Bins(month, 1:12)))
-    end
-
-    # There are all sorts of issues with saving these complex data stuctures... save the simple geo
-    out_fn = glacier_rivers_runoff_path
-    GeoDataFrames.write(out_fn, rivers)
-
-    # metadatagymnastics
-    metadata = Dict()
-    for n in colmetadatakeys(rivers)
-        metadata[n[1]] = colmetadata(rivers, n[1], collect(n[2])[1])
-    end
-    FileIO.save(replace(out_fn, ".arrow" => "metadata.jld2"), Dict("metadata" => metadata))
 end
+
+
+#=
+# ----------------------------- THIS IS OLD CODE -------------------------------------------
 
 # This section of code processes river discharge data and calculates fracitonal glacier melt contribution:
 #
@@ -556,6 +556,8 @@ begin
     # for plotting
     GeoDataFrames.write(glacier_melt_rivers_runoff_qout_path_fgb, rivers[:, [:geometry, :COMID, :ocean_terminating, :glacfrac_max]])
 end
+
+
 
 
 # This section determines glacier sinks (where glacier meltwater ultimately flows)
@@ -839,4 +841,4 @@ end
 
     # rsync -ar devon:/mnt/bylot-r3/data/glacier_rates_grouped.arrow ~/data/Altim/
 end
-
+=#

@@ -20,20 +20,26 @@
 using Altim
 using Extents
 
-force_remake = false; 
-geotile_width = 2; #geotile width [degrees]
-paths = project_paths();
-geotiles = project_geotiles(; geotile_width=geotile_width);
 
-#= --------------------------------------------------------------------------
-@warn "--- only processing a subset of geotiles ----"
-region = :WNA;
-extent, epsg = region_extent(region);
-geotiles = geotile_subset!(geotiles, extent);
-=# 
+# Parameters: user defined 
+force_remake = true
+project_id = :v01;
+geotile_width = 2;
+domain = :glacier; # :glacier -or- :landice
+missions = (:icesat2,); # (:icesat2, :icesat, :gedi, :hugonnet)
 
-# custome subset
-# geotiles = geotile_subset!(geotiles, Extent(X=(-180, 180), Y = (85,90)));
+# Initialize: paths, products, geotiles
+paths = project_paths(; project_id);
+products = project_products(; project_id);
+geotiles = Altim.geotiles_w_mask(geotile_width);
+
+# Subset: region & mission 
+geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
+isa(missions, Tuple) || error("missions must be a tuple... maybe you forgot a trailing comma for single-element tuples?")
+products = getindex(products, missions)
+
+
+# Execute: build geotiles from Hugonnet data
 
 # make directly if it doesn't exist
 if !isdir(paths.hugonnet.geotile)

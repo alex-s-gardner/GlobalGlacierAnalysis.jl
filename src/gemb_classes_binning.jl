@@ -35,10 +35,6 @@
 # Total runtime is approximately 9.5 hours, with most time spent on gap filling
 # and creating height classes in step 4.
 #@time begin
-    # set force_remake == true to redo all steps from scratch 
-    force_remake = true;
-
-
     # This section initializes the GEMB (Glacier Energy Mass Balance) model:
     #
     # Key steps:
@@ -77,7 +73,8 @@
         using ProgressMeter
         using Loess
 
-        # run parameters
+        # run parameters 
+        force_remake = true; # set force_remake == true to redo all steps from scratch 
         project_id = :v01;
         geotile_width = 2;
         binning_method = "mean";

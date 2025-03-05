@@ -246,6 +246,19 @@ function MakieCore.convert_arguments(::Type{MakieCore.Mesh}, cap::UnitSphericalC
     return (GeometryBasics.normal_mesh(points, faces),)
 end
 
+function trace_upstream(COMID, river_traces)
+    upstream_trace = [Vector{eltype(COMID)}() for _ in COMID]
+    ind = falses(length(river_traces))
+    
+    for (i, id) in enumerate(COMID)   
+        for (j, haystack) in enumerate(river_traces)
+            ind[j] = in(id, haystack)
+        end
+        upstream_trace[i] = copy(COMID[ind])
+    end
+    return upstream_trace
+end
+
 
 function trace_downstream(start_id::Integer, ids, next_ids; maxiters=length(ids))
     # prog = ProgressUnknown(; dt = 0.1, desc = "Tracing downstream...")
@@ -303,4 +316,82 @@ haversine_distance(manifold::GOC.Spherical, ::GI.PointTrait, x, ::GI.PointTrait,
 
 haversine_distance(manifold::GOC.Spherical, ::GI.PointTrait, x, ::GI.AbstractCurveTrait, y) = GO.applyreduce(min, GI.PointTrait(), y; init = Inf) do yp
     haversine_distance(manifold, x, yp)
+end
+
+
+
+"""
+    flux_accumulate!(river_inputs, id, nextdown_id, headbasin, majorbasin_id)
+
+Accumulate river fluxes by propagating flows downstream through a river network.
+
+# Arguments
+- `river_inputs`: DimensionalArray of basin/river inputs [m s⁻¹] with dimensions [Ti, ID]
+- `id`: Vector of river/basin IDs 
+- `nextdown_id`: Vector of next downstream river/basin IDs (0 indicates no downstream reach)
+- `headbasin`: Boolean vector indicating headwater basins (true = no upstream reaches)
+- `majorbasin_id`: Vector of major/main basin IDs used for parallel processing
+
+# Details
+For each major basin, this function:
+1. Identifies headwater basins and their downstream connections
+2. Iteratively propagates flows downstream by adding upstream flows to downstream reaches
+3. Continues until all basins in the network have been processed
+4. Performs accumulation in-place, modifying the input `river_inputs` array
+
+The function processes each major basin in parallel using multiple threads.
+flux_accumulate! is insanely fast.
+"""
+function flux_accumulate!(river_inputs, id, nextdown_id, headbasin, majorbasin_id)
+    # sum river inputs going downstream to get total river flux     
+
+    @showprogress dt = 5 desc = "Accumulating river inputs from upstream basins ..." Threads.@threads for majorbasin in unique(majorbasin_id) #[2 min]
+        # majorbasin = unique(majorbasin_id)[1]
+        index = majorbasin_id .== majorbasin
+
+        id0 =  id[index]
+        nextdown_id0 = nextdown_id[index]
+        headbasin0 = headbasin[index]
+        
+        # identify head basins that do not flow into other basins
+        touched = nextdown_id0 .== 0
+
+        # identify head basins that flow into other basins
+        flowdown_now = headbasin0 .& (.!touched) # these basins are ready to flow down
+        flowdown_later = copy(flowdown_now) # these basins are waiting for other basins catch fill up
+        
+        # exclude basins that will later be touched by flowdown
+        flowdown_now_ids = setdiff(unique(nextdown_id0[flowdown_now]), unique(nextdown_id0[.!(touched .| flowdown_now)]))
+        flowdown_now[flowdown_now] = in.(nextdown_id0[flowdown_now], Ref(flowdown_now_ids)) 
+        flowdown_later = flowdown_later .& (.!flowdown_now)
+
+        while any(flowdown_now)
+            id1 = id0[flowdown_now]
+            nextdown_id1 = nextdown_id0[flowdown_now]
+
+            # a loop there seems to be faster than a view
+            for (from_id, to_id) in zip(id1, nextdown_id1) 
+                 river_inputs[:, At(to_id)] .+= parent(river_inputs[:, At(from_id)])
+            end
+
+            touched[:] = flowdown_now .| touched
+
+            if all(touched)
+                break
+            else
+                flowdown_now[:] = (in.(id0, Ref(unique(nextdown_id0[flowdown_now]))) .| flowdown_later) .& (.!touched)
+                flowdown_later[:] = flowdown_now
+
+                flowdown_now_ids = setdiff(unique(nextdown_id0[flowdown_now]), unique(nextdown_id0[.!(touched .| flowdown_now)]))
+                flowdown_now[flowdown_now] = in.(nextdown_id0[flowdown_now], Ref(flowdown_now_ids))
+                flowdown_later[:] = flowdown_later .& (.!flowdown_now)
+            end
+        end
+
+        # this is a sanity check that all basins were touched
+        if !all(touched)
+            @warn "for major basin $(majorbasin) $(sum(touched)) basins were not touched"
+        end
+    end
+    return river_inputs
 end

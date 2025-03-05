@@ -33,9 +33,14 @@
 # Total runtime is approximately 3.5 hours, with most time spent on
 # gap filling and mission alignment steps.
 
-@time begin
-    # set force_remake == true to redo all steps from scratch
-    force_remake = false;
+using Altim
+        
+#@time begin
+ 
+    force_remake_binning = true
+    force_remake_fill = true
+    force_remake_align_replace = true
+    force_remake_regional_dv = true
 
     # This section initializes the GEMB (Glacier Energy Mass Balance) model:
     #
@@ -51,25 +56,21 @@
         project_id = :v01
         geotile_width = 2
 
-        force_remake_binning = false
-        force_remake_fill = false
-
         gemb_file = "/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2023_820_40_racmo_grid_lwt_e97_0_geotile_filled_d_reg.jld2";
 
-        binned_folder_filtered = analysis_paths(; geotile_width).binned
+        binned_folder_filtered = Altim.analysis_paths(; geotile_width).binned
         binned_folder_unfiltered = replace(binned_folder_filtered, "binned" => "binned_unfiltered")
 
         warnings = false 
         showplots = false
         
         # run parameters
-        update_geotile = false; # this will load in prevous results to update select geotiles or missions
+        update_geotile = true; # this will load in prevous results to update select geotiles or missions [only touched if force_remake_binning = true]
         update_geotile_missions = ["icesat2"]
 
         # run parameters
         all_permutations_for_glacier_only = false
-        surface_masks = [:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
-        surface_masks = [:glacier, :land, :glacier_rgi7]; #, :glacier_b1km, :glacier_b10km]
+        surface_masks = [:glacier, :land, :glacier_rgi7]; #[:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
         binned_folders= (binned_folder_unfiltered, binned_folder_filtered)
         dem_ids = [:best, :cop30_v2]
         binning_methods = ["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"]
@@ -80,7 +81,6 @@
         # filling only parameters
         filling_paramater_sets = [1, 2, 3, 4]
         amplitude_corrects = [true, false]
-        force_remake_fill  = false
         plot_dh_as_function_of_time_and_elevation = true;
         mission_reference_for_amplitude_normalization = "icesat2"
     end
@@ -98,6 +98,11 @@
     # - curvature_corrects: Whether to apply curvature correction
     # - max_canopy_height: Maximum canopy height (fixed)
     # - dh_max: Maximum elevation change threshold
+    #
+    # TODO: geotile_binning() currently saves output as JLD2 files... this is problimatic 
+    # as the reading of the files can break with breaking changes in depndent packages... 
+    # this should be changed to netcdf at some point.. the output is complex so it is not a 
+    # trivial change
     Altim.geotile_binning(; 
         project_id,
         geotile_width,
@@ -139,6 +144,11 @@
     # - curvature_corrects: Whether to apply curvature correction
     # - paramater_sets: Different parameter sets for filling
     # - amplitude_corrects: Whether to apply amplitude correction
+
+    # TODO: geotile_binned_fill() currently saves output as JLD2 files... this is problimatic 
+    # as the reading of the files can break with breaking changes in depndent packages... 
+    # this should be changed to netcdf at some point.. the output is complex so it is not a 
+    # trivial change
     Altim.geotile_binned_fill(; 
         project_id,
         geotile_width,
@@ -197,7 +207,7 @@
         regions2replace_with_model = ["rgi19"],
         mission_replace_with_model="hugonnet",
         showplots = false,
-        force_remake = false,
+        force_remake=force_remake_align_replace,
     )
     
     # [This might not be valid anymore... this is now handled in synthesis.jl]
@@ -212,6 +222,6 @@
         curvature_corrects,
         paramater_sets=filling_paramater_sets,
         amplitude_corrects,
-        force_remake=false,
+        force_remake=force_remake_regional_dv,
     )
 end

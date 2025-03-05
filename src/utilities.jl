@@ -222,7 +222,9 @@ function geotile_search_granules(
     product,
     version,
     outgranulefile;
-    rebuild_dataframe=false
+    rebuild_dataframe=false,
+    after=nothing,
+    page_size=2000
 )
 
     # ensure SpaceLiDAR capitilization ot mission 
@@ -247,10 +249,22 @@ function geotile_search_granules(
         error("mission and/or product not recognized")
     end
 
-    Threads.@threads for i in 1:n
-        #for i in 1:n
+
+    # this returns a non descript "Something went wrong: ["An Internal Error has occurred."]"
+    #Threads.@threads for i in 1:n
+    for i in 1:n
         printstyled("    -> finding granules in geotile $i of $n\n"; color=:light_black)
-        granules[i] = search(mission, product; bbox=geotiles[i, :extent], version=version)
+
+        foo = true
+        while foo
+            #try
+                granules[i] = search(mission, product; bbox=geotiles[i, :extent], version=version, after=after)
+                foo = true
+            #catch e
+            #    println("error returned from search... wait 1 second and try again")
+            #    sleep(1)
+            #end
+        end
     end
 
     # save remote granules before download in case there is a crash
@@ -794,7 +808,7 @@ function pointextract(
     end
 
     begin # 4s
-        if !bbox_overlap(bbox(ga), extent)
+        if !bbox_overlap(extent2nt(bbox(ga)), extent)
 
             # extents do not overlap
             if replace_nodatavalue_withnans
@@ -887,7 +901,7 @@ function pointextract(
             deriv = [Matrix{eltype(ga0.A)}(undef, (length(x), size(ga0.A, 3))) .+ nodatavalue for i = 1:n_derivative]
             for j in 1:n_derivative
                 for i = 1:size(ga0.A, 3)
-                    itp = Interpolations.extrapolate(scale(Interpolations.interpolate(ga1[j].A[:, :, i], BSpline(interp)), x0, y0 .* y2x_scale), nodatavalue)
+                    itp = Interpolations.extrapolate(Interpolations.scale(Interpolations.interpolate(ga1[j].A[:, :, i], Interpolations.BSpline(interp)), x0, y0 .* y2x_scale), nodatavalue)
                     deriv[j][:, i] = itp.(x, y .* y2x_scale)
                 end
             end
@@ -1430,7 +1444,7 @@ function dem_height(
     begin # 0.1s
         # use gaussian sampeling filter only if the center pixel contains < filter_thresh of the signal
         filter_thresh = 0.85
-        interp = Interpolations.Cubic(Line(OnGrid())); # Constant(), Linear(), Cubic(Line(OnGrid())), Quadratic()
+        interp = Interpolations.Cubic(Interpolations.Line(Interpolations.OnGrid())) # Constant(), Linear(), Cubic(Line(OnGrid())), Quadratic()
         deminfo, goids_folder = dem_info(dem)
 
         # exclude points where x or y is NaN ... also include old x = 0, y = 0 until old files are updated. this was used as a no data value in the datacubes
@@ -2191,7 +2205,7 @@ function itslive_extract(
 
         extent = (min_x=minmax_x[1], min_y=minmax_y[1], max_x=minmax_x[2] + abs(ga.f.linear[1, 1]), max_y=minmax_y[2] + abs(ga.f.linear[2, 2]))
 
-        if !bbox_overlap(bbox(ga), extent)
+        if !bbox_overlap(extent2nt(bbox(ga)), extent)
             df = DataFrame()
             # extents do not overlap
             for v in vars
@@ -2343,7 +2357,7 @@ end
 return cetroid of GeoArray
 """
 function centroid(ga::GeoArray)
-    bbox = GeoArrays.bbox(ga)
+    bbox = extent2nt(GeoArrays.bbox(ga))
     (x=(bbox.min_x + bbox.max_x) / 2, y=(bbox.min_y + bbox.max_y) / 2)
 end
 
@@ -2877,9 +2891,9 @@ function geotile_pointextract(
         t1 = time()
 
         # check if ga is in EPSG:4326, if so then it's possible to check if lats and lons fall within ga 
-        if contains(ga.crs.val, "\"EPSG\",\"4326\"")
+        if Base.contains(ga.crs.val, "\"EPSG\",\"4326\"")
 
-            if !bbox_overlap(bbox(ga), extent2nt(geotile.extent))
+            if !bbox_overlap(extent2nt(bbox(ga)), extent2nt(geotile.extent))
                 printstyled("    ->$(geotile.id) does not overlap $var_name, skipping\n"; color=:light_red)
                 continue
             end
@@ -3011,8 +3025,6 @@ function geotile_subset!(geotiles, extent::Extent)
     return geotiles
 end
 
-
-
 """
     region_extent(region)
 
@@ -3088,7 +3100,7 @@ function allfiles(
             end
 
             if !isnothing(fn_contains)
-                containsin_tf = any(contains.(file, fn_contains))
+                containsin_tf = any(Base.contains.(file, fn_contains))
             end
 
             tf = and_or(and_or(endswith_tf, startswith_tf), containsin_tf)
@@ -3120,7 +3132,7 @@ function allfiles(
                 end
 
                 if !isnothing(fn_contains)
-                    containsin_tf = any(contains.(file, fn_contains))
+                    containsin_tf = any(Base.contains.(file, fn_contains))
                 end
 
                 tf = and_or(and_or(endswith_tf, startswith_tf), containsin_tf)
@@ -3947,8 +3959,15 @@ end
 function highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, surface_mask)
     
     
-    (mask1, _) = highres_mask(geotile, feature, invert, excludefeature)
+    mask1, _ = highres_mask(geotile, feature, invert, excludefeature)
     
+    grid_resolution = 0.00027 # ~30m
+
+    x_mask = X(geotile.extent.X[1]:grid_resolution:geotile.extent.X[2],
+        sampling=DimensionalData.Intervals(DimensionalData.Start()))
+    y_mask = Y(geotile.extent.Y[1]:grid_resolution:geotile.extent.Y[2],
+        sampling=DimensionalData.Intervals(DimensionalData.Start()))
+
     valid = Altim.within.(Ref(geotile.extent), altim.longitude, altim.latitude)
     masks0[!, surface_mask] .= false
 
@@ -4104,6 +4123,7 @@ rginum2txt = Dict(
     18 => "rgi18" ,
     19 => "rgi19" ,
     98 => "hma" ,
+    99 => "global" ,
 )
 
 
@@ -4205,7 +4225,11 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
         df[!, out_var_amp] = zeros(nrow(df))
         df[!, out_var_phase] = zeros(nrow(df))
 
-        date_index = (ddate .> datelimits[1]) .& (ddate .< datelimits[2])
+        if !isnothing(datelimits)
+            date_index = (ddate .> datelimits[1]) .& (ddate .< datelimits[2])
+        else
+            date_index = trues(length(ddate))
+        end
 
         Threads.@threads for g in eachrow(df)
             y = g[tsvar];
@@ -4363,4 +4387,27 @@ function mie2cubicms!(glaciers; tsvars=["dh", "smb", "fac", "runoff"])
         end
     end
     return glaciers
+end
+
+
+"""
+    nc2dd(ds, varname)
+
+Convert a NetCDF variable to a DimensionalData.DimArray.
+
+# Arguments
+- `ds`: NCDataset containing the variable
+- `varname`: String name of the variable to convert
+
+# Returns
+- DimArray with dimensions and data from the NetCDF variable
+
+# Notes
+- Preserves dimension names and coordinates from the NetCDF dataset
+- Converts dimension names to symbols for DimensionalData compatibility
+"""
+function nc2dd(ds, varname)
+    dnames = NCDatasets.dimnames(ds[varname])
+    da = DimArray(ds[varname], tuple([Dim{Symbol(dname)}(ds[dname]) for dname in dnames]...))
+    return da
 end

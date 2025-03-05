@@ -101,9 +101,7 @@ function geotile_binning(;
     # define date bin ranges... this should match what's in gemb_classes_binning.jl
     # define date and hight binning ranges 
     date_range, date_center = Altim.project_date_bins()
-    Δd = abs(date_center[2] - date_center[1])
     height_range, height_center = Altim.project_height_bins()
-    Δh = abs(height_center[2] - height_center[1])
 
     # curvature ranges 
     Δc = 0.1;
@@ -166,12 +164,22 @@ function geotile_binning(;
                     
                         binned_file = Altim.binned_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct)
 
-                        println("binning:$binned_file")
                         
                         # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><>
                         # binningfun(x) = mean(x[Altim.madnorm(x).<10])
                         # <><><><><><><><><><><><><><><><><><><><><><<><><><><><><><><><><><><><><><><><>
                         if !isfile(binned_file) || force_remake
+
+                            println("binning:$binned_file")
+
+                            ##################################### HACK FOR UPDATE #####################################
+                            if isfile(binned_file)
+                                if Dates.unix2datetime(mtime(binned_file)) > Date(2025, 2, 26)
+                                    @warn "Skipping $(binned_file) because it was created after 2025-03-28"
+                                    continue
+                                end
+                            end
+
                             # 6.2 hours for all glaciers, all missions/datasets on 96 threads
                             # 10hr for land for all glaciers, all missions/datasets on 96 threads
 
@@ -236,7 +244,7 @@ function geotile_binning(;
                                     # special case for unfiltered hugonnet data
 
                                     # this is a hack for including 2 folders that contain hugonnet data (filtered and unfiltered)
-                                    if contains(binned_folder, "unfiltered") && (mission == "hugonnet")
+                                    if Base.contains(binned_folder, "unfiltered") && (mission == "hugonnet")
                                         mission_geotile_folder = replace(mission_geotile_folder, "/2deg" => "/2deg_unfiltered")
                                     end
 
@@ -285,7 +293,12 @@ function geotile_binning(;
                                         canopy = DataFrame(canopyh = zeros(size(altim.latitude))) 
                                     else
                                         path2canopy = joinpath(mission_geotile_folder, geotile.id * ".canopyh")
-                                        canopy = DataFrame(Arrow.Table(path2canopy));
+                                        if isfile(path2canopy)
+                                            canopy = DataFrame(Arrow.Table(path2canopy));
+                                        else
+                                            @warn "Setting conopy height to zero as canopy height file does not exist: $(path2canopy)"
+                                            canopy = DataFrame(canopyh=zeros(size(altim.latitude)))
+                                        end
                                     end;
 
                                     if !any(masks0[:, surface_mask])
@@ -421,7 +434,7 @@ function geotile_binning(;
                                     showplots && CairoMakie.plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter, label="glacier-filt", ylims = (-300, +300))
                                     
                                     # this is a hack for including 2 folders that contain hugonnet data (filtered and unfiltered)
-                                    if product.apply_quality_filter || (contains(binned_folder, "unfiltered") && (mission == "hugonnet"))
+                                    if product.apply_quality_filter || (Base.contains(binned_folder, "unfiltered") && (mission == "hugonnet"))
                                         var_ind = var_ind .& altim.quality
 
                                         # for troubleshooting 
@@ -459,7 +472,6 @@ function geotile_binning(;
                                         println("size nobs0 = $(size(nobs0))")
                                         throw(e)
                                     end
-
 
                                     t2 = time()
                                     dt = round(Int16, t2 - t1);
@@ -528,7 +540,7 @@ function geotile_binned_fill(;
         # skip permutations if all_permutations_for_glacier_only = true
         if all_permutations_for_glacier_only
             if all_permutations_for_glacier_only &&
-               ((!(param.surface_mask == :glacier) && contains(param.binned_folder, "unfiltered")) &&
+               ((!(param.surface_mask == :glacier) && Base.contains(param.binned_folder, "unfiltered")) &&
                 ((param.dem_id != :best) && (param.binning_method != "meanmadnorm3") && param.curvature_correct))
 
                 continue
@@ -541,6 +553,14 @@ function geotile_binned_fill(;
         binned_filled_file, figure_suffix = Altim.binned_filled_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct, param.amplitude_correct, param.paramater_set)
 
         if (force_remake || !isfile(binned_filled_file)) && isfile(binned_file)
+
+            ##################################### HACK FOR UPDATE #####################################
+            if isfile(binned_filled_file)
+                if Dates.unix2datetime(mtime(binned_file)) > Date(2025, 2, 26)
+                    @warn "Skipping $(binned_filled_file) because it was created after 2025-03-28"
+                    continue
+                end
+            end
 
             println("filling binned data: surface_mask = $(param.surface_mask); binning_method = $(param.binning_method); dem_id = $(param.dem_id); curvature_correct = $(param.curvature_correct); amplitude_correct = $(param.amplitude_correct)")
 
@@ -1029,7 +1049,7 @@ function geotile_regional_dv(;
             # make geotile rgi regions mutually exexclusive 
             geotiles, reg = Altim.geotiles_mutually_exclusive_rgi!(geotiles)
 
-            if !any(contains.("area_km2", names(geotiles)))
+            if !any(Base.contains.("area_km2", names(geotiles)))
                 original_area_name = string(param.surface_mask) * "_area_km2"
                 generic_area_name = "area_km2"
                 rename!(geotiles, original_area_name => generic_area_name)
