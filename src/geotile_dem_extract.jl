@@ -15,11 +15,12 @@
 using Altim
 
 # Parameters: user defined 
-force_remake = true
+force_remake = false
 project_id = :v01;
 geotile_width = 2;
-domain = :glacier; # :glacier -or- :landice
-missions = (:icesat2,); # (:icesat2, :icesat, :gedi, :hugonnet)
+domain = :landice; # :glacier -or- :landice
+missions = (:icesat2, :icesat, :gedi, :hugonnet,); # (:icesat2, :icesat, :gedi, :hugonnet)
+hugonnet_unfiltered = true;
 
 slope = true;
 curvature = true;
@@ -38,3 +39,8 @@ products = getindex(products, missions)
 # Execute: extract dems
 Altim.geotile_extract_dem(products, dems2extract, geotiles, paths; slope, curvature, force_remake)
 
+# include hugonnet unfiltered
+if hugonnet_unfiltered && (:hugonnet in missions)
+    paths = Altim.update_geotile_path(paths; mission = :hugonnet, path_replace ="/2deg" => "/2deg_unfiltered")
+    Altim.geotile_extract_dem(products[(:hugonnet,)], dems2extract, geotiles, paths[(:hugonnet,)]; slope, curvature, force_remake)
+end

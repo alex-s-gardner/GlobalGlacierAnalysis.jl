@@ -82,6 +82,7 @@ module Altim
     include("utilities_plot.jl")
     include("utilities_geotile_processing.jl")
     include("utilities_routing.jl")
+    include("utilities_postprocessing.jl")
     include("/home/gardnera/Documents/GitHub/Altim.jl/src/STRTreesAbstractTreesExt.jl")
 
     export Extent

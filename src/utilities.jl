@@ -238,7 +238,7 @@ function geotile_search_granules(
     printstyled("identifying grannules that intersect each geotile\n"; color=:blue, bold=true)
 
     # get intersecting granules [run threads]
-    n = size(geotiles, 1)
+    n = nrow(geotiles)
     if mission == :ICESat2
         granules = Vector{Vector{ICESat2_Granule{product}}}(undef, n)
     elseif mission == :ICESat
@@ -251,20 +251,21 @@ function geotile_search_granules(
 
 
     # this returns a non descript "Something went wrong: ["An Internal Error has occurred."]"
-    #Threads.@threads for i in 1:n
-    for i in 1:n
-        printstyled("    -> finding granules in geotile $i of $n\n"; color=:light_black)
+    # ------------------- IF YOU GET THIS ERROR, REMOVE THREADS.@THREADS -------------------
+    @showprogress dt = 1 desc = "Finding granules $(mission) $(product)..." Threads.@threads for i in 1:n
+        granules[i] = search(mission, product; bbox=geotiles[i, :extent], version=version, after=after)
 
-        foo = true
-        while foo
-            #try
-                granules[i] = search(mission, product; bbox=geotiles[i, :extent], version=version, after=after)
-                foo = true
-            #catch e
-            #    println("error returned from search... wait 1 second and try again")
-            #    sleep(1)
-            #end
-        end
+        #printstyled("    -> finding granules in geotile $i of $n\n"; color=:light_black)
+        #foo = true
+        #while foo
+        #    try
+        #        foo = true
+        #    catch e
+        #        throw(e)
+        #        println("error returned from search... wait 1 second and try again")
+        #        sleep(1)
+        #    end
+        #end
     end
 
     # save remote granules before download in case there is a crash
@@ -514,14 +515,14 @@ function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow,
     end
 
     #asyncmap(eachrow(geotile_granules); ntasks = 10) do row
-    for row in eachrow(geotile_granules)
+    @showprogress dt = 1 desc = "Building geotiles for $(geotile_dir)..." for row in eachrow(geotile_granules)
 
         # tiles
         outfile = joinpath(geotile_dir, row.id * ".$fmt")
 
         if isempty(row.granules)
             # do nothing
-            printstyled("    -> $(row.id): has no granules\n"; color=:light_red)
+            printstyled("\n    -> $(row.id): has no granules\n"; color=:light_red)
             continue
         else
             if isfile(outfile)
@@ -594,9 +595,9 @@ function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow,
 
                 mv(tmp, outfile; force=true)
                 write_time = round((time() - t1) / 60, digits=1)
-                printstyled("    -> $(row[:id]): generation complete [read: $read_time min, write: $write_time min]\n"; color=:light_black)
+                printstyled("\n    -> $(row[:id]): generation complete [read: $read_time min, write: $write_time min]\n"; color=:light_black)
             else
-                printstyled("    -> $(row[:id]): no new granules to add to exisitng GeoTile\n"; color=:light_green)
+                printstyled("\n    -> $(row[:id]): no new granules to add to exisitng GeoTile\n"; color=:light_green)
             end
         end
     end
@@ -1622,7 +1623,7 @@ function geotile_extract_dem(
     outfile = replace(path2geotile, ".arrow" => ".$dem")
 
     if isfile(outfile) && !force_remake
-        printstyled("    ->$job_id $geotile_id $dem already exists, skipping\n"; color=:green)
+        printstyled("\n    ->$job_id $geotile_id $dem already exists, skipping\n"; color=:green)
     elseif isfile(path2geotile)
         t1 = time()
 
@@ -1632,7 +1633,7 @@ function geotile_extract_dem(
         
         # check if geotile extents intersect DEM extents 
         if !(Extents.intersects(nt2extent(deminfo.extent), GeoTiles.extent(geotile_id)))
-            printstyled("    ->$job_id $geotile_id $dem outside of dem limits, skipping\n"; color=:light_red)
+            printstyled("\n    ->$job_id $geotile_id $dem outside of dem limits, skipping\n"; color=:light_red)
             return
         end
 
@@ -1650,7 +1651,7 @@ function geotile_extract_dem(
         # df = df[.!isnan.(df.longitude),:]
 
         if isempty(df)
-            printstyled("    ->$job_id $geotile_id had an empty DataFrame, skipping\n"; color=:grey, bold=true)
+            printstyled("\n    ->$job_id $geotile_id had an empty DataFrame, skipping\n"; color=:grey, bold=true)
             return
         end
 
@@ -1676,7 +1677,7 @@ function geotile_extract_dem(
         end
 
         if isempty(lon)
-            printstyled("    ->$job_id $geotile_id is all empty, skipping\n"; color=:light_red)
+            printstyled("\n    ->$job_id $geotile_id is all empty, skipping\n"; color=:light_red)
             return
         end
 
@@ -1684,7 +1685,7 @@ function geotile_extract_dem(
         if (deminfo.extent.min_x != -180.0) || (deminfo.extent.min_y != -90.0) || (deminfo.extent.max_x != 180.0) || (deminfo.extent.max_y != 90.0)
             ind = within.(Ref(deminfo.extent), lon, lat)
             if !any(ind) 
-                printstyled("    ->$job_id $geotile_id $dem outside of dem limits, skipping\n"; color=:light_red)
+                printstyled("\n    ->$job_id $geotile_id $dem outside of dem limits, skipping\n"; color=:light_red)
                 return
             end
         end
@@ -1744,10 +1745,10 @@ function geotile_extract_dem(
             mv(tmp, outfile; force=true)
 
             total_time = round((time() - t1) / 60, digits=2)
-            printstyled("    ->$job_id $geotile_id $dem extracted: $(total_time) min \n"; color=:light_black)
+            printstyled("\n    ->$job_id $geotile_id $dem extracted: $(total_time) min \n"; color=:light_black)
         end
     else
-        printstyled("    ->$job_id $geotile_id does not exist\n"; color=:yellow)
+        printstyled("\n    ->$job_id $geotile_id does not exist\n"; color=:yellow)
         return
     end
 end
@@ -1769,9 +1770,8 @@ function geotile_extract_dem(
     force_remake=false
 )
 
-    printstyled("extracting $dem heights for $job_id geotiles\n"; color=:blue, bold=true)
 
-    Threads.@threads for geotile in eachrow(geotiles)
+    @showprogress dt = 10 desc = "extracting $dem heights for $job_id geotiles..." Threads.@threads for geotile in eachrow(geotiles)
     #for geotile in eachrow(geotiles)
         geotile_extract_dem(geotile.id, geotile_dir, dem; 
             filter_halfwidth, filter_kernel, slope, curvature,
@@ -2547,7 +2547,7 @@ function geotile_extract_mask(
     outfile = replace(path2geotile, ".arrow" => ".masks")
 
     if isfile(outfile) && !force_remake
-        printstyled("    ->$job_id $geotile_id masks already exists, skipping\n"; color=:green)
+        printstyled("\n    ->$job_id $geotile_id masks already exists, skipping\n"; color=:green)
     elseif isfile(path2geotile)
         t1 = time()
 
@@ -2558,7 +2558,7 @@ function geotile_extract_mask(
         #lat = vcat(df0.latitude...)
 
         if isempty(df0.longitude)
-            printstyled("    ->$job_id $geotile_id is all empty, skipping\n"; color=:light_red)
+            printstyled("\n    ->$job_id $geotile_id is all empty, skipping\n"; color=:light_red)
             return
         end
 
@@ -2583,9 +2583,9 @@ function geotile_extract_mask(
         mv(tmp, outfile; force=true)
 
         total_time = round((time() - t1) / 60, digits=2)
-        printstyled("    ->$job_id $geotile_id masks extracted: $(total_time) min \n"; color=:light_black)
+        printstyled("\n    ->$job_id $geotile_id masks extracted: $(total_time) min \n"; color=:light_black)
     else
-        printstyled("    ->$job_id $geotile_id does not exist\n"; color=:yellow)
+        printstyled("\n    ->$job_id $geotile_id does not exist\n"; color=:yellow)
         return
     end
 end
@@ -2601,10 +2601,8 @@ function geotile_extract_mask(
     force_remake=false
 )
 
-    printstyled("extracting masks for $job_id geotiles\n"; color=:blue, bold=true)
-
     #asyncmap(eachrow(geotiles); ntasks = 4) do geotile
-    for geotile in eachrow(geotiles)
+    @showprogress dt = 10 desc = "extracting masks for $job_id geotiles..." for geotile in eachrow(geotiles)
         geotile_extract_mask(geotile.id, geotile_dir; vars=vars, job_id=job_id, force_remake=force_remake)
     end
 end
@@ -2881,12 +2879,12 @@ function geotile_pointextract(
     interp::F=Constant()
 ) where {F<:Interpolations.Flag}
 
-    printstyled("extracting $var_name for geotiles\n"; color=:blue, bold=true)
     geotile_dirs isa AbstractVector || (geotile_dirs = [geotile_dirs])
     job_ids isa AbstractVector || (job_ids = [job_ids])
 
     #asyncmap(eachrow(geotiles); ntasks = 4) do geotile
-    Threads.@threads for geotile in eachrow(geotiles)
+    #@showprogress dt = 10 desc = "extracting $var_name for geotiles..." Threads.@threads for geotile in eachrow(geotiles)
+    @showprogress dt = 1 desc = "extracting $var_name for geotiles..." for geotile in eachrow(geotiles)
     #for geotile in eachrow(geotiles)
         t1 = time()
 
@@ -2894,11 +2892,12 @@ function geotile_pointextract(
         if Base.contains(ga.crs.val, "\"EPSG\",\"4326\"")
 
             if !bbox_overlap(extent2nt(bbox(ga)), extent2nt(geotile.extent))
-                printstyled("    ->$(geotile.id) does not overlap $var_name, skipping\n"; color=:light_red)
+                printstyled("\n    ->$(geotile.id) does not overlap $var_name, skipping\n"; color=:light_red)
                 continue
             end
         end
 
+        # geotile_pointextract() handles multiple geotile_dirs [multiple missions can be extracted at the same time... this saves greatly on I/O]
         path2geotiles = joinpath.(geotile_dirs, Ref(geotile.id * ".arrow"))
         path2outfiles = replace.(path2geotiles, Ref(".arrow" => ".$var_name"))
 
@@ -2916,11 +2915,6 @@ function geotile_pointextract(
             stop = zeros(size(path2geotiles))
             for (i, path2geotile) in enumerate(path2geotiles)
                 df = vcat(df, DataFrame(Arrow.Table(path2geotile))[!, [:longitude, :latitude]])
-
-                if any((df.longitude .== 0) .& (df.latitude .== 0))
-                    @warn "$(path2geotile) contains old longitude = 0, latitude = 0 convention for missing DataFrames"
-                end
-
                 stop[i] = nrow(df)
             end
             stop = Int.(stop)
@@ -2931,7 +2925,7 @@ function geotile_pointextract(
             #    return df 
             #end
             if isempty(df)
-                printstyled("    ->$(geotile.id) no valid $var_name, skipping\n"; color=:light_red)
+                printstyled("\n    ->$(geotile.id) no valid $var_name, skipping\n"; color=:light_red)
             else
                 start = Int(1)
                 for (i, outifle) = enumerate(path2outfile)
@@ -2942,15 +2936,15 @@ function geotile_pointextract(
                 end
             end
             total_time = round((time() - t1) / 60, digits=2)
-            printstyled("    ->$job_id $(geotile.id) $var_name extracted: $(total_time) min \n"; color=:light_black)
+            printstyled("\n    ->$job_id $(geotile.id) $var_name extracted: $(total_time) min \n"; color=:light_black)
             
         elseif all(.!geotiles_exist)
 
             job_id = job_ids[.!geotiles_exist]
-            printstyled("    ->$job_id $(geotile.id) does not exist,  skipping\n"; color=:light_red)
+            printstyled("\n    ->$job_id $(geotile.id) does not exist,  skipping\n"; color=:light_red)
         else
             job_id = job_ids[geotiles_exist .& outfiles_exist]
-            printstyled("    ->$(geotile.id) $var_name already extracted, skipping\n"; color=:light_green)
+            printstyled("\n    ->$(geotile.id) $var_name already extracted, skipping\n"; color=:light_green)
         end
     end
 end
@@ -3902,15 +3896,22 @@ function add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder)
 
     for dem_id1 in dem_id0
         path2dem = joinpath(mission_geotile_folder, geotile.id * ".$(dem_id1)")
+
         if isfile(path2dem)
             dem = select!(DataFrame(Arrow.Table(path2dem)), :height, :dhddx, :dhddy)
+
             # a bit faster to calculate curvature on all data then subset
             curv = Altim.curvature.(dem.dhddx, dem.dhddy, Ref(Altim.dem_info(dem_id1)[1].epsg), lat=mean(geotile.extent.Y))
 
             ind = .!isnan.(curv) .& (abs.(dem.height) .< 9998)
 
-            altim[ind, :height_ref] = dem[ind, :height]
-            altim[ind, :curvature] = curv[ind]
+            try
+                altim[ind, :height_ref] = dem[ind, :height]
+                altim[ind, :curvature] = curv[ind]
+            catch e
+                @warn "Error adding dem info to altim dataframe, it is most likely that the dem is out of data: $path2dem"
+                throw(e)
+            end
         end
     end
 
@@ -4100,6 +4101,20 @@ rgi2label = Dict(
     "hll" => "ASTER, ICESat/-2: rgi 1, 3, 4, 5, 6, 7, ,8, 9, 19",
     "hll_ep" => "ASTER, ICESat/-2 no periphery: rgi 1, 3, 4, 6, 7, ,8, 9",
 )
+
+
+"""
+    rginum2label(rginum)
+
+Converts an RGI (Randolph Glacier Inventory) region number to its corresponding label.
+Takes a numeric RGI region identifier and returns the human-readable label by first
+converting the number to a text key using `rginum2txt` and then looking up the label
+in the `rgi2label` dictionary.
+"""
+function rginum2label(rginum) 
+    return getindex(Altim.rgi2label,getindex(Altim.rginum2txt, rginum))
+end
+
 
 
 rginum2txt = Dict(
@@ -4410,4 +4425,103 @@ function nc2dd(ds, varname)
     dnames = NCDatasets.dimnames(ds[varname])
     da = DimArray(ds[varname], tuple([Dim{Symbol(dname)}(ds[dname]) for dname in dnames]...))
     return da
+end
+
+
+
+"""
+    update_geotile_path(paths; mission = :hugonnet, path_replace ="/2deg" => "/2deg_unfiltered")
+
+Updates the geotile path for a specific mission in the paths NamedTuple.
+
+# Arguments
+- `paths`: NamedTuple containing mission paths
+- `mission`: Symbol specifying which mission to update (default: `:hugonnet`)
+- `path_replace`: Pair of strings for search and replace in the path (default: `"/2deg" => "/2deg_unfiltered"`)
+
+# Returns
+- Updated paths NamedTuple with the modified geotile path
+"""
+function update_geotile_path(paths; mission = :hugonnet, path_replace ="/2deg" => "/2deg_unfiltered")
+    k = keys(paths[mission])
+    v = collect(values(paths[mission]))
+
+    ind = findfirst(k .== :geotile)
+    v[ind] = replace(v[ind], path_replace)
+
+    nt = NamedTuple{k}(v)
+
+    k = keys(paths); 
+    v = collect(values(paths))
+
+    ind = findfirst(k .== :hugonnet)
+    v[ind] = nt
+
+    paths = NamedTuple{k}(v)
+
+    return paths
+end
+
+
+"""
+    wimberly2024(; filename = pathlocal[:wimberly_2024])
+
+Loads and processes glacier model data from Wimberly et al. 2024.
+
+# Arguments
+- `filename`: Path to the CSV file containing the data (default: pathlocal[:wimberly_2024])
+
+# Returns
+- A DimArray containing glacier model runoff data in units of [km^3] organized by date, 
+  GCM, SSP, basin, and model type. The function parses the combined GCM_SSP_Basin column 
+  into separate dimensions and structures the data from three glacier models 
+  (GloGEM, PyGEM, OGGM) into a DimArray.
+"""
+function wimberly2024(; filename=setpaths().wimberly_2024)
+
+    df = CSV.read(filename, DataFrame)
+
+    # split the GCM_SSP_Basin column into three columns
+    df = transform(df, [:GCM_SSP_Basin] => ByRow(x -> split(x, "_")) => [:GCM, :SSP, :Basin])
+
+    ddate = Ti(sort!(unique(df.Date)))
+    dgcm = Dim{:GCM}(unique(df.GCM))
+    dssp = Dim{:SSP}(unique(df.SSP))
+    dbasin = Dim{:Basin}(unique(df.Basin))
+    dmodel = Dim{:Model}(["GloGEM", "PyGEM", "OGGM"])
+
+    gdf = groupby(df, [:GCM, :SSP, :Basin])
+
+    da = zeros(ddate, dgcm, dssp, dbasin, dmodel)
+
+    for gcm in dgcm
+        for ssp in dssp
+            for basin in dbasin
+                for model in dmodel
+                    da[At(gdf[(gcm, ssp, basin)][:, :Date]), At(gcm), At(ssp), At(basin), At(model)] = gdf[(gcm, ssp, basin)][:, model]
+                end
+            end
+        end
+    end
+
+    return da
+end
+
+
+"""
+    propagate_relative_diff_error(A, B, σA, σB, cov_AB=0)
+
+Calculate error propagation for (A-B)/B with given uncertainties σA and σB.
+Optional covariance term cov_AB can be provided if A and B are correlated.
+
+Returns the standard error of the relative difference.
+"""
+
+function propagate_relative_diff_error(A, B, σ_A, σ_B)
+
+    if B == 0
+        error("Division by zero: B cannot be zero.")
+    end
+    σ = sqrt((σ_A / B)^2 + ((A * σ_B) / B^2)^2)
+    return σ
 end

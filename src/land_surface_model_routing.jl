@@ -133,40 +133,33 @@ begin #[~2 min]
 end
 
 
-for i in eachindex(runoff_vars) 
-    # load gridded runoff data
-    begin # [~6 min]
-        # add fluxes 
-        files = Altim.allfiles(gldas_folder; fn_endswith=".nc4", fn_startswith = lsm_names[1])
-        Q = cat(Raster.(files; name=runoff_vars[i][1])...; dims=Ti)
+
+# load gridded runoff data
+#begin # [~6 min]
+for i in eachindex(runoff_vars)
+
+    # read in fluxes from each lsm
+    files = Altim.allfiles(gldas_folder; fn_endswith=".nc4", fn_startswith = lsm_names[1])
+    Q = Dict()
+
+    for runoff_var in runoff_vars[i]
+        Q[runoff_var] = cat(Raster.(files; name=runoff_vars[i][1])...; dims=Ti)
+    
         for lsm_name in lsm_names
             files = Altim.allfiles(gldas_folder; fn_endswith=".nc4", fn_startswith = lsm_name)
-            for runoff_var in runoff_vars[i]
-                if (lsm_name == lsm_names[1]) && (runoff_var == runoff_vars[i][1])
-                    continue
-                else
-                    Q .+= cat(Raster.(files; name=runoff_var)...; dims=Ti)
-                end
+        
+            if (lsm_name == lsm_names[1]) && (runoff_var == runoff_vars[i][1])
+                continue
+            else
+                Q[runoff_var] .+= cat(Raster.(files; name=runoff_var)...; dims=Ti)
             end
         end
 
         # take average accross lsms 
-        Q ./= length(lsm_names)
+        Q[runoff_var] ./= length(lsm_names)
 
         # devide by 1000 to go from kg m-2 to m m-2
-        Q ./= 1000
-        
-        # Multiply flux by the area of the gridcell
-        #grid_res = abs(dims(Q, :X)[1] - dims(Q, :X)[2])
-        #d = grid_res / 2
-        #dimz = X(Projected(-180.0+d:grid_res:180.0-d; sampling=Intervals(), crs=EPSG(4326))),
-        #Y(Projected(-90.0+d:grid_res:90.0-d; sampling=Intervals(), crs=EPSG(4326)))
-        #A = zeros(eltype(rivers.COMID), dimz)
-        #A = Rasters.cellarea(A)
-        #A = Rasters.resample(A; to=Q[:,:,1], method=:nearest)# area looks correct
-        #Q .*= A
-
-        # divide by seconds to get m3 s-1
+        Q[runoff_var] ./= 1000
 
         # For accumulated variables such as Qs_acc, the monthly mean surface runoff is the
         # average 3-hour accumulation over all 3-hour intervals in April 1979. To compute
@@ -174,13 +167,28 @@ for i in eachindex(runoff_vars)
         # Qs_acc (April){kg/m2} = Qs_acc (April){kg/m2/3hr} * 8{3hr/day} * 30{days}
         # so we need to devide by 8*30 to get m3 s-1 per m2
 
-        # so in our case to get m3 s-1 per m2 we simply devide by the number of seconds in a 3hr interval
+        # to get m3 s-1 per m2 we simply devide by the number of seconds in a 3hr interval
         dt = 60*60*3
-        Q ./= dt
+        Q[runoff_var] ./= dt
 
         # replace missing values with 0
-        Q = coalesce.(Q, 0)
+        Q[runoff_var] = coalesce.(Q[runoff_var], 0)
     end
+    
+
+    # apply linear reservoir model for subsruface runoff with a time delay factor of 45 days [Getirana et al. 2012]
+    if haskey(Q, :Qsb_acc) # [~2 min]
+        Tb = 45 # concentration time [days] - [Getirana et al. 2012]
+        impulse_resonse = Altim.linear_reservoir_impulse_response_monthly(Tb)
+
+        p = lines(copy(Q[:Qsb_acc][180, 80, :])) # sanity check
+        xlims!(p.axis, [DateTime(2010, 1, 1), DateTime(2015, 1, 1)])
+        Altim.apply_vector_impulse_resonse!(Q[:Qsb_acc], impulse_resonse)
+        lines!(Q[:Qsb_acc][180, 80, :]);p  # sanity check
+    end
+
+    # sum runoff variables
+    Q = reduce(+, Q[k] for k in keys(Q))
 
     # deteremine runoff entering each basin 
     # [does not yet account for entering stream flow, that is the next step]
@@ -196,8 +204,6 @@ for i in eachindex(runoff_vars)
             river_inputs[:, At(r.COMID)] = Q[Near(r.centroid[1]), Near(r.centroid[2]), :] .* (r.unitarea .* 1e6)
         end
     end
-
-    
 
 
     river_flux = Altim.flux_accumulate!(river_inputs, basins.COMID, basins.NextDownID, basins.HeadBasin, basins.basin02) #[2 min]

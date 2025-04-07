@@ -108,12 +108,12 @@ Fill gaps in hypsometric elevation change data by fitting and interpolating mode
 Fits elevation change models to valid data points, filters outliers, and interpolates residuals 
 to fill gaps in the data. Uses a combination of global parametric models and local smoothing.
 """
-function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max=5, smooth_n=9, smooth_h2t_length_scale=800, variogram_range_ratio = false)
+function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max=5, smooth_n=9, smooth_h2t_length_scale=800, variogram_range_ratio = false, show_times=false)
 
     if smooth_h2t_length_scale < 1
         error("smooth_h2t_length_scale is < 1, should be in the range 2000 to 1, sypically 800")
     end
-
+   
     t = Altim.decimalyear.(dims(dh1[first(keys(dh1))], :date))
     t = repeat(t, 1, length(dims(dh1[first(keys(dh1))], :height)))
 
@@ -131,7 +131,6 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
     end
 
     for mission in keys(dh1)
-
         # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><>
         # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
         #mission = "hugonnet"
@@ -140,6 +139,8 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
         rrange, = Altim.validrange(vec(any(.!isnan.(dh1[mission]), dims=(1, 3))))
 
         Threads.@threads for geotile in dims(dh1[mission], :geotile)
+            show_times ? t1 = time() : nothing
+            
             #for geotile in dims(dh1[mission], :geotile)
             # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><>
             #geotile =       "lat[+80+82]lon[+058+060]"
@@ -169,7 +170,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
             nobs0[.!valid1] .= 0
             nobs1[mission][At(geotile), :, :] = nobs0
 
-            # if there are not enough points to fit a model the set all to NaNs
+            # if there are not enough points to fit a model then set all to NaNs
             va = sum(valid1)
             if va <= (length(p1) + 2)
                 dh1[mission][At(geotile), :, :] .= NaN
@@ -181,7 +182,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
             (_, crange) = Altim.validrange(valid1)
             valid0 = valid1[rrange, crange]
 
-            # if there are not enough points to fit a model the set all to NaNs
+            # if there are not enough points to fit a model then set all to NaNs
             va = sum(valid0)
             if va <= (length(p1) + 2)
                 dh1[mission][At(geotile), :, :] .= NaN
@@ -193,6 +194,9 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
             nobs0 = nobs0[rrange, crange];
             t0 = t[rrange, crange]
             h0 = h[rrange, crange]
+
+            show_times ? t2 = time() : nothing
+            show_times && printstyled("initial data selection $mission: $(round(t2 - t1; digits=2))s\n", color=:yellow)
 
             # center predictors and observations
             t0_mean = round(mean(t0)) # remove an exact integer to keep phase from shifting
@@ -209,6 +213,9 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
 
             df.bin_std = std(dh0[valid0])
 
+            show_times ? t3 = time() : nothing
+            show_times && printstyled("statistics $mission: $(round(t3 - t2; digits=2))s\n", color=:yellow)
+
             # fit global model 
             fit1 = []
             try
@@ -216,6 +223,9 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
             catch
                 fit1 = curve_fit(model1, hcat(t0[valid0], h0[valid0]), dh0[valid0], nobs0[valid0], p1)
             end
+
+            show_times ? t4 = time() : nothing
+            show_times && printstyled("model fit $mission: $(round(t4 - t3; digits=2))s\n", color=:yellow)
 
             dh0_mdl = model1(hcat(t0[valid0], h0[valid0]), fit1.param)
             dh0_anom = dh0[valid0] .- dh0_mdl
@@ -270,7 +280,12 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
             df.nobs_final = sum(nobs0)
             df.param_m1 = fit1.param
 
-            # take the median of the x closest neighbors 
+            show_times ? t5 = time() : nothing
+            show_times && printstyled("filter 2 $mission: $(round(t5 - t4; digits=2))s\n", color=:yellow)
+
+            
+            #### THIS CODE BLOCK TAKES THE MOST TIME ####
+            # take the median of the x closest neighbors
             if sum(valid0) < smooth_n[mission]
                 anom_smooth = zeros(length(dh0))
             else
@@ -289,10 +304,13 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
                 pts = hcat(t0[:], h0[:] / smooth_h2t_length_scale)'
                 anom_smooth = vec(ScatteredInterpolation.evaluate(itp, pts))
             end
+            
 
             # fill out valid range (no extraploation beyond (rrange,crange) of geotile with the model only
             dh1[mission][At(geotile), rrange, crange] = model1(hcat(t0[:], h0[:]), fit1.param) .+ dh0_median .+ anom_smooth
             # println("granule interp: $(mission) - $(geotile)")
+            show_times ? t6 = time() : nothing
+            show_times && printstyled("granule interp $mission: $(round(t6 - t5; digits=2))s\n", color=:yellow)
         end
     end
 
@@ -340,7 +358,7 @@ function hyps_amplitude_normalize!(dh1, params; mission_reference = "icesat2")
 
             p0 = df0.param_m1
             pr = dfr.param_m1
-            pr[1:5] = p0[1:5] # coeffients 1 to 5 are unrelated to seasonal cycle
+            pr[1:5] = p0[1:5] # coeffients 1 to 5 are unrelated to seasonal cycle [pr[1:5] are not used but resetting here for clarity]
 
             delta = model1_seasonal(hcat(t0[:], h0x[:]), pr) .- model1_seasonal(hcat(t0[:], h0x[:]), p0)
 
@@ -369,7 +387,7 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
         # copy dh as it gets morphed inside of parallel loop
         dh2 = copy(dh1[mission])
 
-        Threads.@threads for geotile in (dims(dh1[mission], :geotile))
+        for geotile in (dims(dh1[mission], :geotile))
             #for geotile in dims(dh1[mission], :geotile)
             # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><>
             #geotile = first(dims(dh1[mission], :geotile)[empty_geotiles])
@@ -384,7 +402,7 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
             has_ice = geotiles[k, "$(mask)_area_km2"] .> 0
 
             if !any(has_ice)
-                printstyled("$geotile $mask area is zero: setting dh .= 0 \n"; color=:blue)
+                #printstyled("$geotile $mask area is zero: setting dh .= 0 \n"; color=:blue) 
                 dh0 = @view dh1[mission][At(geotile), rrange, :]
                 dh0 .= 0
                 continue
@@ -396,6 +414,7 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
 
             if all(isnan.(dh0))
 
+                
                 # find distance between goetiles
                 dist2geotile = haversine.(Ref(ll[k]), ll, 6371000)
 
@@ -449,7 +468,7 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
                         y = vec(dh0[i,:]);
                         valid = .!isnan.(y)
                         if any(.!valid)
-                            itp = DataInterpolations.LinearInterpolation(y[valid], x[valid]; extrapolate = true)
+                            itp = DataInterpolations.LinearInterpolation(y[valid], x[valid]; extrapolation=ExtrapolationType.Linear)
                             y[.!valid] = itp(x[.!valid])
                             dh0[i,:] = y;
                         end
@@ -458,6 +477,7 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
 
                 # add back median model offset 
                 dh0 .+= median(dh0_median0)
+
             end
         end
     end

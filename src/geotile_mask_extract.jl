@@ -17,12 +17,12 @@
 using Altim
 
 # Parameters: user defined 
-force_remake = true
+force_remake = false
 project_id = :v01;
 geotile_width = 2;
-domain = :glacier; # :glacier -or- :landice
-missions = (:icesat2,); # (:icesat2, :icesat, :gedi, :hugonnet)
-
+domain = :landice; # :glacier -or- :landice
+missions = (:icesat2, :icesat, :gedi, :hugonnet,); # (:icesat2, :icesat, :gedi, :hugonnet)
+hugonnet_unfiltered = true;
 vars2extract = [:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean];
 
 # Initialize: paths, products, geotiles
@@ -38,4 +38,10 @@ products = getindex(products, missions)
 # Execute: extract masks
 for product in products
     geotile_extract_mask(geotiles, paths[product.mission].geotile; vars=vars2extract, job_id=product.mission, force_remake=force_remake)
+end
+
+# include hugonnet unfiltered
+if hugonnet_unfiltered && (:hugonnet in missions)
+    paths = Altim.update_geotile_path(paths; mission=:hugonnet, path_replace="/2deg" => "/2deg_unfiltered")
+    geotile_extract_mask(geotiles, paths[:hugonnet].geotile; vars=vars2extract, job_id=:hugonnet, force_remake=force_remake)
 end

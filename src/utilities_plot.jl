@@ -123,7 +123,7 @@ function plot_multiregion_dvdm(df;
     end
 
     # make plots
-    xtick_delta = 4
+    xtick_delta = 5
     xticks = (floor(Int64, minimum(decyear[notnan]) ./ xtick_delta)*xtick_delta):xtick_delta:(ceil(Int64, maximum(decyear[notnan]) ./ xtick_delta)*xtick_delta)
 
     xlims = (xticks.start, xticks.stop)

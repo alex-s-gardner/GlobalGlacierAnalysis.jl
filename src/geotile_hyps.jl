@@ -35,11 +35,11 @@ end
 
 # Parameters: user defined 
 begin
-    force_remake = true
+    force_remake = false
     geotile_width = 2;
     raster_file = :cop30_v2; #, :nasadem_v1, :rema_v2_10m, :arcticdem_v3_10m]
-    domain = :glacier # :glacier -or- :landice
-    masks = [:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
+    domain = :landice # :glacier -or- :landice
+    masks = [:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km] 
 end
 
 for mask in masks

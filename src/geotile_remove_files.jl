@@ -9,16 +9,23 @@ delete_temp_files = true
 #mission = ["icesat2", "icesat",  "gedi",  "hugonnet"]
 #filesufx = [".arrow", ".masks", ".arcticdem_v4_10m", ".cop30_v2", ".rema_v2_10m", ".canopyh", ".offset2cop30_v2", "dhdt_ref"]
 
-missions = ["hugonnet"]
-filesufxs = [".masks", ".arcticdem_v4_10m", ".cop30_v2", ".rema_v2_10m", ".canopyh"]
+# these are set to nothing as a safety measure to prevent accidental deletion of all files.. 
+# you can set them to the desired values to delete specific files
+missions = nothing; #["hugonnet"]
+filesufxs = nothing; # [".masks", ".arcticdem_v4_10m", ".cop30_v2", ".rema_v2_10m", ".canopyh"]
 
 
 begin
-printstyled("-------------------------------------------------------------------------------\n", ; color=:red)
-printstyled("-------------------------------------------------------------------------------\n\n", ; color=:red)
-printstyled("!! You are about to delete ALL files ending in $(filesufx) for $(mission) missions !!\n\n"; color=:red, bold = true)
-printstyled("-------------------------------------------------------------------------------\n", ; color=:red)
-printstyled("-------------------------------------------------------------------------------\n", ; color=:red)
+    if isnothing(missions) || isnothing(filesufxs)
+        printstyled("!! You are about to delete ALL files ending in $(filesufx) for $(mission) missions !!\n\n"; color=:red, bold = true)
+        error("You must set either missions and filesufxs to delete specific files")
+    else
+        printstyled("-------------------------------------------------------------------------------\n", ; color=:red)
+        printstyled("-------------------------------------------------------------------------------\n\n", ; color=:red)
+        printstyled("!! You are about to delete ALL files ending in $(filesufx) for $(mission) missions !!\n\n"; color=:red, bold = true)
+        printstyled("-------------------------------------------------------------------------------\n", ; color=:red)
+        printstyled("-------------------------------------------------------------------------------\n", ; color=:red)
+    end
 end
 
 for mission in missions

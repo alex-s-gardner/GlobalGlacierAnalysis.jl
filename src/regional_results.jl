@@ -1,3 +1,39 @@
+"""
+    regional_results.jl
+
+This script processes and analyzes glacier mass change data at regional scales.
+
+# Main components:
+1. Data aggregation and uncertainty estimation:
+   - Loads multiple model runs and aggregates geotile data into regional time series
+   - Calculates uncertainties from ensemble spread (95% confidence intervals)
+   - Incorporates GRACE satellite data for comparison
+   - Reformats data for consistent plotting and analysis
+
+2. Glacier discharge and mass change analysis:
+   - Processes glacier discharge data by region
+   - Maps discharge points to RGI regions using spatial joins
+   - Identifies endorheic (inland-draining) glaciers
+   - Computes mass change rates for each glacier and region
+
+3. Trend and acceleration analysis:
+   - Fits trends and seasonal cycles to time series
+   - Identifies regions with significant acceleration/deceleration
+   - Calculates mass change under different scenarios (with/without firn air content correction)
+   - Compares altimetry-derived trends with GRACE satellite measurements
+
+4. Visualization and reporting:
+   - Generates multi-region plots of mass change
+   - Calculates statistics on glacier contribution to sea level rise - Analyzes endorheic basin contributions
+   - Reports regional mass change trends with uncertainties
+
+# Key outputs:
+- Regional time series of glacier mass change
+- Trend and acceleration estimates with uncertainties
+- Comparison between different measurement techniques
+- Analysis of endorheic vs. ocean-draining glacier contributions
+"""
+
 # NOTE: errors are at the 95% confidence interval from the reference run for this study and 95% confidence interval from GRACE
 begin
     using Altim
@@ -14,23 +50,28 @@ begin
     using StatsBase
     using FlexiJoins
     import GeometryOps as GO
+
     # to include in uncertainty
     project_id = ["v01"]
-    surface_mask=["glacier", "glacier_rgi7"]
-    dem_id=["best", "cop30_v2"]
-    curvature_correct=[false, true]
-    amplitude_correct=[true]
-    binning_method = ["median" "meanmadnorm10" "meanmadnorm5" "meanmadnorm3"]
-    paramater_set=[1, 2, 3, 4]
-    binned_folder=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg")
+    surface_mask = ["glacier", "glacier_rgi7"]
+    dem_id = ["best", "cop30_v2"]
+    curvature_correct = [false, true]
+    amplitude_correct = [true]
+    binning_method = ["median", "meanmadnorm5", "meanmadnorm3"]
+    paramater_set = [1, 2, 3, 4]
+    binned_folder = ["/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"]
 
+    dates2plot =DateTime(1980, 1, 1):Month(1):DateTime(2025, 1, 15) # also dates used for trend fitting
+    dates4trend = DateTime(2000, 1, 1):Month(1):DateTime(2025, 1, 15) # use these date for comparing individual model runs to GRACE (only need for rmse anlysis)
+    #dates2plot = DateTime(2002, 4, 1):Month(1):DateTime(2025, 1, 15) # use these date for comparing individual model runs to GRACE (only need for rmse anlysis)
+    
     paths = Altim.pathlocal
     reference_run = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_synthesized.jld2";
     perglacier_reference_run = replace(reference_run, ".jld2" => "_perglacier.jld2")
-    globaldischarge_fn = joinpath(paths.data_dir, "GlacierOutlines/GlacierDischarge/global_glacier_discharge.jld2")
+    path2discharge = joinpath(paths.data_dir, "GlacierOutlines/GlacierDischarge/global_glacier_discharge.jld2")
+    path2rgi_regions = paths.rgi6_regions_shp
 
-    rivers_path = joinpath(paths.data_dir, "rivers/MERIT_Hydro_v07_Basins_v01")
-    glacier_rivers_path = joinpath(rivers_path, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
+    glacier_rivers_path = joinpath(paths.river, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
     param_nt = (;project_id, surface_mask, dem_id, curvature_correct, amplitude_correct, binning_method, paramater_set, binned_folder)
     params = Altim.ntpermutations(param_nt)
@@ -44,95 +85,24 @@ begin
         end
     end
     path2runs = replace.(path2runs, "aligned.jld2" => "synthesized.jld2")
+
 end
 
 
-# aggrigate individual geotile data to regions, for each model run and all variables
-# This section takes 45s:
-# 1. Loads and aggregates geotile data into regional time series for each model run
-# 2. Calculates regional uncertainties from ensemble spread
-# 3. Incorporates GRACE satellite data for comparison
-# 4. Reformats data for plotting, including:
-#    - Interpolating to common time grid
-#    - Adding High Mountain Asia (HMA) and global regions
-#    - Calculating error bounds
-#    - Aligning different data sources
-# Key outputs:
-# - regions0: Dictionary containing raw regional time series for each variable/run
-# - regions: DataFrame with processed regional time series and metadata
-# - df: Final DataFrame formatted for plotting, containing:
-#   - Regional time series from altimetry, GRACE and GEMB
-#   - Error bounds
-#   - Common time grid and units
+# load discharge for each RGI [<1s]
+@time discharge_rgi = Altim.discharge_rgi(path2discharge, path2rgi_regions)
 
-begin
-    # read in example file
-    regions = FileIO.load(replace(reference_run, ".jld2" => "_gembfit_dv.jld2"), "geotiles")
-    varnames = setdiff(names(regions), ["id", "extent", "glacier_frac", "area_km2", "discharge", "landice_frac", "floating_frac", "geometry", "group", "pscale", "Δheight", "mie2cubickm", "rgiid"])
+# load results for all runs for each RGI [18s]
+@time runs_rgi = Altim.runs2rgi(path2runs)
 
-    # drun needs full path as some runs are distiguished by folder not just filename
-    drun = Dim{:run}(path2runs)
-    drgi = Dim{:rgi}([1:19; 98; 99])
-    dparameter = Dim{:parameter}(["trend", "acceleration", "amplitude", "phase"])
-    dvarname = Dim{:varname}(varnames)
-    regions0 = Dict() # this needs to be a Dict since variables have different date dimensions
-    regions0_fit = Dict()
-    
-    for varname in varnames
-        ddate = Dim{:date}(colmetadata(regions, varname, "date"))
-        regions0[varname] = fill(NaN, drun, drgi, ddate)
-        regions0_fit[varname] = fill(NaN, drun, drgi,dparameter)
-    end
+# fit trends and acceleration for each model and RGI [33s]
+@time runs_rgi_fits = Altim.rgi_trends(runs_rgi, discharge_rgi, dates4trend)
 
-    for binned_synthesized_file in path2runs
-    #binned_synthesized_file = path2runs[50]
 
-        binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
-        geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
+# create df for reference run
 
-        # group by rgi and sum
-        geotiles_reg = groupby(geotiles0, :rgiid)
+varnames = ["fac"  "refreeze"  "rain"  "acc"  "melt"  "runoff"  "dm_altim"  "dm"  "dv_altim"  "smb"  "dv"  "ec"]
 
-        # sum across timeseries
-        regions = DataFrames.combine(geotiles_reg, varnames .=> Ref ∘ sum; renamecols=false)
-
-        # add a HMA region 
-        index = (regions[:, :rgiid] .<= 15) .& (regions[:, :rgiid] .>= 13)
-        foo = DataFrames.combine(regions[index, :], vcat("rgiid", varnames) .=> Ref ∘ sum; renamecols=false)
-        foo.rgiid .= 98
-        regions = append!(regions, foo)
-
-        # add a Global region 
-        index = (regions[:, :rgiid] .<= 19) .& (regions[:, :rgiid] .>= 1)
-        foo = DataFrames.combine(regions[index, :], vcat("rgiid", varnames) .=> Ref ∘ sum; renamecols=false)
-        foo.rgiid .= 99
-        regions = append!(regions, foo)
-
-        for varname in varnames
-        #varname = varnames[1]
-            
-            regions0[varname][At(binned_synthesized_file), At(regions.rgiid), :] = reduce(hcat, regions[!, varname])'
-
-            d = Altim.decimalyear.(dims(regions0[varname], :date))
-            d = d .- mean(d)
-            for rgi in drgi
-                valid = .!isnan.(regions0[varname][At(binned_synthesized_file), At(rgi), :])
-
-                
-                # first fit linear trend and seasonal [this creates less spread in linear fit as acceleration fixed to zero]
-                dm_fit = curve_fit(Altim.offset_trend_seasonal2, d[valid], regions0[varname][At(binned_synthesized_file), At(rgi), :][valid], Altim.p3)
-                regions0_fit[varname][At(binned_synthesized_file), At(rgi), At("trend")] = dm_fit.param[2]
-
-                # then fit linear trend and acceleration and seasonal
-                dm_fit = curve_fit(Altim.offset_trend_acceleration_seasonal2, d[valid], regions0[varname][At(binned_synthesized_file), At(rgi), :][valid], Altim.p3)
-                regions0_fit[varname][At(binned_synthesized_file), At(rgi), At("acceleration")] = dm_fit.param[3]
-                regions0_fit[varname][At(binned_synthesized_file), At(rgi), At("amplitude")] = hypot(dm_fit.param[4], dm_fit.param[5])
-                regions0_fit[varname][At(binned_synthesized_file), At(rgi), At("phase")] = 365.25 * (mod(0.25 - atan(dm_fit.param[5], dm_fit.param[4]) / (2π), 1))
-            end
-        end
-    end
-
-    # create df for reference run
     binned_synthesized_file = reference_run
     binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
 
@@ -146,7 +116,7 @@ begin
 
     # add an HMA region 
     index = (regions[:, :rgiid] .<= 15) .& (regions[:, :rgiid] .>= 13)
-    foo = DataFrames.combine(regions[index, :], vcat("rgiid", varnames) .=> Ref ∘ sum; renamecols=false)
+    foo = DataFrames.combine(regions[index, :], varnames .=> Ref ∘ sum; renamecols=false)
     foo.rgiid .= 98
     regions = append!(regions, foo)
 
@@ -164,7 +134,7 @@ begin
 
     # add error columns to regions
     for varname in varnames
-        #varname = "dv_altim"
+    #varname = "acc"
         varname_err = "$(varname)_err"
         var0 = regions0[varname]
 
@@ -177,37 +147,15 @@ begin
             var0[:, At(rgi), :] .-= delta * ones(1, size(var1, 2))
         end
 
-        # sanity check
-        #=
-        region = 1
-        p = lines(var0[1,At(region),:])
-        for i = 2:size(var0, 1)
-            lines!(var0[i,At(region),:])
-        end 
-        p
-        =#
-
-        # santiy check
-        #CairoMakie.heatmap(regions0[varname][:,9,:])
-
         # remove reference run from ensemble for error calculation
         var1 = deepcopy(var0)
         for run in drun
             var1[At(run), :, :] .-= var0[At(reference_run), :, :]
         end
 
-        # sanity check
-        #=
-        p = lines(var1[1,At(region),:])
-        for i = 2:size(var0, 1)
-            lines!(var1[i,At(region),:])
-        end 
-        p
-        =#
-
         ddate = dims(var1, :date)
-        err = var1[1,:,:]
-        err .= NaN
+        err0 = var1[1,:,:]
+        err0 .= NaN
         for rgi in drgi
             for date in ddate
                 foo = abs.(var1[:, At(rgi), At(date)]);
@@ -215,13 +163,13 @@ begin
                 if any(valid)
 
                     ## THIS IS WHERE THE ERROR IS DEFINED [symetric 95% confidence interval from reference run]
-                    err[At(rgi), At(date)] = quantile(abs.(var1[valid, At(rgi), At(date)]), 0.95)
+                    err0[At(rgi), At(date)] = quantile(abs.(var1[valid, At(rgi), At(date)]), 0.95)
                     ##
                 end
             end
         end
   
-        regions[!, varname_err] = eachrow(collect(err))
+        regions[!, varname_err] = eachrow(collect(err0))
         regions = colmetadata!(regions, varname_err, "date", colmetadata(regions, varname, "date"); style=:note)
     end
 
@@ -252,25 +200,24 @@ begin
         r.dm_grace_err = vec(grace[rgi]["dM_sigma_gt_mdl_fill"]) * 2
     end
 
-
     derror = Dim{:error}([false, true])
+    dvarname = Dim{:varname}(collect(keys(regions0_fit)))
     regions_fit = fill(NaN, dvarname, drgi, dparameter, derror)
-    for varname in varnames
+    for varname in dvarname
         for rgi in drgi
             for param in dparameter
                 v = regions0_fit[varname][At(binned_synthesized_file), At(rgi), At(param)]
                 regions_fit[At(varname), At(rgi), At(param), At(false)] = v
 
-                err = quantile(abs.(regions0_fit[varname][:, At(rgi), At(param)] .- v), 0.95)
-                regions_fit[At(varname), At(rgi), At(param), At(true)] = err
+                err0 = quantile(abs.(regions0_fit[varname][:, At(rgi), At(param)] .- v), 0.95)
+                regions_fit[At(varname), At(rgi), At(param), At(true)] = err0
             end
         end
     end
 
     # reformat for plotting
     varnames = setdiff(names(regions), ["rgiid"])
-    dates = DateTime(2000, 1, 15):Month(1):DateTime(2023, 1, 15)
-    dates_decyear = Altim.decimalyear.(dates)
+    dates_decyear = Altim.decimalyear.(dates2plot)
     df = DataFrame()
 
     for varname in varnames
@@ -305,7 +252,7 @@ begin
 
         for r in eachrow(regions)
             #r = first(eachrow(regions))
-            model = LinearInterpolation(r[varname], date0)
+            model = DataInterpolations.LinearInterpolation(r[varname], date0)
             index = (dates_decyear .> minimum(date0)) .& (dates_decyear .< maximum(date0))
             v[index] = model(dates_decyear[index])
             varname_mid = "$(varname)"
@@ -322,7 +269,7 @@ begin
     df[!, :low] = deepcopy(df[!, :mid])
     df[!, :high] = deepcopy(df[!, :mid])
     df[!, :unit] .= "gt"
-    metadata!(df, "date", dates; style=:note)
+    metadata!(df, "date", dates2plot; style=:note)
 
     gdf = groupby(df, "rgi")
 
@@ -387,14 +334,6 @@ begin
 end
 
 
-# This section processes glacier discharge and mass change data by region:
-#
-# 1. Loads and processes glacier discharge data:
-#    - Loads discharge data from file
-#    - Maps discharge points to RGI regions using spatial join
-#    - Aggregates discharge by RGI region
-#    - Adds HMA and global totals
-#
 # 2. Processes glacier outlines and river data:
 #    - Loads glacier outlines and river network data
 #    - Identifies endorheic (inland-draining) glaciers
@@ -410,46 +349,10 @@ end
 #
 # Key outputs:
 # - discharge_rgi: DataFrame with discharge by RGI region
-# - glacier_rgi: DataFrame with mass change by RGI region
+# - glacier_dm_gt: DataFrame with mass change by RGI region
 # - dm_gt: Array of mass change trends under different scenarios
 
 begin
-    # load in discharge data     
-    discharge = load(globaldischarge_fn, "discharge")
-
-    # determine wich region discharge is within
-    rgi_regions = GeoDataFrames.read(paths.rgi6_regions_shp)
-
-    discharge[!, :geometry] = tuple.(discharge.longitude, discharge.latitude)
-
-    discharge = FlexiJoins.innerjoin(
-        (discharge, rgi_regions),
-        by_pred(:geometry, GO.within, :geometry)
-    )
-    discharge = rename(discharge, "RGI_CODE" => "rgi" )
-
-
-    # derive statistics for each region
-    discharge_rgi = DataFrame()
-    discharge_rgi[!, :rgi] = 1:19
-    discharge_rgi[!, :discharge_gtyr] = fill(NaN, 19)
-
-    for g in eachrow(discharge_rgi)
-        index = discharge.rgi .== g.rgi
-        g.discharge_gtyr = sum(discharge[index, "discharge_gtyr"])
-    end
-
-    # add HMA and global
-    push!(discharge_rgi, deepcopy(discharge_rgi[1,:]))
-    discharge_rgi[end,:rgi] = 98
-    index = (discharge_rgi.rgi .>= 13) .& (discharge_rgi.rgi .<= 15)
-    discharge_rgi[end,Not(:rgi)] = sum.(eachcol(discharge_rgi[index, Not(:rgi)]))
-
-    push!(discharge_rgi, deepcopy(discharge_rgi[1,:]))
-    discharge_rgi[end,:rgi] = 99
-    index = discharge_rgi.rgi .<= 19
-    discharge_rgi[end,Not(:rgi)] = sum.(eachcol(discharge_rgi[index, Not(:rgi)]))
-
 
     # load in glacier outlines
     glaciers = load(perglacier_reference_run, "glaciers")
@@ -464,12 +367,10 @@ begin
     glaciers[!, :endorheic] .= false
 
     ## THIS SECTION IS VERY VERY SLOW
-    for g in eachrow(glaciers)
-        g.RGIId
+    Threads.@threads for g in eachrow(glaciers)
         for r in eachrow(river_flux)
-            if any(r.RGIId .== g.RGIId)
+            if g.RGIId in r.RGIId
                 g.endorheic = !r.ocean_terminating
-                break
             end
         end
     end
@@ -501,29 +402,24 @@ begin
     glaciers[!, :dm_gt] = (glaciers.dh_trend .- glaciers.fac_trend) / 1000 .* sum.(glaciers.area_km2)
 
     # derive statistics for each region
-    glacier_rgi = DataFrame()
-    glacier_rgi[!, :rgi] = 1:19
-    glacier_rgi[!, :dm_gt] = fill(NaN, 19)
-    glacier_rgi[!, :endorheic_dm_gt] = fill(NaN, 19)
+    dendorheic_only = Dim{:endorheic_correction}([false,true])
+    glacier_dm_gt = zeros(drgi, dendorheic_only)
 
-    for g in eachrow(glacier_rgi)
-        index = glaciers.rgi .== g.rgi
+    for rgi in setdiff(collect(drgi), [98,99])
+        index = glaciers.rgi .== rgi
         endorheic = glaciers[:, :endorheic] .& index;
-        g.dm_gt = sum(glaciers[index, "dm_gt"])
-        g.endorheic_dm_gt = sum(glaciers[endorheic, "dm_gt"]) 
+        glacier_dm_gt[At(rgi), At(false)] = sum(glaciers[index, "dm_gt"])
+        glacier_dm_gt[At(rgi), At(true)] = sum(glaciers[endorheic, "dm_gt"]) 
     end
 
     # add HMA and global
-    push!(glacier_rgi, deepcopy(glacier_rgi[1,:]))
-    glacier_rgi[end,:rgi] = 98
-    index = (glacier_rgi.rgi .>= 13) .& (glacier_rgi.rgi .<= 15)
-    glacier_rgi[end,Not(:rgi)] = sum.(eachcol(glacier_rgi[index, Not(:rgi)]))
+    glacier_dm_gt[At(98),:] = sum(glacier_dm_gt[13..15, :], dims = :rgi)
 
-    push!(glacier_rgi, deepcopy(glacier_rgi[1,:]))
-    glacier_rgi[end,:rgi] = 99
-    index = glacier_rgi.rgi .<= 19
-    glacier_rgi[end,Not(:rgi)] = sum.(eachcol(glacier_rgi[index, Not(:rgi)]))
+    # add global
+    glacier_dm_gt[At(99),:] = sum(glacier_dm_gt[1..19, :], dims = :rgi)
+end
 
+begin
     # compute trends on df values for overlaping grace and synthesis period
     valid = .!isnan.(df[findfirst(df.mission .== "synthesis"), :mid]) .& .!isnan.(df[findfirst(df.mission .== "grace"), :mid])
     dates = DataFrames.metadata(df, "date")
@@ -540,7 +436,8 @@ begin
     grace_dm_gt = fill(NaN,(drgi))
 
     for rgi in drgi
-        index2 = findfirst((df.mission .== "grace") .& (df.rgi .== rgi) .& (df.var .== varname))
+    #rgi = first(drgi)
+        index2 = findfirst((df.mission .== "grace") .& (df.rgi .== rgi) .& (df.var .== "dm"))
         if !isnothing(index2)
             grace_dm_gt[At(rgi)] = df[index2, :mid_trend]
         end
@@ -550,8 +447,7 @@ begin
                 
                 scale = 1.0
                 if endorheic_correction
-                    idx = findfirst(glacier_rgi.rgi .== rgi)
-                    scale = (glacier_rgi[idx, :dm_gt] - glacier_rgi[idx, :endorheic_dm_gt]) / glacier_rgi[idx, :dm_gt]
+                    scale = (glacier_dm_gt[At(rgi), At(false)] - glacier_dm_gt[At(rgi), At(true)] ) / glacier_dm_gt[At(rgi), At(false)]
                 end
 
                 if static_fac
@@ -568,80 +464,6 @@ begin
     end
 end
 
-
-# fit trend and acceleration to regional data
-# this approach assumes errors are normally distributed and uncorrelated which is not 
-# correct... it's more accurate to calculate trends and accelerations directly on the 
-# ensemble members ... then take the mean and std of the trends and accelerations
-
-function tsfit_regions(regions; daterange = (nothing, nothing), acceleration = false)
-    if isnothing(daterange[1])
-        sdate = DateTime(0)
-    else
-        sdate = daterange[1]
-    end
-
-    if isnothing(daterange[2])
-        edate = DateTime(2500)
-    else
-        edate = daterange[2]
-    end
-
-    acceleration && (m = (x, p) -> p[1] .+ p[2] * x .+ p[3] * x.^2)
-    acceleration || (m = (x, p) -> p[1] .+ p[2] * x)
-
-    df = DataFrame(rgiid = regions[:, :rgiid])
-    for varname in names(regions)[.!occursin.("err", names(regions)).&.!occursin.("rgiid", names(regions))]
-        #varname = first(varnames)
-        df[!, "$(varname)_trend"] = fill(NaN, nrow(df))
-        df[!, "$(varname)_trend_err"] = fill(NaN, nrow(df))
-        acceleration && (df[!, "$(varname)_acc"] = fill(NaN, nrow(df)))
-        acceleration && (df[!, "$(varname)_acc_err"] = fill(NaN, nrow(df)))
-
-        for i in 1:nrow(regions)
-            #i = 1
-            x = colmetadata(regions, varname, "date")
-            y = regions[i,varname]
-            index = (x .>= sdate) .& (x .<= edate) .& .!(isnan.(y))
-
-            if !any(index)
-                continue
-            end
-
-            y_err = regions[i, "$(varname)_err"][index]
-            x = x[index]
-            y = y[index]
-
-            # normalize x and Y
-            x = Altim.decimalyear.(x)
-
-            # normalize
-            x = x .- mean(x)
-            y = y .- mean(y)
-
-            wt = 1 ./ (y_err .^ 2)
-            acceleration && (p0 = [0.5, 0.5, 0.5])
-            acceleration || (p0 = [0.5, 0.5])
-            # p: model parameters
-            fit = curve_fit(m, x, y, wt, p0)
-
-            cf = coef(fit)
-            ci = confint(fit; level = 0.95)    # 5% significance level
-
-            df[i, "$(varname)_trend"] = cf[2]
-            df[i, "$(varname)_trend_err"] = abs(ci[2][1] - cf[2])
-            acceleration && (df[i, "$(varname)_acc"] = cf[3])
-            acceleration && (df[i, "$(varname)_acc_err"] = abs(ci[3][1] - cf[3]))
-        end
-    end
-    return df
-end
-
-# NOTE: This is not used as error are not properly propogated 
-regions_fit_lsq = tsfit_regions(regions; daterange=(Date(2003), Date(2023)), acceleration=true)
-
-
-
 # find regions with significant acceleration in mass change
 regions_with_acceleration = collect(dims(regions_fit, :rgi)[regions_fit[At("dm_altim"), :, At("acceleration"), 1] .<  -(regions_fit[At("dm_altim"), :, At("acceleration"), 2])])
 println("Regions with significant acceleration:")
@@ -655,18 +477,9 @@ for rgi in regions_with_decceleration
     println("$(Altim.rgi2label[Altim.rginum2txt[rgi]])")
 end
 
-# make table with regional results
-regional = DataFrame()
-rgi2include = [1:4; 6:12; 16:18; 98]
 
-Altim.rgi2label[Altim.rginum2txt[rgi]]
-
-
-
-
-
-
-
+# plot altimetry results for RGI regions
+outfile = joinpath(paths[:figures], "regional_dm_altim.png")
 exclude_mission = (df.mission .== "gemb") .| (df.mission .== "grace")
 exclude_regions = [13, 14, 15, 99]
 
@@ -685,97 +498,186 @@ f, plot_order_rgi, offset, ylims = Altim.plot_multiregion_dvdm(df[.!exclude_miss
     palette=nothing,
     delta_offset=nothing,
 )
-f
+display(f)
+CairoMakie.save(outfile, f)
+
+# plot altimetry results with GRACE data for RGI regions
+outfile = joinpath(paths[:figures], "regional_dm_altim_grace.png")
+exclude_mission = (df.mission .== "gemb")
+exclude_regions = [13, 14, 15, 99]
+
+f, plot_order_rgi, offset, ylims = Altim.plot_multiregion_dvdm(df[.!exclude_mission, :];
+    variable="dm",
+    featured_mission="synthesis",
+    regions=setdiff(unique(df.rgi), exclude_regions),
+    showlines=false,
+    showmissions=true,
+    fontsize=15,
+    cmap=:Dark2_4,
+    regions_ordered=false,
+    region_offsets=nothing,
+    ylims=nothing,
+    title=nothing,
+    palette=nothing,
+    delta_offset=nothing,
+)
+display(f)
+CairoMakie.save(outfile, f)
+
+# plot altimetry results with gemb data for RGI regions
+outfile = joinpath(paths[:figures], "regional_dm_altim_gemb.png")
+exclude_mission = (df.mission .== "grace")
+exclude_regions = [13, 14, 15, 99]
+
+f, plot_order_rgi, offset, ylims = Altim.plot_multiregion_dvdm(df[.!exclude_mission, :];
+    variable="dm",
+    featured_mission="synthesis",
+    regions=setdiff(unique(df.rgi), exclude_regions),
+    showlines=false,
+    showmissions=true,
+    fontsize=15,
+    cmap=:Dark2_4,
+    regions_ordered=false,
+    region_offsets=nothing,
+    ylims=nothing,
+    title=nothing,
+    palette=nothing,
+    delta_offset=nothing,
+)
+display(f)
+CairoMakie.save(outfile, f)
 
 
 n = 6;
-index = falses(nrow(glacier_rgi))
 large_region_glaciers = reverse(plot_order_rgi[(end-(n-1)):end]);
-for rgi in large_region_glaciers
-    index = index .| (glacier_rgi.rgi .== rgi)
-end
 
-large_region_dm_gt = sum(glacier_rgi.dm_gt[index]) / glacier_rgi.dm_gt[findfirst(glacier_rgi.rgi .== 99)]
-println("$(n) largest glaciers comprise $(round(large_region_dm_gt, digits=2)) of total glacier loss. Regions: $(large_region_glaciers)")
-
-
+large_region_dm_gt = sum(glacier_dm_gt[At(large_region_glaciers), At(false)]) / glacier_dm_gt[At(99), At(false)]
+println("$(n) largest regions comprise $(round(large_region_dm_gt, digits=2)) of total glacier loss. Regions: $(large_region_glaciers)")
 
 # plot all iterations for a single region
-var0 = "dv_altim"
-rgi = 98
+var0 = "acc"
+rgi = 1
 
-p = lines(regions0[var0][1, At(rgi), :])
+p = lines(regions0[var0][1, At(rgi), :]);
 for i = 2:length(regions0[var0][:, At(rgi), 1])
     lines!(regions0[var0][i, At(rgi), :])
 end
-p
+display(p)
 
 
-exclude_regions = [13, 14, 15]
-varnames = ["acc", "runoff", "dm_altim", "dm", "ec", "dv_altim", "fac"]
-varnames = [ "dm_altim", "dm"]
-params = ["trend", "acceleration", "amplitude", "phase"]
-
+# create table with rgi results
 begin
-    for rgi in drgi
-        if rgi in exclude_regions
-            continue
+    exclude_regions = [13, 14, 15]
+    varnames = ["acc", "runoff", "dm_altim", "dm", "ec", "dv_altim", "fac", "runoff_eq", "runoff_uns_perc"]
+    varnames = ["dm_altim", "dm", "acc", "runoff", "ec", "fac", "runoff_eq", "runoff_uns_perc"]
+    params = ["trend", "acceleration", "amplitude", "phase"]
+
+    # constuct a DataFrame with summary results
+    rgis = setdiff(drgi, exclude_regions)
+    rgi_labels = Altim.rginum2label.(rgis)
+
+    regional_results = DataFrames.DataFrame(rgi = rgis, region_name = rgi_labels)
+
+    for varname in varnames
+        println("    $(varname)")
+        for param in params
+            if param in ["acceleration"]
+                unit = "Gt_per_decade"
+            elseif param in ["trend"]
+                unit = "Gt_yr"
+            elseif param in ["amplitude"]
+                unit = "Gt"
+            elseif param in ["phase"]
+                unit = "day_of_max"
+            end
+
+            column_label = Symbol("$(varname)_$(param)_[$unit]")
+            regional_results[!, column_label] .= ""
         end
+    end
+
+    # add non standard columns
+    regional_results[!, :discharge_Gt_yr] .= ""
+    regional_results[!, :equilibrium_runoff_Gt_yr] .= ""
+    regional_results[!, :non_sustainable_runoff_perc] .= ""
+
+    for (i, rgi) in enumerate(rgis)
         println("$(Altim.rgi2label[Altim.rginum2txt[rgi]])")
         for varname in varnames
             println("    $(varname)")
             for param in params
-                v = round(Int,regions_fit[At(varname), At(rgi), At(param), At(false)])
-                err = round(Int,regions_fit[At(varname), At(rgi), At(param), At(true)])
+                v = regions_fit[At(varname), At(rgi), At(param), At(false)]
+                err = regions_fit[At(varname), At(rgi), At(param), At(true)]
+                if param in ["phase"]
+                    v = round(Int, v)
+                    err = round(Int, err)
+                else
+                    v = round(v, digits=1)
+                    err = round(err, digits=1)
+                end
 
-                println("        $(param): $(v) ± $(err)")
+                if param in ["acceleration"]
+                    v = v *10
+                    err = err * 10
+                    unit = "Gt_per_decade"
+                elseif param in ["trend"]
+                    unit = "Gt_yr"
+                elseif param in ["amplitude"]
+                    unit = "Gt"
+                elseif param in ["phase"]
+                    unit = "day_of_max"
+                end
+               
+                column_label = Symbol("$(varname)_$(param)_[$unit]")
+                regional_results[i, column_label] = "$(v) ± $(err)"
             end
         end
+    end
 
-        # estimate fractional increase in runoff
-        discharge0 = discharge_rgi[findfirst(discharge_rgi.rgi .== rgi), :discharge_gtyr]
-        runoff = round(Int, regions_fit[At("runoff"), At(rgi), At("trend"), At(false)])
-        acc = round(Int, regions_fit[At("acc"), At(rgi), At("trend"), At(false)])
-        ec = round(Int, regions_fit[At("ec"), At(rgi), At("trend"), At(false)])
-        increase_in_runoff = runoff - (acc - discharge0 - ec)
+    regional_results[!, :discharge_Gt_yr] .= string.(round.(discharge_rgi[At(rgis)], digits=1))
+end
 
-        println()
-        println("    total discharge = $(round(Int,discharge0)) Gt/yr")
-        println("    increase in runoff = $(round(Int,increase_in_runoff)) Gt/yr")
-        println("    equilibrium runoff = $(round(Int,(acc - discharge0 - ec))) Gt/yr")
-        frac_increase_in_runoff = increase_in_runoff / (acc - discharge0 - ec)
-        println("    fractional increase in runoff = $(round(frac_increase_in_runoff, digits=2))")
+
+# dump table to console
+colnames = names(regional_results)
+last_set = ceil(Int, (length(colnames) - 2) / 4 - 1)
+for i = 0:last_set
+    printstyled("\n------------------------------------------------------- $(colnames[3 .+ (4 * i)])-------------------------------------------------------\n", color=:yellow)
+    if (i == last_set) && (length(colnames) > (last_set+4))
+        show(regional_results[:, [1:2; (3 .+ (4*i)):end]],allrows=true, allcols=true)
+    else
+        show(regional_results[:,[1:2; (3:6).+(4*i)]],allrows=true, allcols=true)
     end
 end
 
 
 # fraction of glacier loss that is endorheic
-endorheic_frac = glacier_rgi[findfirst(glacier_rgi.rgi .== 99), :endorheic_dm_gt] / glacier_rgi[findfirst(glacier_rgi.rgi .== 99), :dm_gt];
-println("fraction of glacier loss that flows to ocean = $(1-round(endorheic_frac, digits=3))")
+endorheic_frac = glacier_dm_gt[At(99), At(true)] /  glacier_dm_gt[At(99), At(false)]
+println("glacier loss that flows to ocean = $(round(Int,(1-endorheic_frac)*100))%")
 
-hma_frac_of_total_endorheic = glacier_rgi[findfirst(glacier_rgi.rgi .== 98), :endorheic_dm_gt] / sum(glacier_rgi[glacier_rgi.rgi.<=19, :endorheic_dm_gt]);
-println("HMA comprises $(round(hma_frac_of_total_endorheic, digits=3)) of total endorheic loss")
+hma_frac_of_total_endorheic = glacier_dm_gt[At(98), At(true)] / glacier_dm_gt[At(99), At(true)];
+println("HMA comprises $(round(Int,hma_frac_of_total_endorheic*100))% of total endorheic loss")
 
 amp_static_fac = round(Int, regions_fit[At("dv"), At(99), At("amplitude"), At(false)]) * 0.85;
 amp_dynamic_fac = round(Int, regions_fit[At("dm"), At(99), At("amplitude"), At(false)]);
-println("Global amplitude would be $(round((amp_static_fac - amp_dynamic_fac) ./ amp_dynamic_fac, digits=2)) larger if static fac was applied")
+println("Global amplitude would be $(round(Int,((amp_static_fac - amp_dynamic_fac) ./ amp_dynamic_fac *100)))% larger if static fac was applied")
 
 # GRACE rgi regions
 rgis = collect([1:4; 6:12; 16:18; 98])
 
-function resample(colorscheme, n)
+function resample(colorscheme::Symbol, n)
     newscheme = ColorSchemes.ColorScheme(
         get(ColorSchemes.colorschemes[colorscheme], (0:n) / n))
     return newscheme
 end
 
-colormap = :Dark2_4
-cmap = resample(colormap, length(plot_order_rgi))
+colormap = :Dark2_4;
+cmap = resample(colormap, length(plot_order_rgi));
 # set_theme!(Theme(palette=(color=resample(colormap, length(rgis)),),))
-
 
 begin
     f = Figure()
+    output_dir = joinpath(paths[:figures], "regional_dm_altim_grace.png")
     title = "glacier mass change [Gt/yr]"
     ax = Axis(f[1, 1]; 
         ylabel = "this study [Gt/yr]",
@@ -787,16 +689,16 @@ begin
         if (rgi == 5) || (rgi == 19)
             continue
         end
-        scatter!(grace_dm_gt[At(rgi)], dm_gt[At(true), At(true), At(rgi)]; label=Altim.rgi2label[Altim.rginum2txt[rgi]], markersize=15, color=cmap[i])
+        scatter!(grace_dm_gt[At(rgi)], dm_gt[At(true), At(false), At(rgi)]; label=Altim.rgi2label[Altim.rginum2txt[rgi]], markersize=15, color=cmap[i])
     end
 
     for rgi = 98
-        scatter!(grace_dm_gt[At(rgi)], dm_gt[At(false), At(true), At(rgi)]; label=nothing, markersize=15, color=cmap[findfirst(plot_order_rgi .== rgi)], strokecolor=:black, strokewidth=3)
+        scatter!(grace_dm_gt[At(rgi)], dm_gt[At(false), At(false), At(rgi)]; label=nothing, markersize=15, color=cmap[findfirst(plot_order_rgi .== rgi)], strokecolor=:black, strokewidth=3)
 
-        scatter!(-17, -75; label=nothing, markersize=15, color=(cmap[findfirst(drgi .== rgi)], 0.), strokecolor=:black, strokewidth=3)
+        scatter!(-20, -75; label=nothing, markersize=15, color=(cmap[findfirst(plot_order_rgi .== rgi)], 0.0), strokecolor=:black, strokewidth=3)
 
         txt = "including endorheic"
-        text!(-14, -75, text=txt, align=(:left, :center))
+        text!(-17, -75, text=txt, align=(:left, :center))
         
         #text!(grace_dm_gt[At(rgi)], dm_gt[At(false), At(true), At(rgi)], text=txt, align=(:left, :top))
     end
@@ -805,12 +707,49 @@ begin
     ylims!(ax, -80, 20)
     lines!(ax, [-80, 20], [-80, 20], color=:black, linestyle=:dash)
 
-    rmse = sqrt(mean((grace_dm_gt .- dm_gt[At(true), At(true), :]) .^ 2))
+    rmse = sqrt(mean((grace_dm_gt[At(setdiff(plot_order_rgi, [5, 19]))] .- dm_gt[At(true), At(false), At(setdiff(plot_order_rgi, [5, 19]))]) .^ 2))
 
     text!(-75, 15, text="RMSE = $(round(rmse, digits=1)) Gt/yr", align=(:left, :top))
 
     leg = Legend(f[1, 2], ax)
     display(f)
+
+    save(output_dir, f)
+    
+    println("RMSE = $(round(rmse, digits=1)) Gt/yr")
+
+    rmse_incl_endorheic = sqrt(mean((grace_dm_gt[At(setdiff(plot_order_rgi, [5, 19]))] .- dm_gt[At(false), At(false), At(setdiff(plot_order_rgi, [5, 19]))]) .^ 2))
+    println("RMSE including endorheic = $(round(rmse_incl_endorheic, digits=1)) Gt/yr")
+
+    rmse_static_fac = sqrt(mean((grace_dm_gt[At(setdiff(plot_order_rgi, [5, 19]))] .- dm_gt[At(true), At(true), At(setdiff(plot_order_rgi, [5, 19]))]) .^ 2))
+    println("RMSE including static fac = $(round(rmse_static_fac, digits=1)) Gt/yr")
 end
+
+
+
+
+
+#### THIS COMPUTES THE RMSE BETWEEN GRACE AND ALL MODELLED REGIONAL TRENDS
+# ---> NOTE: THIS SHOULD BE USED THE dates4trend(at top of script) ARE THE SAME AS THE GRACE DATES <---
+f = Figure()
+ax = Axis(f[1, 1])
+
+nonendorheic_scale = collect(1 .- glacier_dm_gt[At(setdiff(plot_order_rgi, [5, 19])), At(true)] ./ glacier_dm_gt[At(setdiff(plot_order_rgi, [5, 19])), At(false)])
+
+grace_atlim_rmse = zeros(drun)
+for run0 in drun
+    x = collect(grace_dm_gt[At(setdiff(plot_order_rgi, [5, 19]))]);
+    y = collect(regions0_fit["dm_altim"][At(run0), At(setdiff(plot_order_rgi, [5, 19])), At("trend")]) .* nonendorheic_scale
+    scatter!(x, y, label=run0)
+
+    delta = x .- y;
+    grace_atlim_rmse[At(run0)] = sqrt(mean(delta .^ 2))
+    println("RMSE = $(round(grace_atlim_rmse[At(run0)], digits=1)) Gt/yr: $(run0)")
+    
+end
+f
+
+min_rmse = minimum(grace_atlim_rmse)
+println("minimum RMSE with GRACE = $(round(min_rmse, digits=1)) Gt/yr for run $(drun[findfirst(minimum(grace_atlim_rmse) .== grace_atlim_rmse)])")
 
 

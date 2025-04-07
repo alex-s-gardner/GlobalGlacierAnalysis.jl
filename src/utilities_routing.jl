@@ -345,7 +345,7 @@ flux_accumulate! is insanely fast.
 function flux_accumulate!(river_inputs, id, nextdown_id, headbasin, majorbasin_id)
     # sum river inputs going downstream to get total river flux     
 
-    @showprogress dt = 5 desc = "Accumulating river inputs from upstream basins ..." Threads.@threads for majorbasin in unique(majorbasin_id) #[2 min]
+    Threads.@threads for majorbasin in unique(majorbasin_id) #[2 min]
         # majorbasin = unique(majorbasin_id)[1]
         index = majorbasin_id .== majorbasin
 
@@ -394,4 +394,52 @@ function flux_accumulate!(river_inputs, id, nextdown_id, headbasin, majorbasin_i
         end
     end
     return river_inputs
+end
+
+
+function linear_reservoir_impulse_response_monthly(Tb)
+    #Tb = 45 #days
+    Vb = 1 #mm
+
+    Qb =[]
+    for i in 1:10000
+        if i < 30
+            Qsb = 1 #mm/day
+        else
+            Qsb = 0 #mm/day
+        end
+        Qb = push!(Qb, Vb/Tb)
+        Vb += (Qsb - Qb[i])
+    end
+
+
+    c = 1
+    dd = 30
+    Qfrac = []
+    for _ in 1:10
+        push!(Qfrac, round(sum(Qb[c:c+dd-1]) ./ sum(Qb), digits=2))
+        c += dd
+    end
+
+    Qfrac = Qfrac[1:findfirst(Qfrac .== 0)-1]
+
+    return Qfrac
+end
+
+
+function apply_vector_impulse_resonse!(M, impulse_resonse)
+    nir = length(impulse_resonse)
+    m, n, k = size(M)
+    Q1 = zeros(eltype(M), (k + nir - 1))
+
+    for i in 1:m
+        for j in 1:n
+            Q1 .= 0
+            Q0 = M[i, j, :]
+            for r in 1:k
+                Q1[r:r+nir-1] .+= Q0[r] .* impulse_resonse
+            end
+            M[i, j, :] = Q1[1:k]
+        end
+    end
 end

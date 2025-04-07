@@ -36,14 +36,12 @@ using Dates
 
 
 # Parameters: user defined 
-force_remake = true
 project_id = :v01;
 geotile_width = 2;
 domain = :glacier; # :glacier -or- :landice
 missions = (:icesat2,); # (:icesat2, :icesat, :gedi, :hugonnet)
 
-after = nothing # only search for after this date
-rebuild_geotiles_dataframe = true;
+rebuild_geotiles_dataframe = false;
 
 # Initialize: paths, products, geotiles
 paths = project_paths(; project_id);
@@ -58,36 +56,38 @@ products = getindex(products, missions)
 # Execute: find granules, download granules, build geotiles
 for product in products
 #product = first(products)
-    
-    # make directly if it doesn't exist
-    if !isdir(paths[product.mission].raw_data)
-        mkpath(paths[product.mission].raw_data)
-    end
+    if false
+        # make directly if it doesn't exist
+        if !isdir(paths[product.mission].raw_data)
+            mkpath(paths[product.mission].raw_data)
+        end
 
-    if !isdir(paths[product.mission].geotile)
-        mkpath(paths[product.mission].geotile)
-    end
+        if !isdir(paths[product.mission].geotile)
+            mkpath(paths[product.mission].geotile)
+        end
 
-    ## 'find' can run in parallel.. therfore run first [GLAH06 = 30 min from scratch]
-    geotile_search_granules(geotiles, product.mission, product.name, product.version, paths[product.mission].granules_remote; rebuild_dataframe=rebuild_geotiles_dataframe, after =after)
+        ## 'find' can run in parallel.. therfore run first [GLAH06 = 30 min from scratch]
+        # do not use kward `after` as it will cuase downstream issues as earlier data will be excluded
+        geotile_search_granules(geotiles, product.mission, product.name, product.version, paths[product.mission].granules_remote; rebuild_dataframe=rebuild_geotiles_dataframe)
 
-    # load remote granule list
-    geotile_granules = granules_load(paths[product.mission].granules_remote, product.mission; geotiles = geotiles)
+        # load remote granule list
+        geotile_granules = granules_load(paths[product.mission].granules_remote, product.mission; geotiles = geotiles)
 
-    # download granules from list [ATL06 17 min, no data]
+        # download granules from list [ATL06 17 min, no data]
 
-    # download can sometimes be unhappy when run with more than one downloadstream
-    # NOTE: I'm not sure why download keeps failing ... wrapping in a while loop as a bandaid
-    foo = true
-    while foo
-        try
-            geotile_download_granules!(geotile_granules, product.mission, paths[product.mission].raw_data, 
-                paths[product.mission].granules_local; threads = false, aria2c = true, 
-                rebuild_dataframe = rebuild_geotiles_dataframe, downloadstreams = 8)
+        # download can sometimes be unhappy when run with more than one downloadstream
+        # NOTE: I'm not sure why download keeps failing ... wrapping in a while loop as a bandaid
+        foo = true
+        while foo
+            try
+                geotile_download_granules!(geotile_granules, product.mission, paths[product.mission].raw_data, 
+                    paths[product.mission].granules_local; threads = false, aria2c = true, 
+                    rebuild_dataframe = rebuild_geotiles_dataframe, downloadstreams = 8)
 
-            foo = false;
-        catch e
-            println(e)
+                foo = false;
+            catch e
+                println(e)
+            end
         end
     end
 

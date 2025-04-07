@@ -10,11 +10,10 @@ begin
 
     paths = Altim.pathlocal
 
-    glacier_rivers_runoff_qout_path = "/mnt/bylot-r3/data/rivers/MERIT_Hydro_v07_Basins_v01/riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_runoff_qout.nc"
-    glacier_rivers_land_flux_path = "/mnt/bylot-r3/data/rivers/MERIT_Hydro_v07_Basins_v01/riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_Qs_acc_Qsb_acc.nc"
+    glacier_rivers_runoff_qout_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_runoff_qout.nc")
+    glacier_rivers_land_flux_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_Qs_acc_Qsb_acc.nc")
     
-    rivers_path = joinpath(paths.data_dir, "rivers/MERIT_Hydro_v07_Basins_v01")
-    glacier_rivers_path = joinpath(rivers_path, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
+    glacier_rivers_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
     sdate = Date(2000,1,1)
     edate = Date(2024,1,1)

@@ -1,7 +1,6 @@
 #density of glacier ice
 const δice = 910; #kg m-3
 
-
 """ 
     ElevationProduct
 Defines ElevationProduct parameter type
@@ -100,32 +99,6 @@ function project_height_bins()
 
     return height_range, height_center
 end
-
-#=
-# regional_dischage (Gt/yr)
-discharge_gtyr = Dict(
-    "rgi1" => 17.1, # Burgess, 2013
-    "rgi2" => 0.75, # Menounos personal communication
-    "rgi3" => 2.2, # van Wychen 2016 
-    "rgi4" => 0.06, # van Wychen 2015
-    "rgi5" => 5.1, # Bollen et al, 2021 AGU poster
-    "rgi6" => 2.1, # Tómas Jóhannesson, 2020 (geothermal and lake calving)
-    "rgi7" => 10, # moholdt personal comunication [6.75; % Baszczyk, 2009]
-    "rgi8" => 0,
-    "rgi9" => 10, # moholdt personal comunication  (0.5+2.26+0.65) * dh2dm; % 0.5 Novaya Zemlya, Melkonian 2016; 
-    "rgi10" => 0,
-    "rgi11" => 0,
-    "rgi12" => -4, # this is done as the model generates WAY too much melt that a match can't be found... # -4 Gt/yr is the mean rate for the icesat period with no smb scaling
-    "rgi13" => 0,
-    "rgi14" => 0,
-    "rgi15" => 0,
-    "rgi16" => 0,
-    "rgi17" => 61.3, # Schaefer, 2015
-    "rgi18" => 0,
-    "rgi19" => 70, #75 Gt/yr is the mean rate for the icesat period -6 gt with no smb scaling.  If set to NaN then deteremined inside of gem_Δvolume!(df)
-)
-=#
-
 
 
 function mission_land_trend()

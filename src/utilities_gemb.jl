@@ -411,6 +411,23 @@ end
 
 
 
+"""
+    gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_model_fits = nothing)
+
+Calibrate the SMB model to grouped geotiles to handle glaciers that cross multiple geotiles.
+
+# Arguments
+- `dv_altim`: Volume change from altimetry data
+- `smb`: Surface mass balance data
+- `fac`: Firn air content data
+- `discharge`: Discharge data
+- `geotiles`: DataFrame containing geotile information
+- `examine_model_fits`: Optional geotile ID to examine model fits for debugging 
+    -> e.g. examine_model_fits = "lat[+78+80]lon[-096-094]"
+
+# Returns
+- DataFrame with calibrated parameters for each geotile: id, extent, pscale, Δheight, and mad
+"""
 function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_model_fits = nothing)
 
     # there are issues with calibrating the smb model to individual geotiles as glaciers
@@ -460,7 +477,8 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
     # NOTE: do not do a groupby on geotiles as you need to keep the original geotiles order
 
     # !!! POSSABLY NOT SAVE TO MULTI THREAD ON THIS LOOP !!!
-    Threads.@threads for grp in unique(geotiles.group)
+    #Threads.@threads for grp in unique(geotiles.group)
+    for grp in unique(geotiles.group)
 
         discharge_km3yr = 0.0
         gindex = grp .== geotiles.group
@@ -506,6 +524,17 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
 
                 res = dv0 .- (smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear))
 
+                if any(isnan.(res))
+                    println("dv0 has NaNs: $(any(isnan.(dv0)))")
+                    println("smb0 has NaNs: $(any(isnan.(smb0)))")
+                    println("fac0 has NaNs: $(any(isnan.(fac0)))")
+                    println("discharge_km3yr has NaNs: $(any(isnan.(discharge_km3yr)))")
+                    #display(discharge_km3yr)
+                    #println(cname)
+
+                    error("NANs in residual")
+                end
+
                 # align the center of the residual distribution to zero
                 #res0 = round(Int,mean(res))
                 res0 = res[ceil(Int, length(res) / 2)]
@@ -515,14 +544,20 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
                 verbose && CairoMakie.lines!((smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear)) .+ res0)
 
                 if any(isnan.(res))
-                    display(dv0)
-                    display(discharge_km3yr)
-                    println(cname)
+                    #display(dv0)
+                    #display(discharge_km3yr)
+                    #println(cname)
 
-                    error()
+                    error("NANs in residual")
                 end
 
-                mad1 = Altim.mad(res)
+                # try using the root mean square error instead of MAD...MAD did a poor job of caturing seasonality
+
+                # ----------------- Objective function definition -[this should be passed as a kwarg]- ----------------
+                # fit a model to the residuals... use the amplitude of the residuals as a weighting of the objective function
+                fit1 = curve_fit(model3, Δdecyear, res, Altim.p3)
+                mad1 = sqrt(mean(res .^ 2)) + (2*abs(fit1.param[4])) 
+                # --------------------------------------------------------------
 
                 if mad1 < mad0
                     mad0 = mad1

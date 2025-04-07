@@ -22,11 +22,10 @@ using Extents
 
 
 # Parameters: user defined 
-force_remake = true
+force_remake = false
 project_id = :v01;
 geotile_width = 2;
-domain = :glacier; # :glacier -or- :landice
-missions = (:icesat2,); # (:icesat2, :icesat, :gedi, :hugonnet)
+domain = :landice; # :glacier -or- :landice
 
 # Initialize: paths, products, geotiles
 paths = project_paths(; project_id);

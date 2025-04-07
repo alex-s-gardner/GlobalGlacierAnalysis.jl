@@ -44,6 +44,9 @@ function setpaths()
             # all altimetry and geotile data will be stored in a stucture within data_dir
             data_dir = "/mnt/bylot-r3/data/",
 
+            # figure output directory
+            figures = "/mnt/bylot-r3/altim_figs/",
+
             # location of global DEM vrts
             cop30_v1 = "/mnt/devon-r2/shared_data/COP-DEM_GLO-30-DGED_PUBLIC/GLO30_DGED_hgt.vrt",
             cop30_v2 = "/mnt/devon-r2/shared_data/copernicus-dem-30m/DEM.vrt",
@@ -72,6 +75,7 @@ function setpaths()
             glacier_rgi7_shp="/mnt/bylot-r3/data/vector_files/RGI2000-v7.0-C-01_global.shp",
             glacier_b1km_shp="/mnt/bylot-r3/data/vector_files/glacier_b1km.shp",
             glacier_b10km_shp="/mnt/bylot-r3/data/vector_files/glacier_b10km.shp",
+            glacier_individual_outlines="/mnt/bylot-r3/data/GlacierOutlines/rgi60/rgi60_Global.gpkg",
             landice_shp="/mnt/bylot-r3/data/vector_files/land_ice.shp",
             landice_b1km_shp="/mnt/bylot-r3/data/vector_files/land_ice_b1km.shp",
             landice_b10km_shp="/mnt/bylot-r3/data/vector_files/land_ice_b10km.shp",
@@ -89,6 +93,12 @@ function setpaths()
             marzeion_2020 = "/mnt/bylot-r3/data/glacier_mb/Marzeion2020/suppl_GlacierMIP_results.nc",
             hock_2019 = "/mnt/bylot-r3/data/glacier_mb/Hock2019/S0022143019000224sup001.nc",
             ipcc_ar6 = "/mnt/bylot-r3/data/glacier_mb/IPCCAR6/",
+            wimberly_2024 = "/mnt/bylot-r3/data/glacier_mb/Wimberly2024/all_rf_aligned_data.csv",
+
+            # path to river files
+            river = "/mnt/bylot-r3/data/rivers/MERIT_Hydro_v07_Basins_v01",
+            river_basins = "/mnt/bylot-r3/data/rivers/BasinATLAS_Data_v10.gdb/BasinATLAS_v10_lev02.geojson",
+            river_major_basins = "/mnt/bylot-r3/data/rivers/GRDC_Major_River_Basins/mrb_basins.json",
         )
 
         return pathlocal

@@ -34,13 +34,14 @@
 # gap filling and mission alignment steps.
 
 using Altim
+using Dates
         
 #@time begin
  
-    force_remake_binning = true
-    force_remake_fill = true
-    force_remake_align_replace = true
-    force_remake_regional_dv = true
+
+    # remake files that were created before this date
+    force_remake_before = Date(2025, 3, 15) # set == nothing to disable
+
 
     # This section initializes the GEMB (Glacier Energy Mass Balance) model:
     #
@@ -69,22 +70,22 @@ using Altim
         update_geotile_missions = ["icesat2"]
 
         # run parameters
-        all_permutations_for_glacier_only = false
-        surface_masks = [:glacier, :land, :glacier_rgi7]; #[:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
-        binned_folders= (binned_folder_unfiltered, binned_folder_filtered)
+        all_permutations_for_glacier_only = true
+        surface_masks = [:glacier, :glacier_rgi7]; #[:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
+        binned_folders = (binned_folder_unfiltered, binned_folder_filtered)
         dem_ids = [:best, :cop30_v2]
         binning_methods = ["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"]
-        curvature_corrects = [true, false]
+        curvature_corrects = [false,true]
         max_canopy_height = 1
         dh_max=200
 
         # filling only parameters
         filling_paramater_sets = [1, 2, 3, 4]
-        amplitude_corrects = [true, false]
-        plot_dh_as_function_of_time_and_elevation = true;
+        amplitude_corrects = [true]
+        plot_dh_as_function_of_time_and_elevation = false;
         mission_reference_for_amplitude_normalization = "icesat2"
     end
-
+                                    
     # Calls Altim.geotile_binning() to bin elevation data into geotiles
     # Key parameters:
     # - project_id: Version identifier
@@ -110,7 +111,7 @@ using Altim
         showplots,
 
         # run parameters
-        force_remake = force_remake_binning,
+        force_remake_before,
         update_geotile, # this will load in prevous results to update select geotiles or missions
         update_geotile_missions,
 
@@ -129,7 +130,8 @@ using Altim
         dh_max,
     )
 
-    # Calls Altim.geotile_binned_fill() to fill gaps in binned elevation data
+    # Calls Altim.geotile_binned_fill() to fill gaps in binned elevation data [8 hrs for 96 ensembles]
+    # !!!! This requires 300GB of memory is using threads inside of Altim.geotile_binned_fill() !!!
     # Key parameters:
     # - project_id: Version identifier
     # - geotile_width: Width of geotiles in degrees
@@ -149,12 +151,16 @@ using Altim
     # as the reading of the files can break with breaking changes in depndent packages... 
     # this should be changed to netcdf at some point.. the output is complex so it is not a 
     # trivial change
-    Altim.geotile_binned_fill(; 
-        project_id,
+
+    # no explicit threading 272s per file
+    # with explicit threading in hyps_model_fill!() where all time is spent 170s per file
+    # with explicit threading in hyps_model_fill!() where all time is spent 126s per file
+
+ Altim.geotile_binned_fill(; project_id,
         geotile_width,
-        force_remake = force_remake_fill,
-        update_geotile, # this will load in prevous results to update select geotiles or missions
-        update_geotile_missions,
+        force_remake_before,
+        update_geotile = false, # this will load in prevous results to update select geotiles or missions
+        update_geotile_missions = nothing, # if icesat2 is updated, all other missions must be updated
         plot_dh_as_function_of_time_and_elevation,
         mission_reference_for_amplitude_normalization,
         all_permutations_for_glacier_only,
@@ -166,10 +172,12 @@ using Altim
         paramater_sets = filling_paramater_sets,
         amplitude_corrects,
         showplots,
+        show_times=false,
     )
 
     #Altim.geotile_align_replace() performs mission alignment and data replacement for 
     # elevation data across different satellite missions. Here's a breakdown of its main 
+    # --> [1 hr] <--
     # purposes:
     # Mission Alignment:
     # Aligns data between two reference missions (ICESat-2 and ICESat)
@@ -190,6 +198,7 @@ using Altim
     # Processes data across different DEM sources
     # Applies various binning methods and corrections (curvature, amplitude)
     # Organizes data in geotiles (2-degree width)
+
     @time Altim.geotile_align_replace(;
         mission_ref1 = "icesat2",
         mission_ref2 = "icesat",
@@ -207,21 +216,21 @@ using Altim
         regions2replace_with_model = ["rgi19"],
         mission_replace_with_model="hugonnet",
         showplots = false,
-        force_remake=force_remake_align_replace,
+        force_remake_before,
     )
     
     # [This might not be valid anymore... this is now handled in synthesis.jl]
     # Calculates regional volume change by aggregating geotile data [~3 min]
-    @time Altim.geotile_regional_dv(;
-        project_id,
-        geotile_width,
-        surface_masks,
-        binned_folders,
-        dem_ids,
-        binning_methods,
-        curvature_corrects,
-        paramater_sets=filling_paramater_sets,
-        amplitude_corrects,
-        force_remake=force_remake_regional_dv,
-    )
+    #@time Altim.geotile_regional_dv(;
+    #     project_id,
+    #    geotile_width,
+    #    surface_masks,
+    #    binned_folders,
+    #    dem_ids,
+    #    binning_methods,
+    #    curvature_corrects,
+    #    paramater_sets=filling_paramater_sets,
+    #    amplitude_corrects,
+    #    force_remake=force_remake_regional_dv,
+    #)
 end

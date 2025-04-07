@@ -66,7 +66,7 @@ function geotile_binning(;
     showplots = false,
 
     # run parameters
-    force_remake = false,
+    force_remake_before = nothing,
     update_geotile = false, # this will load in prevous results to update select geotiles or missions
     update_geotile_missions = ["icesat2"],
 
@@ -113,384 +113,386 @@ function geotile_binning(;
     #rm.(files2delete)
     ##########
 
+    params = NamedTuple[]
     for binned_folder in binned_folders
-
-        fig_folder = joinpath(binned_folder, "figures")
-        !isdir(fig_folder) && mkdir(fig_folder)
- 
         for surface_mask in surface_masks
-        #surface_mask = first(surface_masks)
+            for dem_id in dem_ids
+                for binning_method in binning_methods
+                    for curvature_correct in curvature_corrects
+                        push!(params, (; project_id, binned_folder, surface_mask, dem_id, binning_method, curvature_correct))
+                    end
+                end
+            end
+        end
+    end
+
+
+    # Threads is throwing errors due to reading of JLD2 files, Threads is implimented at
+    # lower level with reasonable performance
+    @showprogress desc = "Binning hypsometric elevation change data ..." for param in params
+
+        fig_folder = joinpath(param.binned_folder, "figures")
+        !isdir(fig_folder) && mkdir(fig_folder)
+
+        # skip permutations if all_permutations_for_glacier_only = true
+        if all_permutations_for_glacier_only
+            if ((!(param.surface_mask == :glacier) && Base.contains(param.binned_folder, "unfiltered")) &&
+                ((param.dem_id != :best) && (param.binning_method != "meanmadnorm3") && param.curvature_correct))
+                continue
+            end
+        end
+
+        # funtion used for binning data
+        binningfun = Altim.binningfun_define(param.binning_method)
+    
+        binned_file = Altim.binned_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct)
+
+        # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><>
+        # binningfun(x) = mean(x[Altim.madnorm(x).<10])
+        # <><><><><><><><><><><><><><><><><><><><><><<><><><><><><><><><><><><><><><><><>
+        if !isfile(binned_file) || !isnothing(force_remake_before)
+
+            println("binning:$binned_file")
+
+            if isfile(binned_file) && !isnothing(force_remake_before)
+                if Dates.unix2datetime(mtime(binned_file)) > force_remake_before
+                    @warn "Skipping $(binned_file) because it was created after $force_remake_before"
+                    continue
+                end
+            end
 
             # open shapefiles
-            if surface_mask == :land
-                shp = Symbol("$(:water)_shp");
-                fn_shp = Altim.pathlocal[shp];
-                feature = Shapefile.Handle(fn_shp);
+            if param.surface_mask == :land
+                shp = Symbol("$(:water)_shp")
+                fn_shp = Altim.pathlocal[shp]
+                feature = Shapefile.Handle(fn_shp)
                 invert = true
 
                 shp = Symbol("$(:landice)_shp")
                 fn_shp = Altim.pathlocal[shp]
                 excludefeature = Shapefile.Handle(fn_shp)
             else
-                shp = Symbol("$(surface_mask)_shp");
+                shp = Symbol("$(param.surface_mask)_shp")
                 fn_shp = Altim.pathlocal[shp]
                 feature = Shapefile.Handle(fn_shp)
                 invert = false
 
-                excludefeature = nothing;
+                excludefeature = nothing
             end
 
-            for binning_method = binning_methods
-            # binning_method = first(binning_methods)
-                
-                for dem_id in dem_ids  
-                # dem_id = first(dem_ids)
-                    
-                    for curvature_correct in curvature_corrects
-                    # curvature_correct = first(curvature_corrects)
-                    
-                        # skip permutations if all_permutations_for_glacier_only = true
-                        if all_permutations_for_glacier_only
-                            if all_permutations_for_glacier_only &&
-                               ((!(surface_mask == :glacier) && contains(binned_folder, "unfiltered")) &&
-                                ((dem_id != :best) && (binning_method != "meanmadnorm3") && curvature_correct))
+            # 6.2 hours for all glaciers, all missions/datasets on 96 threads
+            # 10hr for land for all glaciers, all missions/datasets on 96 threads
 
-                                continue
+            # initialize dimensional arrays
+            # update_geotile = true
+            if isfile(binned_file) && update_geotile
+                # load exisiting
+                dh_hyps = FileIO.load(binned_file, "dh_hyps")
+                nobs_hyps = FileIO.load(binned_file, "nobs_hyps")
+                curvature_hyps = FileIO.load(binned_file, "curvature_hyps")
+                missions = update_geotile_missions;
+            else
+                dh_hyps = Dict();
+                nobs_hyps = Dict();
+                curvature_hyps = Dict()
+                ngeotile = nrow(geotiles)
+                ndate = length(date_center)
+                ncurvature = length(curvature_center);
+                for product in products
+                    mission = String(product.mission)
+                    push!(dh_hyps, String(mission) => DimArray(fill(NaN, ngeotile, ndate, length(height_center)), (geotile = geotiles.id, date=date_center, height = height_center)));
+                    push!(nobs_hyps, String(mission) => DimArray(fill(0, ngeotile, ndate, length(height_center)), (geotile = geotiles.id, date=date_center, height = height_center)));
+                    push!(curvature_hyps, String(mission) => DataFrame(id=geotiles.id, curvature=[curvature_range for i in 1:ngeotile], dh = [fill(NaN,ncurvature) for i in 1:ngeotile], nobs=[zeros(ncurvature) for i in 1:ngeotile], model_coef = [zeros(size(p_curvature)) for i in 1:ngeotile]))
+                end
+
+                missions = keys(dh_hyps)
+            end
+
+            # 2.6 hours for all 4 missions for all glacierized geotiles
+            # 31 min for icesat + iceast2 + gedi for all glacierized geotiles
+            for mission in missions
+                # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><><><><>
+                # mission = "icesat2"
+                #binned_file = "/mnt/devon2-r1/devon0/gardnera/Documents/GitHub/Altim/data/geotiles_glacier_hyps_2deg_dh.arrow";
+                #geotiles  = DataFrame(Arrow.Table(binned_file));
+                #geotiles.extent = Extent.(getindex.(geotiles.extent, 1));
+                #geotiles = geotiles[(geotiles.rgi2 .> 0) .& (geotiles.glacier_frac .> 0), :] ;
+                # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+                
+                product = products[Symbol(mission)];
+
+                #idx = (geotiles.rgi9 .> 0) .& (geotiles.glacier_frac .> 0.1)
+                Threads.@threads for geotile in eachrow(geotiles)
+
+                    # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><><>
+                    #for geotile in eachrow(geotiles[idx,:])
+                    # geotile = geotiles[findfirst((geotiles.rgi2 .> 0.) .& (geotiles.glacier_frac .> 0.1)),:];
+                    #geotile = geotiles[findfirst(geotiles.id .== "lat[+28+30]lon[+082+084]"), :]
+
+                    #geotile = geotiles[findfirst(geotiles.id .== "lat[-72-70]lon[+160+162]"), :]
+                    #geotile = geotiles[findfirst(geotiles.id .== "lat[+44+46]lon[+006+008]"), :]; # used for curvature figure with mission ="icesat"
+
+                    # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+
+                    if geotile.glacier_frac == 0.0
+                        continue
+                    end
+    
+                    t1 = time();
+
+                    mission_geotile_folder = paths[Symbol(mission)].geotile 
+
+                    # special case for unfiltered hugonnet data
+
+                    # this is a hack for including 2 folders that contain hugonnet data (filtered and unfiltered)
+                    if Base.contains(param.binned_folder, "unfiltered") && (mission == "hugonnet")
+                        mission_geotile_folder = replace(mission_geotile_folder, "/2deg" => "/2deg_unfiltered")
+                    end
+
+                    path2altim = joinpath(mission_geotile_folder, geotile.id * ".arrow");
+
+                    if !isfile(path2altim)
+                        continue
+                    end
+
+                    altim = select!(DataFrame(Arrow.Table(path2altim)), [:longitude, :latitude, :datetime, :height, :quality]);
+
+                    # add height_ref and curvature
+                    altim = Altim.add_dem_ref!(altim, param.dem_id, geotile, mission_geotile_folder)
+                    
+                    # load masks
+                    path2masks = joinpath(mission_geotile_folder, geotile.id * ".masks");
+                    masks0 = select!(DataFrame(Arrow.Table(path2masks)), [:inlandwater, :land, :landice, :ocean]);
+
+                    if nrow(masks0) != nrow(altim)
+                        error("masks and altim do not have the same number of rows, try deleting masks and rerunning geotile_mask_extract(): $(path2masks)")
+                    end
+                    
+                    # add high resolution mask 
+                    masks0 = Altim.highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, param.surface_mask)
+                    valid = Altim.within.(Ref(geotile.extent), altim.longitude, altim.latitude)
+
+                    # quick trouble shoot check by plotting time series for each geotile
+                    if false
+                        valid = masks0.landice .& .!isnan.(altim.dh) 
+                        valid[valid] = (abs.(altim.dh[valid] .- median(altim.dh[valid])) .< dh_max) .& (abs.(altim.dh[valid]) .< dh_max*2)
+                        #valid[valid] = (abs.(altim.dh[valid] .- median(altim.dh[valid])) .< 2000) .& (altim.dh[valid] .!== 0) .& (altim.height_ref[valid] .> 0)
+                        if sum(valid) < 100
+                            #continue
+                        end
+                    
+                        df = binstats(altim[valid, :], [:datetime, :height_ref], 
+                            [date_range], :dh; col_function=[binningfun], missing_bins=false)
+
+                        x = df.datetime
+                        
+                        p = lines(x,df.dh_binningfun; title = geotile.id, linewidth=2)
+                        display(p)
+
+                        gdf = DataFrames.groupby(df, :datetime)
+
+                        #continue 
+                    end
+
+                    if minimum(geotile.extent.Y) < -54 || maximum(geotile.extent.Y) > 66
+                        canopy = DataFrame(canopyh = zeros(size(altim.latitude))) 
+                    else
+                        path2canopy = joinpath(mission_geotile_folder, geotile.id * ".canopyh")
+                        if isfile(path2canopy)
+                            canopy = DataFrame(Arrow.Table(path2canopy));
+                        else
+                            @warn "Setting conopy height to zero as canopy height file does not exist: $(path2canopy)"
+                            canopy = DataFrame(canopyh=zeros(size(altim.latitude)))
+                        end
+                    end;
+
+                    if !any(masks0[:, param.surface_mask])
+                        continue
+                    end
+
+                    ## Check slope relation
+                    if false
+                        for dem_id1 in dem_id0           
+                            path2dem = joinpath(mission_geotile_folder, geotile.id * ".$(dem_id1)")
+                            if isfile(path2dem)
+                                dem = select!(DataFrame(Arrow.Table(path2dem)), :height, :dhdx, :dhdy, :dhddx, :dhddy)
+                
+                                dhdx_dhdy = Altim.slope.(dem.dhdx, dem.dhdy, Ref(Altim.dem_info(dem_id1)[1].epsg), lat = mean(geotile.extent.Y));
+                                
+                                var_ind = (.!masks0[:, param.surface_mask]) .& valid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0) .& .!isnan.(altim.curvature) .& (abs.(altim.dh) .< 10) .& masks0.land .& ((canopy.canopyh .<= max_canopy_height) .| (altim.latitude .< -60))
+                                
+                                if sum(var_ind) <= length(p_curvature)
+                                    warnings && (@warn ("$(geotile.id): slope offset not calculated, not enought off-ice points"))
+                                else
+                                    offset = Altim.track_offset(getindex.(dhdx_dhdy[var_ind], 1), getindex.(dhdx_dhdy[var_ind], 2), altim.dh[var_ind]);
+                                end
                             end
                         end
+                    end;
 
-                        # funtion used for binning data
-                        binningfun = Altim.binningfun_define(binning_method)
-                    
-                        binned_file = Altim.binned_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct)
+                    # use bin statistics to calculate dh vs. elevation for every 3 months.
 
-                        
-                        # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><>
-                        # binningfun(x) = mean(x[Altim.madnorm(x).<10])
-                        # <><><><><><><><><><><><><><><><><><><><><><<><><><><><><><><><><><><><><><><><>
-                        if !isfile(binned_file) || force_remake
+                    # identify valid dh data
+                    # plot(Altim.decimalyear.(altim.datetime[valid]),altim.dh[valid]; label="all")
 
-                            println("binning:$binned_file")
+                    if param.curvature_correct
+                        var_ind = (.!masks0[:, :landice]) .& valid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0) .& .!isnan.(altim.curvature) .& (abs.(altim.dh) .< 10) .& masks0.land .& ((canopy.canopyh .<= max_canopy_height) .| (altim.latitude .< -60))
 
-                            ##################################### HACK FOR UPDATE #####################################
-                            if isfile(binned_file)
-                                if Dates.unix2datetime(mtime(binned_file)) > Date(2025, 2, 26)
-                                    @warn "Skipping $(binned_file) because it was created after 2025-03-28"
-                                    continue
-                                end
-                            end
-
-                            # 6.2 hours for all glaciers, all missions/datasets on 96 threads
-                            # 10hr for land for all glaciers, all missions/datasets on 96 threads
-
-                            # initialize dimensional arrays
-                            # update_geotile = true
-                            if update_geotile
-                                # load exisiting
-                                dh_hyps = FileIO.load(binned_file, "dh_hyps")
-                                nobs_hyps = FileIO.load(binned_file, "nobs_hyps")
-                                curvature_hyps = FileIO.load(binned_file, "curvature_hyps")
-                                missions = update_geotile_missions;
-                            else
-                                dh_hyps = Dict();
-                                nobs_hyps = Dict();
-                                curvature_hyps = Dict()
-                                ngeotile = nrow(geotiles)
-                                ndate = length(date_center)
-                                ncurvature = length(curvature_center);
-                                for product in products
-                                    mission = String(product.mission)
-                                    push!(dh_hyps, String(mission) => DimArray(fill(NaN, ngeotile, ndate, length(height_center)), (geotile = geotiles.id, date=date_center, height = height_center)));
-                                    push!(nobs_hyps, String(mission) => DimArray(fill(0, ngeotile, ndate, length(height_center)), (geotile = geotiles.id, date=date_center, height = height_center)));
-                                    push!(curvature_hyps, String(mission) => DataFrame(id=geotiles.id, curvature=[curvature_range for i in 1:ngeotile], dh = [fill(NaN,ncurvature) for i in 1:ngeotile], nobs=[zeros(ncurvature) for i in 1:ngeotile], model_coef = [zeros(size(p_curvature)) for i in 1:ngeotile]))
+                        if sum(var_ind) <= length(p_curvature)
+                            warnings && (@warn ("$(geotile.id): no curvature corecction applied, not enought off-ice points"))
+                        else
+                            # check bounds: binstats will throw an error if no data is passed to median()
+                            if Altim.vector_overlap(altim[var_ind, :curvature], curvature_range)
+                                df = DataFrame();
+                                try
+                                    df = binstats(altim[var_ind, :], [:curvature], [curvature_range], :dh; col_function=[median], missing_bins=true);
+                                catch e
+                                    # having issues with edge cases
+                                    println(" ##################### ERRORED ##########################")
+                                    println(" ##################### $(mission): $(geotile.id) ########################")
+                                    println(" ##################### ERRORED ##########################")
+                                    rethrow(e)
                                 end
 
-                                missions = keys(dh_hyps)
-                            end
+                                if !isempty(df)
+                                    bin_center = df.curvature;
+                                    bin_valid = .!(ismissing.(df.dh_median))
 
-                            # 2.6 hours for all 4 missions for all glacierized geotiles
-                            # 31 min for icesat + iceast2 + gedi for all glacierized geotiles
-                            for mission in missions
-                                # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><><><><>
-                                # mission = "icesat2"
-                                #binned_file = "/mnt/devon2-r1/devon0/gardnera/Documents/GitHub/Altim/data/geotiles_glacier_hyps_2deg_dh.arrow";
-                                #geotiles  = DataFrame(Arrow.Table(binned_file));
-                                #geotiles.extent = Extent.(getindex.(geotiles.extent, 1));
-                                #geotiles = geotiles[(geotiles.rgi2 .> 0) .& (geotiles.glacier_frac .> 0), :] ;
-                                # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-                                
-                                product = products[Symbol(mission)];
-
-                                #idx = (geotiles.rgi9 .> 0) .& (geotiles.glacier_frac .> 0.1)
-                                Threads.@threads for geotile in eachrow(geotiles)
-                                    # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><><>
-                                    #for geotile in eachrow(geotiles[idx,:])
-                                    # geotile = geotiles[findfirst((geotiles.rgi2 .> 0.) .& (geotiles.glacier_frac .> 0.1)),:];
-                                    #geotile = geotiles[findfirst(geotiles.id .== "lat[+28+30]lon[+082+084]"), :]
-
-                                    #geotile = geotiles[findfirst(geotiles.id .== "lat[-72-70]lon[+160+162]"), :]
-                                    #geotile = geotiles[findfirst(geotiles.id .== "lat[+44+46]lon[+006+008]"), :]; # used for curvature figure with mission ="icesat"
-
-                                    # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-
-                                    if geotile.glacier_frac == 0.0
-                                        continue
-                                    end
-                    
-                                    t1 = time();
-
-                                    mission_geotile_folder = paths[Symbol(mission)].geotile 
-
-                                    # special case for unfiltered hugonnet data
-
-                                    # this is a hack for including 2 folders that contain hugonnet data (filtered and unfiltered)
-                                    if Base.contains(binned_folder, "unfiltered") && (mission == "hugonnet")
-                                        mission_geotile_folder = replace(mission_geotile_folder, "/2deg" => "/2deg_unfiltered")
-                                    end
-
-                                    path2altim = joinpath(mission_geotile_folder, geotile.id * ".arrow");
-
-                                    if !isfile(path2altim)
-                                        continue
-                                    end
-
-                                    altim = select!(DataFrame(Arrow.Table(path2altim)), [:longitude, :latitude, :datetime, :height, :quality]);
-
-                                    # add height_ref and curvature
-                                    altim = Altim.add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder)
-                                    
-                                    # load masks
-                                    path2masks = joinpath(mission_geotile_folder, geotile.id * ".masks");
-                                    masks0 = select!(DataFrame(Arrow.Table(path2masks)), [:inlandwater, :land, :landice, :ocean]);
-
-                                    # add high resolution mask 
-                                    masks0 = Altim.highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, surface_mask)
-                                    valid = Altim.within.(Ref(geotile.extent), altim.longitude, altim.latitude)
-
-                                    # quick trouble shoot check by plotting time series for each geotile
-                                    if false
-                                        valid = masks0.landice .& .!isnan.(altim.dh) 
-                                        valid[valid] = (abs.(altim.dh[valid] .- median(altim.dh[valid])) .< dh_max) .& (abs.(altim.dh[valid]) .< dh_max*2)
-                                        #valid[valid] = (abs.(altim.dh[valid] .- median(altim.dh[valid])) .< 2000) .& (altim.dh[valid] .!== 0) .& (altim.height_ref[valid] .> 0)
-                                        if sum(valid) < 100
-                                            #continue
-                                        end
-                                    
-                                        df = binstats(altim[valid, :], [:datetime, :height_ref], 
-                                            [date_range], :dh; col_function=[binningfun], missing_bins=false)
-
-                                        x = df.datetime
-                                        
-                                        p = lines(x,df.dh_binningfun; title = geotile.id, linewidth=2)
-                                        display(p)
-                
-                                        gdf = DataFrames.groupby(df, :datetime)
-
-                                        #continue 
-                                    end
-
-                                    if minimum(geotile.extent.Y) < -54 || maximum(geotile.extent.Y) > 66
-                                        canopy = DataFrame(canopyh = zeros(size(altim.latitude))) 
+                                    if (sum(bin_valid) <= length(p_curvature))
+                                        warnings && (@warn ("$(geotile.id): no curvature corecction applied, not enought off-ice points"))
                                     else
-                                        path2canopy = joinpath(mission_geotile_folder, geotile.id * ".canopyh")
-                                        if isfile(path2canopy)
-                                            canopy = DataFrame(Arrow.Table(path2canopy));
-                                        else
-                                            @warn "Setting conopy height to zero as canopy height file does not exist: $(path2canopy)"
-                                            canopy = DataFrame(canopyh=zeros(size(altim.latitude)))
-                                        end
-                                    end;
+                                        fit1 = curve_fit(model_curvature, bin_center[bin_valid], df.dh_median[bin_valid], df.nrow[bin_valid], p_curvature);
+                                        #histogram(altim.dh[var_ind], bins= -5:.1:5; label ="raw", xlabel="height change [m]")
+                                        altim.dh = altim.dh .- model_curvature(altim.curvature, fit1.param);
+                                        #histogram!(altim.dh[var_ind], bins= -5:.1:5; label="curvature corrected")
 
-                                    if !any(masks0[:, surface_mask])
-                                        continue
-                                    end
+                                        gt_ind = findfirst(geotile.id .== curvature_hyps[mission].id)
+                                        cdh = @view curvature_hyps[mission].dh[gt_ind] 
+                                        cdh[1][bin_valid] = df.dh_median[bin_valid];
+                                        cnobs = @view curvature_hyps[mission][gt_ind, :nobs]
+                                        cnobs[1][bin_valid] = df.nrow[bin_valid]
+                                        curvature_hyps[mission][gt_ind, :model_coef] = fit1.param
+                            
+                                        if showplots
+                                            dh_cor = model_curvature(bin_center, fit1.param);
+                                            validX = .!ismissing.(df.dh_median)
+                                            dh_medianX = collect(skipmissing(df.dh_median[validX]))
+                                            p = CairoMakie.plot(bin_center[validX], dh_medianX);
 
-                                    ## Check slope relation
-                                    if false
-                                        for dem_id1 in dem_id0           
-                                            path2dem = joinpath(mission_geotile_folder, geotile.id * ".$(dem_id1)")
-                                            if isfile(path2dem)
-                                                dem = select!(DataFrame(Arrow.Table(path2dem)), :height, :dhdx, :dhdy, :dhddx, :dhddy)
-                                
-                                                dhdx_dhdy = Altim.slope.(dem.dhdx, dem.dhdy, Ref(Altim.dem_info(dem_id1)[1].epsg), lat = mean(geotile.extent.Y));
-                                                
-                                                var_ind = (.!masks0[:, surface_mask]) .& valid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0) .& .!isnan.(altim.curvature) .& (abs.(altim.dh) .< 10) .& masks0.land .& ((canopy.canopyh .<= max_canopy_height) .| (altim.latitude .< -60))
-                                                
-                                                if sum(var_ind) <= length(p_curvature)
-                                                    warnings && (@warn ("$(geotile.id): slope offset not calculated, not enought off-ice points"))
-                                                else
-                                                    offset = Altim.track_offset(getindex.(dhdx_dhdy[var_ind], 1), getindex.(dhdx_dhdy[var_ind], 2), altim.dh[var_ind]);
-                                                end
-                                            end
-                                        end
-                                    end;
+                                            fontsize = 18;
 
-                                    # use bin statistics to calculate dh vs. elevation for every 3 months.
+                                            title = "$mission: $(geotile.id)"
 
-                                    # identify valid dh data
-                                    # plot(Altim.decimalyear.(altim.datetime[valid]),altim.dh[valid]; label="all")
-
-                                    if curvature_correct
-                                        var_ind = (.!masks0[:, :landice]) .& valid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0) .& .!isnan.(altim.curvature) .& (abs.(altim.dh) .< 10) .& masks0.land .& ((canopy.canopyh .<= max_canopy_height) .| (altim.latitude .< -60))
-
-                                        if sum(var_ind) <= length(p_curvature)
-                                            warnings && (@warn ("$(geotile.id): no curvature corecction applied, not enought off-ice points"))
-                                        else
-                                            # check bounds: binstats will throw an error if no data is passed to median()
-                                            if Altim.vector_overlap(altim[var_ind, :curvature], curvature_range)
-                                                df = DataFrame();
-                                                try
-                                                    df = binstats(altim[var_ind, :], [:curvature], [curvature_range], :dh; col_function=[median], missing_bins=true);
-                                                catch e
-                                                    # having issues with edge cases
-                                                    println(" ##################### ERRORED ##########################")
-                                                    println(" ##################### $(mission): $(geotile.id) ########################")
-                                                    println(" ##################### ERRORED ##########################")
-                                                    rethrow(e)
-                                                end
-
-                                                if !isempty(df)
-                                                    bin_center = df.curvature;
-                                                    bin_valid = .!(ismissing.(df.dh_median))
-
-                                                    if (sum(bin_valid) <= length(p_curvature))
-                                                        warnings && (@warn ("$(geotile.id): no curvature corecction applied, not enought off-ice points"))
-                                                    else
-                                                        fit1 = curve_fit(model_curvature, bin_center[bin_valid], df.dh_median[bin_valid], df.nrow[bin_valid], p_curvature);
-                                                        #histogram(altim.dh[var_ind], bins= -5:.1:5; label ="raw", xlabel="height change [m]")
-                                                        altim.dh = altim.dh .- model_curvature(altim.curvature, fit1.param);
-                                                        #histogram!(altim.dh[var_ind], bins= -5:.1:5; label="curvature corrected")
-
-                                                        gt_ind = findfirst(geotile.id .== curvature_hyps[mission].id)
-                                                        cdh = @view curvature_hyps[mission].dh[gt_ind] 
-                                                        cdh[1][bin_valid] = df.dh_median[bin_valid];
-                                                        cnobs = @view curvature_hyps[mission][gt_ind, :nobs]
-                                                        cnobs[1][bin_valid] = df.nrow[bin_valid]
-                                                        curvature_hyps[mission][gt_ind, :model_coef] = fit1.param
+                                            title = replace.(title, "hugonnet" => "ASTER")
+                                            title = replace.(title, "icesat" => "ICESat")
+                                            title = replace.(title, "icesat2" => "ICESat-2")
+                                            title = replace.(title, "gedi" => "GEDI")
                                             
-                                                        if showplots
-                                                            dh_cor = model_curvature(bin_center, fit1.param);
-                                                            validX = .!ismissing.(df.dh_median)
-                                                            dh_medianX = collect(skipmissing(df.dh_median[validX]))
-                                                            p = CairoMakie.plot(bin_center[validX], dh_medianX);
+                                            f = Figure(backgroundcolor=RGBf(0.98, 0.98, 0.98), size=(1000, 700), fontsize=fontsize);
+                                            ga = f[1:4, 1] = GridLayout()
+                                            gb = f[5:6, 1] = GridLayout()
+                            
+                                            Label(ga[1, 1, Top()],
+                                                title, valign=:bottom,
+                                                font=:bold,
+                                                padding=(0, 0, 5, 0)
+                                            )
 
-                                                            fontsize = 18;
+                                            axmain = Axis(ga[1, 1]; ylabel="height anomaly [m]")
+                                            hidexdecorations!(axmain; grid=false, minorgrid=false)
+                                            axbottom = Axis(gb[1, 1], ylabel="count [×1000]", xlabel="curvature [cm⁻¹]", )
 
-                                                            title = "$mission: $(geotile.id)"
-
-                                                            title = replace.(title, "hugonnet" => "ASTER")
-                                                            title = replace.(title, "icesat" => "ICESat")
-                                                            title = replace.(title, "icesat2" => "ICESat-2")
-                                                            title = replace.(title, "gedi" => "GEDI")
-                                                            
-                                                            f = Figure(backgroundcolor=RGBf(0.98, 0.98, 0.98), size=(1000, 700), fontsize=fontsize);
-                                                            ga = f[1:4, 1] = GridLayout()
-                                                            gb = f[5:6, 1] = GridLayout()
                                             
-                                                            Label(ga[1, 1, Top()],
-                                                                title, valign=:bottom,
-                                                                font=:bold,
-                                                                padding=(0, 0, 5, 0)
-                                                            )
-
-                                                            axmain = Axis(ga[1, 1]; ylabel="height anomaly [m]")
-                                                            hidexdecorations!(axmain; grid=false, minorgrid=false)
-                                                            axbottom = Axis(gb[1, 1], ylabel="count [×1000]", xlabel="curvature [cm⁻¹]", )
-
-                                                            
-                                                            
-                                                            CairoMakie.plot!(axmain, bin_center[validX], dh_medianX; label = "observation");
-                                                            lines!(axmain, bin_center[validX], dh_cor[validX]; label = "model");
-                                                            CairoMakie.plot!(axmain, bin_center[validX], dh_medianX .- dh_cor[validX]; label = "corrected");
-                                                            barplot!(axbottom, bin_center[validX], df.nrow[validX] / 1000)
-                                                            axislegend(axmain, framevisible=false, position = :lt)
-                                                            
-                                                            fname = joinpath(fig_folder, "$(surface_mask)_$(mission)_$(geotile.id)_$(dem_id)_curvature.png")
-                                                            save(fname, f)
-                                                            display(f)
-                                                        end
-                                                    end
-                                                end
-                                            end
+                                            
+                                            CairoMakie.plot!(axmain, bin_center[validX], dh_medianX; label = "observation");
+                                            lines!(axmain, bin_center[validX], dh_cor[validX]; label = "model");
+                                            CairoMakie.plot!(axmain, bin_center[validX], dh_medianX .- dh_cor[validX]; label = "corrected");
+                                            barplot!(axbottom, bin_center[validX], df.nrow[validX] / 1000)
+                                            axislegend(axmain, framevisible=false, position = :lt)
+                                            
+                                            fname = joinpath(fig_folder, "$(param.surface_mask)_$(mission)_$(geotile.id)_$(param.dem_id)_curvature.png")
+                                            save(fname, f)
+                                            display(f)
                                         end
                                     end
-
-                                    #################################### FILTER 1 ######################################
-                                    var_ind = masks0[:, surface_mask] .& valid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0)
-                                    if sum(var_ind) < 100
-                                        continue
-                                    end
-
-                                    # for troubleshooting
-                                    showplots && CairoMakie.plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter,label="glacier")
-
-                                    var_ind[var_ind] = (abs.(altim.dh[var_ind] .- median(altim.dh[var_ind])) .< dh_max) .& (abs.(altim.dh[var_ind]) .< (dh_max*2))
-
-                                    if surface_mask == :land
-                                        var_ind = var_ind .& (canopy.canopyh .<= max_canopy_height)
-                                    end
-                                    
-                                    # for troubleshooting
-                                    showplots && CairoMakie.plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter, label="glacier-filt", ylims = (-300, +300))
-                                    
-                                    # this is a hack for including 2 folders that contain hugonnet data (filtered and unfiltered)
-                                    if product.apply_quality_filter || (Base.contains(binned_folder, "unfiltered") && (mission == "hugonnet"))
-                                        var_ind = var_ind .& altim.quality
-
-                                        # for troubleshooting 
-                                        showplots && CairoMakie.plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter, ylims = (-100, +100))
-                                    end
-                                    ####################################################################################
-
-                                    if !any(var_ind)
-                                        continue
-                                    end
-
-                                    decyear_range = Altim.decimalyear.(date_range)
-
-                                    altim[!, :decimalyear] = Altim.decimalyear.(altim.datetime)
-                                    
-                                    var0, nobs0 = Altim.geotile_bin2d(
-                                        altim[var_ind, :];
-                                        var2bin="dh",
-                                        dims_edges=("decimalyear" => decyear_range, "height_ref" => height_range),
-                                        binfunction=Altim.binningfun_define(binning_method))
-
-                                    if isnothing(var0)
-                                        continue
-                                    end
-
-                                    # for troubleshooting 
-                                    showplots && Plots.heatmap(var0, clim=(-10, 10))
-
-                                    try
-                                        dh_hyps[mission][At(geotile.id), :, :] = var0
-                                        nobs_hyps[mission][At(geotile.id), :, :] = nobs0
-                                    catch e
-                                        println((; binned_folderbinned_folder, surface_mask,binning_method,dem_id,curvature_correct, mission, geotile = geotile.id))
-                                        println("size var0 = $(size(var0))")
-                                        println("size nobs0 = $(size(nobs0))")
-                                        throw(e)
-                                    end
-
-                                    t2 = time()
-                                    dt = round(Int16, t2 - t1);
-                                    println("binned: $(mission) - $(geotile.id): $(dt)s")
                                 end
                             end
-                            save(binned_file, Dict("dh_hyps" => dh_hyps, "nobs_hyps" => nobs_hyps, "curvature_hyps" => curvature_hyps));
                         end
                     end
+
+                    #################################### FILTER 1 ######################################
+                    var_ind = masks0[:, param.surface_mask] .& valid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0)
+                    if sum(var_ind) < 100
+                        continue
+                    end
+
+                    # for troubleshooting
+                    showplots && CairoMakie.plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter,label="glacier")
+
+                    var_ind[var_ind] = (abs.(altim.dh[var_ind] .- median(altim.dh[var_ind])) .< dh_max) .& (abs.(altim.dh[var_ind]) .< (dh_max*2))
+
+                    if param.surface_mask == :land
+                        var_ind = var_ind .& (canopy.canopyh .<= max_canopy_height)
+                    end
+                    
+                    # for troubleshooting
+                    showplots && CairoMakie.plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter, label="glacier-filt", ylims = (-300, +300))
+                    
+                    # this is a hack for including 2 folders that contain hugonnet data (filtered and unfiltered)
+                    if product.apply_quality_filter || (Base.contains(param.binned_folder, "unfiltered") && (mission == "hugonnet"))
+                        var_ind = var_ind .& altim.quality
+
+                        # for troubleshooting 
+                        showplots && CairoMakie.plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter, ylims = (-100, +100))
+                    end
+                    ####################################################################################
+
+                    if !any(var_ind)
+                        continue
+                    end
+
+                    decyear_range = Altim.decimalyear.(date_range)
+
+                    altim[!, :decimalyear] = Altim.decimalyear.(altim.datetime)
+                    
+                    var0, nobs0 = Altim.geotile_bin2d(
+                        altim[var_ind, :];
+                        var2bin="dh",
+                        dims_edges=("decimalyear" => decyear_range, "height_ref" => height_range),
+                        binfunction=Altim.binningfun_define(param.binning_method))
+
+                    if isnothing(var0)
+                        continue
+                    end
+
+                    # for troubleshooting 
+                    showplots && Plots.heatmap(var0, clim=(-10, 10))
+
+                    try
+                        dh_hyps[mission][At(geotile.id), :, :] = var0
+                        nobs_hyps[mission][At(geotile.id), :, :] = nobs0
+                    catch e
+                        println((; param.binned_folder, param.surface_mask,param.binning_method,param.dem_id,param.curvature_correct, mission, geotile = geotile.id))
+                        println("size var0 = $(size(var0))")
+                        println("size nobs0 = $(size(nobs0))")
+                        throw(e)
+                    end
+
+                    t2 = time()
+                    dt = round(Int16, t2 - t1);
+                    println("binned: $(mission) - $(geotile.id): $(dt)s")
                 end
             end
+            save(binned_file, Dict("dh_hyps" => dh_hyps, "nobs_hyps" => nobs_hyps, "curvature_hyps" => curvature_hyps));
         end
     end
 end
 
+
 function geotile_binned_fill(;
     project_id=:v01,
     geotile_width=2,
-    force_remake=false,
+    force_remake_before=nothing,
     update_geotile=false, # this will load in prevous results to update select geotiles or missions
     update_geotile_missions=["icesat2"],
     plot_dh_as_function_of_time_and_elevation=true,
@@ -503,207 +505,289 @@ function geotile_binned_fill(;
     curvature_corrects=[true, false],
     paramater_sets=[1, 2],
     amplitude_corrects=[true, false],
-    showplots,
+    showplots=false,
+    show_times=false,
 )
 
     params = NamedTuple[]
     for binned_folder in binned_folders
-        for paramater_set in paramater_sets
-            for surface_mask in surface_masks
-                for dem_id in dem_ids
-                    for binning_method in binning_methods
-                        for curvature_correct in curvature_corrects
-                            for amplitude_correct = amplitude_corrects
-                                push!(params, (; project_id, binned_folder, paramater_set, surface_mask, dem_id, binning_method, curvature_correct, amplitude_correct))
-                            end
-                        end
+        for surface_mask in surface_masks
+            for dem_id in dem_ids
+                for binning_method in binning_methods
+                    for curvature_correct in curvature_corrects
+                        push!(params, (; project_id, binned_folder, surface_mask, dem_id, binning_method, curvature_correct))
                     end
                 end
             end
         end
     end
 
-    Threads.@threads for param in params
-        #param = first(params)
+    if any(mission_reference_for_amplitude_normalization .== update_geotile_missions) && any(amplitude_corrects)
+        error("can not update mission_reference_for_amplitude_normalization [$(mission_reference_for_amplitude_normalization)] without updating all other missions")
+    end
 
+    # load geotiles
+    geotiles0 = Dict()
+    for surface_mask in surface_masks
+        geotiles0[surface_mask] = Altim.geotiles_mask_hyps(surface_mask, geotile_width)
+
+        # make geotile rgi regions mutually exexclusive 
+        geotiles0[surface_mask], _ = Altim.geotiles_mutually_exclusive_rgi!(geotiles0[surface_mask])
+    end
+
+    # usings threads here cuases the memory usage to explode, Threads is implimented at
+    # lower level with reasonable performance
+    @showprogress desc = "Filling hypsometric elevation change data ..." for param in params
+        show_times ? t1 = time() : nothing
         fig_folder = joinpath(param.binned_folder, "figures")
         !isdir(fig_folder) && mkdir(fig_folder)
 
-        param_filling = Altim.binned_filling_parameters[param.paramater_set]
-
-        # load geotiles
-        geotiles = Altim.geotiles_mask_hyps(param.surface_mask, geotile_width)
-
-        # make geotile rgi regions mutually exexclusive 
-        geotiles, reg = Altim.geotiles_mutually_exclusive_rgi!(geotiles)
-
         # skip permutations if all_permutations_for_glacier_only = true
         if all_permutations_for_glacier_only
-            if all_permutations_for_glacier_only &&
-               ((!(param.surface_mask == :glacier) && Base.contains(param.binned_folder, "unfiltered")) &&
+            if ((!(param.surface_mask == :glacier) && Base.contains(param.binned_folder, "unfiltered")) &&
                 ((param.dem_id != :best) && (param.binning_method != "meanmadnorm3") && param.curvature_correct))
-
                 continue
             end
         end
 
-        # paths to files
         binned_file = Altim.binned_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct)
         binned_file_land = Altim.binned_filepath(; param.binned_folder, surface_mask=:land, param.dem_id, param.binning_method, project_id, param.curvature_correct)
-        binned_filled_file, figure_suffix = Altim.binned_filled_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct, param.amplitude_correct, param.paramater_set)
 
-        if (force_remake || !isfile(binned_filled_file)) && isfile(binned_file)
+        if !isfile(binned_file)
+            @warn "binned_file does not exist, skipping: $binned_file"
+            continue
+        end
 
-            ##################################### HACK FOR UPDATE #####################################
-            if isfile(binned_filled_file)
-                if Dates.unix2datetime(mtime(binned_file)) > Date(2025, 2, 26)
-                    @warn "Skipping $(binned_filled_file) because it was created after 2025-03-28"
-                    continue
+
+        # skip block of files if all have been created after force_remake_before
+        skip = falses(length(paramater_sets)*length(amplitude_corrects))
+        i = 1
+        for paramater_set in paramater_sets
+             for amplitude_correct = amplitude_corrects
+
+                # paths to files
+                binned_filled_file, figure_suffix = Altim.binned_filled_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct, amplitude_correct, paramater_set)
+
+                if isfile(binned_filled_file) && !isnothing(force_remake_before)
+                    if Dates.unix2datetime(mtime(binned_file)) > force_remake_before
+                        #try
+                            #foo = FileIO.load(binned_filled_file)
+                            @warn "Skipping $(binned_filled_file) because it was created after $force_remake_before"
+                            skip[i] = true
+                        #catch e
+                        #    printstyled("!!! removing $(binned_filled_file) because it is corrupted, then recomupting !!!\n", color=:red)
+                        #    rm(binned_filled_file)
+                        #end
+                    end
                 end
-            end
+                i += 1
+             end
+        end
 
-            println("filling binned data: surface_mask = $(param.surface_mask); binning_method = $(param.binning_method); dem_id = $(param.dem_id); curvature_correct = $(param.curvature_correct); amplitude_correct = $(param.amplitude_correct)")
+        if all(skip)
+            continue
+        end
 
-            dh1 = FileIO.load(binned_file, "dh_hyps")
+        # load binned data that is the same for all paramater sets
+        dh11 = FileIO.load(binned_file, "dh_hyps")
 
-            if .!any(.!isnan.(dh1["hugonnet"]))
-                println("NOT DATA: $binned_file")
-                continue
-            end
+        show_times ? t2 = time() : nothing
+        show_times && printstyled("dh_hyps loaded: $(round(Int16, t2 - t1))s\n", color=:green)
 
-            if update_geotile
-                old_keys = setdiff(keys(dh1), update_geotile_missions)
-                for k in old_keys
-                    delete!(dh1, k)
-                end
-            end
+        if .!any(.!isnan.(dh11["hugonnet"]))
+            println("NOT DATA: $binned_file")
+            continue
+        end
 
-            nobs1 = FileIO.load(binned_file, "nobs_hyps")
+        nobs11 = FileIO.load(binned_file, "nobs_hyps")
 
-            # align geotile dataframe with DimArrays
-            gt = collect(dims(dh1[first(keys(dh1))], :geotile))
-            gt_ind = [findfirst(geotiles.id .== g0) for g0 in gt]
-            geotiles = geotiles[gt_ind, :]
+        show_times ? t3 = time() : nothing
+        show_times && printstyled("nobs_hyps loaded: $(round(Int16, t3 - t2))s\n", color=:green)
 
-            # create a data frame to store model parameters
-            # initialize dimensional arrays
-            params_fill = Dict()
-            for mission in keys(dh1)
-                n = length(dims(dh1[mission], :geotile))
-                push!(params_fill, mission => DataFrame(geotile=val(dims(dh1[mission], :geotile)), nobs_raw=zeros(n), nbins_raw=zeros(n), nobs_final=zeros(n), nbins_filt1=zeros(n), param_m1=[fill(NaN, size(Altim.p1)) for i in 1:n], h0=fill(NaN, n), t0=fill(NaN, n), dh0=fill(NaN, n), bin_std=fill(NaN, n), bin_anom_std=fill(NaN, n)))
-            end
+        Threads.@threads for paramater_set in paramater_sets
+             for amplitude_correct = amplitude_corrects
 
-            if plot_dh_as_function_of_time_and_elevation
-                dh_time_elevation_idx = findfirst(geotiles.id .== "lat[+28+30]lon[+082+084]")
-                Altim.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="raw", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
-            end
+                show_times ? t4 = time() : nothing
+                
 
-            # I think that the model fitting can have a large influence on how off ice dh is treated. When lots of off ice area is included (e.g. param.surface_mask == glacier_b1km of glacier_b10km) there can be a very sharp transition at lower elevations from high rates to low rates of elevation change. 
-            if param_filling.adjust2land && any(keys(dh1) .== "huggonet")
-                dh_land = FileIO.load(binned_file_land, "dh_hyps")
-                nobs_land = FileIO.load(binned_file_land, "nobs_hyps")
+                dh1 = deepcopy(dh11)
+                nobs1 = deepcopy(nobs11)
 
-                dh1["hugonnet"] = Altim.geotile_adjust!(
-                    dh1["hugonnet"],
-                    dh_land["hugonnet"],
-                    nobs_land["hugonnet"],
-                    dh_land["icesat2"];
-                    ref_madnorm_max=10,
-                    minnobs=45,
-                    ref_minvalid=12,
-                )
-            end
+                show_times ? t5 = time() : nothing
+                show_times && printstyled("deepcopy of dh1 and nobs1: $(round(Int16, t5 - t4))s\n", color=:green)
 
-            Altim.hyps_model_fill!(dh1, nobs1, params_fill; bincount_min=param_filling.bincount_min,
-                model1_madnorm_max=param_filling.model1_madnorm_max, smooth_n=param_filling.smooth_n,
-                smooth_h2t_length_scale=param_filling.smooth_h2t_length_scale)
+                param_filling = Altim.binned_filling_parameters[paramater_set]
 
-            variogram_range_ratio = false
+                # paths to files
 
-            # make plot of the height to time variogram range ratio
-            if variogram_range_ratio
-                range_ratio = Altim.hyps_model_fill!(dh1, nobs1, params_fill; bincount_min=param_filling.bincount_min,
-                    model1_madnorm_max=param_filling.model1_madnorm_max, smooth_n=param_filling.smooth_n,
-                    smooth_h2t_length_scale=param_filling.smooth_h2t_length_scale, variogram_range_ratio)
+                binned_filled_file, figure_suffix = Altim.binned_filled_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct, amplitude_correct, paramater_set)
 
-                fontsize = 18
-                f = Figure(backgroundcolor=RGBf(0.98, 0.98, 0.98), size=(700, 700), fontsize=fontsize)
+                if !isnothing(force_remake_before) || !isfile(binned_filled_file)
 
-                for (i, mission) in enumerate(keys(dh1))
-                    valid = .!isnan.(range_ratio[mission])
-                    title = replace.(mission, "hugonnet" => "aster")
-
-                    title = "$title  mean = $(round(Int, mean(range_ratio[mission][valid])))"
-                    Axis(f[i, 1], title=title)
-                    CairoMakie.hist!(collect(range_ratio[mission][valid]); title=mission, bins=0:250:3000)
-                end
-
-                fname = joinpath(fig_folder, "$(figure_suffix)_variogram_range_ratio.png")
-                save(fname, f)
-                display(f)
-            end
-
-            # filter and fit model to geotiles [4 min for for all glacierized geotiles and 4 missions]
-            if plot_dh_as_function_of_time_and_elevation
-                Altim.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled", fig_folder, figure_suffix, mask=param.surface_mask)
-            end
-
-            # apply seasonal amplitude normalization
-            if param.amplitude_correct
-
-                # check if reference mission is present, if not, add
-                ref_added = false
-                if update_geotile && !any(keys(dh1) .== mission_reference_for_amplitude_normalization)
-                    ref_added = true
-                    (dh_hyps, model_param) = FileIO.load(binned_filled_file, ("dh_hyps", "model_param"))
-
-                    for k in setdiff(keys(dh_hyps), [mission_reference_for_amplitude_normalization])
-                        delete!(dh_hyps, k)
-                        delete!(model_param, k)
+                    if isfile(binned_filled_file) && !isnothing(force_remake_before)
+                        if Dates.unix2datetime(mtime(binned_file)) > force_remake_before
+                            continue
+                        end
                     end
 
-                    dh1 = merge(dh1, dh_hyps)
-                    params_fill = merge(params_fill, model_param)
+                    println("\n filling binned data: surface_mask = $(param.surface_mask); binning_method = $(param.binning_method); dem_id = $(param.dem_id); curvature_correct = $(param.curvature_correct); amplitude_correct = $(amplitude_correct)")
+
+                    if update_geotile && isfile(binned_filled_file)
+                        old_keys = setdiff(keys(dh1), update_geotile_missions)
+                        for k in old_keys
+                            delete!(dh1, k)
+                        end
+                    end
+
+                    # align geotile dataframe with DimArrays
+                    geotiles = deepcopy(geotiles0[param.surface_mask])
+                    gt = collect(dims(dh1[first(keys(dh1))], :geotile))
+                    gt_ind = [findfirst(geotiles.id .== g0) for g0 in gt]
+                    geotiles = geotiles[gt_ind, :]
+
+                    show_times ? t6 = time() : nothing
+                    show_times && printstyled("geotiles copied and aligned: $(round(Int16, t6 - t5))s\n", color=:green)
+
+                    # create a data frame to store model parameters
+                    # initialize dimensional arrays
+                    params_fill = Dict()
+                    for mission in keys(dh1)
+                        n = length(dims(dh1[mission], :geotile))
+                        params_fill[mission] = DataFrame(geotile=val(dims(dh1[mission], :geotile)), nobs_raw=zeros(n), nbins_raw=zeros(n), nobs_final=zeros(n), nbins_filt1=zeros(n), param_m1=[fill(NaN, size(Altim.p1)) for i in 1:n], h0=fill(NaN, n), t0=fill(NaN, n), dh0=fill(NaN, n), bin_std=fill(NaN, n), bin_anom_std=fill(NaN, n))
+                    end
+
+                    show_times ? t7 = time() : nothing
+                    show_times && printstyled("params_fill initialized: $(round(Int16, t7 - t6))s\n", color=:green)
+
+                    if plot_dh_as_function_of_time_and_elevation
+                        dh_time_elevation_idx = findfirst(geotiles.id .== "lat[+28+30]lon[+082+084]")
+                        Altim.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="raw", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
+                    end
+
+                    # I think that the model fitting can have a large influence on how off ice dh is treated. When lots of off ice area is included (e.g. param.surface_mask == glacier_b1km of glacier_b10km) there can be a very sharp transition at lower elevations from high rates to low rates of elevation change. 
+                    if param_filling.adjust2land && any(keys(dh1) .== "huggonet")
+
+                        dh_land = FileIO.load(binned_file_land, "dh_hyps")
+                        nobs_land = FileIO.load(binned_file_land, "nobs_hyps")
+
+                        dh1["hugonnet"] = Altim.geotile_adjust!(
+                            dh1["hugonnet"],
+                            dh_land["hugonnet"],
+                            nobs_land["hugonnet"],
+                            dh_land["icesat2"];
+                            ref_madnorm_max=10,
+                            minnobs=45,
+                            ref_minvalid=12,
+                        )
+                    end
+
+                    Altim.hyps_model_fill!(dh1, nobs1, params_fill; bincount_min=param_filling.bincount_min,
+                        model1_madnorm_max=param_filling.model1_madnorm_max, smooth_n=param_filling.smooth_n,
+                        smooth_h2t_length_scale=param_filling.smooth_h2t_length_scale, show_times = false)
+
+                    show_times ? t8 = time() : nothing
+                    show_times && printstyled("model_fill: $(round(Int16, t8 - t7))s\n", color=:green)
+
+                    variogram_range_ratio = false
+
+                    # make plot of the height to time variogram range ratio
+                    if variogram_range_ratio
+                        range_ratio = Altim.hyps_model_fill!(dh1, nobs1, params_fill; bincount_min=param_filling.bincount_min,
+                            model1_madnorm_max=param_filling.model1_madnorm_max, smooth_n=param_filling.smooth_n,
+                            smooth_h2t_length_scale=param_filling.smooth_h2t_length_scale, variogram_range_ratio)
+
+                        fontsize = 18
+                        f = Figure(backgroundcolor=RGBf(0.98, 0.98, 0.98), size=(700, 700), fontsize=fontsize)
+
+                        for (i, mission) in enumerate(keys(dh1))
+                            valid = .!isnan.(range_ratio[mission])
+                            title = replace.(mission, "hugonnet" => "aster")
+
+                            title = "$title  mean = $(round(Int, mean(range_ratio[mission][valid])))"
+                            Axis(f[i, 1], title=title)
+                            CairoMakie.hist!(collect(range_ratio[mission][valid]); title=mission, bins=0:250:3000)
+                        end
+
+                        fname = joinpath(fig_folder, "$(figure_suffix)_variogram_range_ratio.png")
+                        save(fname, f)
+                        display(f)
+                    end
+
+                    # filter and fit model to geotiles [4 min for for all glacierized geotiles and 4 missions]
+                    if plot_dh_as_function_of_time_and_elevation
+                        Altim.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled", fig_folder, figure_suffix, mask=param.surface_mask)
+                    end
+
+                    # apply seasonal amplitude normalization
+                    if amplitude_correct
+
+                        # check if reference mission is present, if not, add
+                        ref_added = false
+                        if update_geotile && (!any(keys(dh1) .== mission_reference_for_amplitude_normalization)) && isfile(binned_filled_file)
+                            ref_added = true
+                            (dh_hyps, model_param) = FileIO.load(binned_filled_file, ("dh_hyps", "model_param"))
+
+                            for k in setdiff(keys(dh_hyps), [mission_reference_for_amplitude_normalization])
+                                delete!(dh_hyps, k)
+                                delete!(model_param, k)
+                            end
+
+                            dh1 = merge(dh1, dh_hyps)
+                            params_fill = merge(params_fill, model_param)
+                        end
+
+                        Altim.hyps_amplitude_normalize!(dh1, params_fill; mission_reference=mission_reference_for_amplitude_normalization)
+
+                        # remove mission_reference_for_amplitude_normalization if it was added.
+                        if ref_added
+                            delete!(dh1, mission_reference_for_amplitude_normalization)
+                            delete!(params_fill, mission_reference_for_amplitude_normalization)
+                        end
+                    end
+
+                    show_times ? t9 = time() : nothing
+                    show_times && printstyled("amplitude_normalize: $(round(Int16, t9 - t8))s\n", color=:green)
+
+                    if plot_dh_as_function_of_time_and_elevation
+                        Altim.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled_ampnorm", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
+                    end
+
+                    dh1 = Altim.hyps_fill_empty!(dh1, params_fill, geotiles; mask=param.surface_mask)
+
+                    show_times ? t10 = time() : nothing
+                    show_times && printstyled("hyps_fill_empty: $(round(Int16, t10 - t9))s\n", color=:green)
+
+                    dh1 = Altim.hyps_fill_updown!(dh1, geotiles; mask=param.surface_mask)
+
+                    show_times ? t11 = time() : nothing
+                    show_times && printstyled("hyps_fill_updown: $(round(Int16, t11 - t10))s\n", color=:green)
+
+                    if plot_dh_as_function_of_time_and_elevation
+                        Altim.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled_updown", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
+                    end
+
+                    if update_geotile && isfile(binned_filled_file)
+                        (dh_hyps, nobs_hyps, model_param) = FileIO.load(binned_filled_file, ("dh_hyps", "nobs_hyps", "model_param"))
+
+
+                        for k in update_geotile_missions
+                            delete!(dh_hyps, k)
+                            delete!(nobs_hyps, k)
+                            delete!(model_param, k)
+                        end
+
+                        dh1 = merge(dh1, dh_hyps)
+                        nobs1 = merge(nobs1, nobs_hyps)
+                        params_fill = merge(params_fill, model_param)
+                    end
+
+                    # save filled geotiles
+                    save(binned_filled_file, Dict("dh_hyps" => dh1, "nobs_hyps" => nobs1, "model_param" => params_fill))
+                    
+                    show_times ? t12 = time() : nothing
+                    show_times && printstyled("saving binned_filled_file: $(round(Int16, t12 - t11))s\n", color=:green)
                 end
-
-                Altim.hyps_amplitude_normalize!(dh1, params_fill; mission_reference=mission_reference_for_amplitude_normalization)
-
-                # remove mission_reference_for_amplitude_normalization if it was added.
-                if ref_added
-                    delete!(dh1, mission_reference_for_amplitude_normalization)
-                    delete!(params_fill, mission_reference_for_amplitude_normalization)
-                end
             end
-
-            if plot_dh_as_function_of_time_and_elevation
-                Altim.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled_ampnorm", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
-            end
-
-            dh1 = Altim.hyps_fill_empty!(dh1, params_fill, geotiles; mask=param.surface_mask)
-
-            dh1 = Altim.hyps_fill_updown!(dh1, geotiles; mask=param.surface_mask)
-
-            if plot_dh_as_function_of_time_and_elevation
-                Altim.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled_updown", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
-            end
-
-            if update_geotile
-                (dh_hyps, nobs_hyps, model_param) = FileIO.load(binned_filled_file, ("dh_hyps", "nobs_hyps", "model_param"))
-
-
-                for k in update_geotile_missions
-                    delete!(dh_hyps, k)
-                    delete!(nobs_hyps, k)
-                    delete!(model_param, k)
-                end
-
-                dh1 = merge(dh1, dh_hyps)
-                nobs1 = merge(nobs1, nobs_hyps)
-                params_fill = merge(params_fill, model_param)
-            end
-
-            # save filled geotiles
-            save(binned_filled_file, Dict("dh_hyps" => dh1, "nobs_hyps" => nobs1, "model_param" => params_fill))
         end
     end
 end
@@ -1936,7 +2020,6 @@ function geotile_dvdm_areaaverage(df_dmass)
 end
 
 
-
 # adjust dh estimates according to anomalies measured over land and seasonality from a referecne mission. 
 function geotile_adjust!(
     dh,
@@ -2148,7 +2231,7 @@ function geotile_align_replace(;
     regions2replace_with_model = ["rgi19"],
     mission_replace_with_model = "hugonnet",
     showplots=false,
-    force_remake=false,
+    force_remake_before=nothing,
 )
 
     # compute regional volume change, firn correction and mass change
@@ -2169,14 +2252,22 @@ function geotile_align_replace(;
         end
     end
 
-    for param in params
+    @showprogress dt = 1 desc = "Aligning geotile data with $(mission_ref1) and $(mission_ref2)..." for param in params
     #param = first(params)
 
         # paths to files
         binned_filled_file, figure_suffix = Altim.binned_filled_filepath(; param...)
         binned_aligned_file = replace(binned_filled_file, ".jld2" => "_aligned.jld2")
 
-        if isfile(binned_filled_file) && ((!isfile(binned_aligned_file)) || force_remake)
+        if isfile(binned_filled_file) && ((!isfile(binned_aligned_file)) || !isnothing(force_remake_before))
+
+            if isfile(binned_aligned_file) && !isnothing(force_remake_before)
+                if Dates.unix2datetime(mtime(binned_aligned_file)) > force_remake_before
+                    @warn "Skipping $(binned_aligned_file) because it was created after $force_remake_before"
+                    continue
+                end
+            end
+            
             t1 = time()
 
             dh = FileIO.load(binned_filled_file, "dh_hyps")
@@ -2205,7 +2296,10 @@ function geotile_align_replace(;
             dh = Altim.replace_with_model!(dh, nobs_hyps, geotiles2replace.id; mission_replace=mission_replace_with_model, mission_ref1, mission_ref2)
 
             save(binned_aligned_file, Dict("dh_hyps" =>
-                    dh, "nobs_hyps" => nobs_hyps, "model_param" => model_param, "offset" => offset, "trend" => trend))
+                    dh, "nobs_hyps" => nobs_hyps, "model_param" => model_param))
+
+            #save(binned_aligned_file, Dict("dh_hyps" =>
+            #        dh, "nobs_hyps" => nobs_hyps, "model_param" => model_param, "offset" => offset, "trend" => trend))
             
             println("$binned_aligned_file aligned and replaced: $(round(Int,time() -t1))s")
         end
@@ -2373,7 +2467,7 @@ function perglacier_geotile2glacier(geotile_perglacier;  tsvars = ["dh", "smb", 
         colmetadata!(glaciers, tsvar, "date", collect(dims(geotile_perglacier[1, tsvar], :date)), style=:note)
     end
 
-    @showprogress dt = 1 desc = "Per-glacier-geotile to per-glacier..." Threads.@threads :greedy for g in eachrow(glaciers)
+    Threads.@threads :greedy for g in eachrow(glaciers)
         #g = first(eachrow(glaciers))
         index = g.RGIId .== geotile_perglacier.RGIId
         if any(index)

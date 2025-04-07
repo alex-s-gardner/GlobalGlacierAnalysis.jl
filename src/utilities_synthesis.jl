@@ -3,7 +3,8 @@
         path2runs,
         outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
         minimum_error=0.05,
-        force_remake=false
+        force_remake_before=nothing,
+        update_geotile_missions = nothing
     )
 
 Calculate synthesis error metrics across multiple model runs for different satellite missions.
@@ -12,7 +13,7 @@ Calculate synthesis error metrics across multiple model runs for different satel
 - `path2runs`: Vector of paths to input data files
 - `outfile`: Path where the error metrics will be saved (default: "/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2")
 - `minimum_error`: Minimum allowable error value (default: 0.05)
-- `force_remake`: Boolean to force recalculation even if output file exists (default: false)
+- `force_remake_before`: Recompute synthesis error if output file exists and was created before this date (default: nothing)
 
 # Processing Steps
 1. Loads elevation change data from all input files
@@ -37,12 +38,20 @@ function geotile_synthesis_error(;
     path2runs,
     outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
     minimum_error=0.05,
-    force_remake=false
+    force_remake_before=nothing,
+    update_geotile_missions = nothing
 )
 
     #outfile = "/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2"
 
-    if !isfile(outfile) || force_remake
+    if !isfile(outfile) || !isnothing(force_remake_before)
+
+        if isfile(outfile) && !isnothing(force_remake_before)
+            if Dates.unix2datetime(mtime(outfile)) > force_remake_before
+                @warn "Skipping $(outfile) because it was created after $force_remake_before"
+                return outfile
+            end
+        end
 
         #load example file to get dimension and mission info
         dh = FileIO.load(path2runs[1], "dh_hyps")
@@ -53,12 +62,22 @@ function geotile_synthesis_error(;
         dgeotile = dims(dh[missions[1]], :geotile)
         dfile = Dim{:file}(path2runs)
 
+        if isfile(outfile) && !isnothing(update_geotile_missions) && issetequal(path2runs, load(outfile, "files_included"))
+            update_selected_missions = true
+            missions = update_geotile_missions
+            @warn "Updating selected missions in geotile_synthesis_error: $(update_geotile_missions)"
+        else
+            update_selected_missions = false
+            @warn "Updating all missions in geotile_synthesis_error as input file list does not match exisiting: $(outfile)"
+        end
+
+        # THIS SHOULD BE LOOPED FOR EACH MISSION AS READING THE FILES IS THE SLOWEST PART [90% of time] as memory is an issue
         dh_all = Dict()
         for mission in missions
             dh_all[mission] = fill(NaN, (dfile, dgeotile, ddate, dheight))
         end
 
-        # this takes about 8 min for length(files) = 96
+        # this takes about 8 min for length(files) = 96 # this blows up memory usage
         Threads.@threads for filepath in path2runs
             dh = FileIO.load(filepath, "dh_hyps")
             for mission in missions
@@ -68,14 +87,19 @@ function geotile_synthesis_error(;
 
         # calculate standard deviation across runs as an error metric
         dh_all_std = Dict()
-        for mission in missions
-            dh_all_std[mission] = fill(NaN, (dgeotile, ddate, dheight))
+        if update_selected_missions
+            dh_all_std = load(outfile, "dh_hyps_error")
+        else
+            dh_all_std = Dict()
+            for mission in missions
+                dh_all_std[mission] = fill(NaN, (dgeotile, ddate, dheight))
+            end
         end
-
+        
         for mission in missions
             #mission = "gedi"
 
-            Threads.@threads for geotile in dgeotile
+            @showprogress dt = 1 desc = "Calculating standard deviation (error) across runs for $(mission) ..." Threads.@threads for geotile in dgeotile
                 #geotile = dgeotile[510]
 
                 # !!! I THINK THIS IS FIXED NOW !!!!
@@ -119,7 +143,7 @@ end
         path2geotile_synthesis_error,
         missions2include=["hugonnet", "gedi", "icesat", "icesat2"],
         showplots=false,
-        force_remake=false
+        force_remake_before=nothing
     )
 
 Synthesize elevation change data from multiple satellite missions into a single dataset.
@@ -129,7 +153,7 @@ Synthesize elevation change data from multiple satellite missions into a single 
 - `path2geotile_synthesis_error`: Path to file containing error estimates for each mission
 - `missions2include`: Vector of mission names to include in synthesis (default: ["hugonnet", "gedi", "icesat", "icesat2"])
 - `showplots`: Boolean to control plotting of intermediate results (default: false)
-- `force_remake`: Boolean to force recalculation even if output file exists (default: false)
+- `force_remake_before`: Recompute synthesis if output file exists and was created before this date (default: nothing)
 
 # Processing Steps
 1. Loads error estimates and converts them to weights (1/error²)
@@ -156,7 +180,7 @@ function geotile_synthesize_runs(;
     path2geotile_synthesis_error,
     missions2include=["hugonnet", "gedi", "icesat", "icesat2"],
     showplots=false,
-    force_remake=false
+    force_remake_before=nothing
 )
 
     dh_err = load(path2geotile_synthesis_error, "dh_hyps_error")
@@ -180,7 +204,7 @@ function geotile_synthesize_runs(;
         w[mission][isnan.(w[mission])] .= 0
     end
 
-    Threads.@threads for binned_aligned_file in path2runs
+    @showprogress dt = 1 desc = "Synthesizing runs ..." Threads.@threads for binned_aligned_file in path2runs
         #binned_aligned_file = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_b1km_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_aligned.jld2"    
 
         if showplots
@@ -196,7 +220,15 @@ function geotile_synthesize_runs(;
 
         binned_synthesized_file = replace(binned_aligned_file, "aligned.jld2" => "synthesized.jld2")
 
-        if !(isfile(binned_synthesized_file)) || force_remake
+        if !(isfile(binned_synthesized_file)) || !isnothing(force_remake_before)
+
+             if isfile(binned_synthesized_file) && !isnothing(force_remake_before)
+                if Dates.unix2datetime(mtime(binned_synthesized_file)) > force_remake_before
+                    @warn "Skipping $(binned_synthesized_file) because it was created after $force_remake_before"
+                    continue
+                end
+            end
+
             t1 = time()
             dh = FileIO.load(binned_aligned_file, "dh_hyps")
 

@@ -1,4 +1,4 @@
-## NOTE: raw REMB output is in unit of m ice equivalent assuing an ice density of 910 kg/m3
+## NOTE: raw GREMB output is in unit of m ice equivalent assuing an ice density of 910 kg/m3
 
 # This script processes GEMB (Glacier Energy Mass Balance) model data into geotiles and regions.
 # Key processing steps:
@@ -72,6 +72,7 @@
         using DataInterpolations
         using ProgressMeter
         using Loess
+        using NaNStatistics
 
         # run parameters 
         force_remake = true; # set force_remake == true to redo all steps from scratch 
@@ -123,7 +124,8 @@
 
         filename_gemb_geotile = replace(filename_gemb_combined, ".jld2" => "_geotile.jld2")
         filename_gemb_geotile_filled_dv = replace(filename_gemb_geotile, ".jld2" => "_filled_dv.jld2")
-        filename_gemb_geotile_filled_dv_reg = replace(filename_gemb_geotile, ".jld2" => "_filled_dv_reg.jld2")
+        filename_gemb_geotile_filled_extra_dv = replace(filename_gemb_geotile, ".jld2" => "_filled_extra_dv.jld2")
+        filename_gemb_geotile_filled_extra_extrap_dv = replace(filename_gemb_geotile, ".jld2" => "_filled_extra_extrap_dv.jld2")
 
         # funtion used for binning data
         if binning_method == "meanmadnorm3"
@@ -675,10 +677,24 @@
         save(filename_gemb_geotile_filled_dv, gemb_dv)
     end
 
-#end
+   # Try creating new `pscale` classes
+   """
+   Add new precipitation scale classes to GEMB data and calculate volume changes.
+   
+   This function:
+   1. Creates finer precipitation scale classes (0.25 to 4.0 in 0.25 increments)
+   2. Loads filled GEMB data for each geotile
+   3. Converts cumulative variables to rates for interpolation
+   4. Interpolates data to create new precipitation scale classes
+   5. Applies physical constraints to ensure realistic values
+   6. Converts rates back to cumulative variables
+   7. Calculates volume changes by multiplying with glacier area
+   8. Saves results to disk
+   
+   Takes approximately 4 hours to run using 48 threads.
+   """
+   if !isfile(filename_gemb_geotile_filled_extra_dv) || force_remake
 
-    # Try creating new `pscale` classes
-   begin
         printstyled("!!!!! ADDING PSCALE CLASSES, THIS WILL TAKE ~4 HRS using 48 threads !!!!!\n", color=:red)
             
         dpscale_new = Dim{:pscale}(0.25:0.25:4.0)
@@ -697,12 +713,6 @@
         for k in keys(gembX)
             gemb_dv[k] = fill(NaN, (dgeotile, ddate, dpscale_new, dΔheight))
         end 
-
-        filename_gemb_geotile_filled_extra_dv = replace(filename_gemb_geotile, ".jld2" => "_filled_extra_dv.jld2")
-        
-        #index = Altim.within.(Ref(Altim.Extent(X=(-154,-131), Y=(57, 64))), mean.(getindex.(geotiles.extent,1)), mean.(getindex.(geotiles.extent,2)))
-        #geotiles = geotiles[index, :]
-        
 
         # Threads.@threads is being used lower down... 
         @showprogress desc = "Adding pscale classes [expect 4 on 48 threads]..."  for geotile in geotiles.id
@@ -775,4 +785,66 @@
 
         save(filename_gemb_geotile_filled_extra_dv, gemb_dv)
     end
+
+    """
+    Extrapolate GEMB data for future time periods using monthly climatology.
+    
+    This function:
+    1. Loads previously processed GEMB volume change data
+    2. Calculates monthly differences between time steps
+    3. Computes a monthly climatology (average differences by month)
+    4. Identifies the last valid date in the time series
+    5. Fills future periods by applying the monthly climatology
+    6. Ensures continuity by adding the last valid value to cumulative sums
+    7. Saves the extrapolated data to a new file
+    
+    Takes approximately 10 min to run.
+    """
+    @time if !isfile(filename_gemb_geotile_filled_extra_extrap_dv) || force_remake
+        # repeat mean climatology for later years
+        gemb_dv = load(filename_gemb_geotile_filled_extra_dv)
+
+        for k in keys(gemb_dv)
+            #k = first(keys(gemb_dv))
+            v = gemb_dv[k]
+
+            # take the difference between between time steps
+            v_diff = diff(v; dims=:date)
+
+            (dgeotile, ddate, dpscale, dΔheight) = DimensionalData.dims(v)
+        
+            # `diff` shifts time to the left ... instead we want to shift time to the right
+            v_diff = DimArray(parent(v_diff), (dgeotile, ddate[2:end], dpscale, dΔheight))
+
+            # calculate climatology for each month
+            v_diff_monthly = groupby(v_diff, :date => month)
+            v_diff_mean = cat([nanmean(M; dims=dimnum(M, :date)) for M in v_diff_monthly]...; dims = 2)
+            dmonth = Dim{:month}(val(dims(v_diff_monthly, :date)))
+            v_diff_mean = DimArray(v_diff_mean, (dgeotile, dmonth, dpscale, dΔheight))
+
+            gemb_last_valid_date = ddate[findlast(.!isnan.(v_diff[1,:,1,1]))];
+            #fill_index = isnan.(v_diff)
+            #fill_index[:,findall(ddate .< gemb_last_valid_date),:,:] .= false
+
+            v_fill = v_diff_mean[:, At(month.(ddate)), :, :]
+            v_fill = DimArray(parent(v_fill), (dgeotile, ddate, dpscale, dΔheight))
+
+            #v_diff[fill_index] = v_fill[fill_index]
+
+            v_diff = cumsum(v_fill[:,DimensionalData.Between(gemb_last_valid_date,last(ddate)),:,:]; dims =:date)
+
+            for d in dims(v_diff, :date)
+                v_diff[:, At(d),:,:] .+= parent(v[:,At(gemb_last_valid_date),:,:])
+            end
+            
+            v[:,DimensionalData.Between(gemb_last_valid_date,last(ddate)),:,:] = v_diff
+                
+            # sanity check
+            # plot(v[100,:,1,1])
+            #plot(gemb_dv[k][100,:,1,1])
+        end
+        
+        save(filename_gemb_geotile_filled_extra_extrap_dv, gemb_dv)
+    end
+
 end

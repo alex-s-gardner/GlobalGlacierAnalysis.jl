@@ -1,6 +1,15 @@
-# consider running `geotile_remove_files.jl` to clear files from folder... if there is an 
+#----------------------------------------------------------------------------------------
+# MOST SCRIPTS LOOK FOR CORRESPONDING FILES AND WILL SKIP CREATION IF THEY ALREADY EXIST
+# IT IS VERY FAST TO CHECK THE NUMBER OF ROWS IN THE FILES TO SEE IF THEY MATCH
+# IF THEY DO NOT MATCH, IT WILL DELETE THE INCONSISTENT FILES SUCH THAT WHEN SUBSIQUENT 
+# SCRIPTS ARE RUN, THE FILES WILL BE RECREATED... THIS IS WORKFLOW ENSURES THAT IF A JOB FAILS 
+# IT CAN BE RESTARTED WHERE IT LEFT OFF
+#
+# consider running `geotile_remove_files.jl` to clear files from folders... if there is an 
 # error this will allow you to restart processing where you left off, unlike 
 # force_remake = true
+#
+#----------------------------------------------------------------------------------------
 
 
 # geotile_build_archive.jl processes altimetry data from ICESat, ICESat-2, and GEDI missions into geotiles.
@@ -23,7 +32,7 @@
 # - GEDI: ~4 days
 # - ICESat-2: ~1 week  
 # - ICESat: ~3 hours
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_build_archive.jl")
+include("geotile_build_archive.jl")
 
 
 # geotile_build_hugonnet.jl processes Hugonnet glacier elevation change data into geotiles
@@ -44,8 +53,18 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_build_archive.jl")
 #    - Iterate through each geotile
 #    - Process Hugonnet data into geotile format
 #    - Save geotiles to output directory
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_build_hugonnet.jl")
+include("geotile_build_hugonnet.jl")
 
+# geotile_ancillary_check.jl verifies consistency between altimetry and ancillary files:
+# Purpose:
+# - Checks that all altimetry, mask, and DEM files exist and have matching lengths
+# - Automatically deletes inconsistent ancillary files
+#
+# Processing:
+# 1. Checks files for multiple missions (ICESat-2, ICESat, GEDI, Hugonnet)
+# 2. Verifies that ancillary files (masks, DEMs, canopy height) have same row count as altimetry
+# 3. Removes [deletes] any inconsistent files to prevent errors in downstream processing
+include("geotile_ancillary_check.jl")
 
 # geotile_dem_extract.jl extracts elevation data and derivatives from global DEMs:
 #
@@ -60,7 +79,7 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_build_hugonnet.jl"
 # 3. Extracts DEM data for each geotile using Altim.geotile_extract_dem()
 #    - Includes elevation, slope and curvature
 #    - Only processes if force_remake=true or output doesn't exist
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_dem_extract.jl")
+include("geotile_dem_extract.jl")
 
 # geotile_mask_extract.jl extracts surface type masks for geotiles:
 #
@@ -76,7 +95,7 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_dem_extract.jl")
 # 3. For each product:
 #    - Extracts mask data using geotile_extract_mask()
 #    - Only processes if force_remake=true or output doesn't exist
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_mask_extract.jl")
+include("geotile_mask_extract.jl")
 
 # geotile_canopyh_extract.jl extracts canopy height data for geotiles:
 #
@@ -93,7 +112,7 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_mask_extract.jl")
 #    - Processes all altimetry missions
 #    - Only processes if force_remake=true or output doesn't exist
 #    - Uses nodata value of 255
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_canopyh_extract.jl")
+include("geotile_canopyh_extract.jl")
 
 # geotile_hyps.jl bins raw data into time-elevation geotile datacubes
 #
@@ -110,7 +129,7 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_canopyh_extract.jl
 #    - Processes all altimetry missions
 #    - Only processes if force_remake=true or output doesn't exist
 #    - Uses nodata value of 255
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_hyps.jl")
+include("geotile_hyps.jl")
 
 # gemb_classes_binning.jl processes GEMB (Glacier Energy Mass Balance) model data into geotiles and regions.
 # Key processing steps:
@@ -146,7 +165,7 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_hyps.jl")
 #
 # Total runtime is approximately 9.5 hours, with most time spent on gap filling
 # and creating height classes in step 4.
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/gemb_classes_binning.jl")
+include("gemb_classes_binning.jl")
 
 # geotile_binning.jl performs elevation data processing and analysis for glacier studies.
 # Key processing steps:
@@ -182,7 +201,7 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/gemb_classes_binning.jl")
 #
 # Total runtime is approximately 3.5 hours, with most time spent on
 # gap filling and mission alignment steps.
-@time include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_binning.jl")
+@time include("geotile_binning.jl")
 
 # geotile_synthesis.jl performs synthesis and analysis of glacier elevation change data.
 # Key processing steps:
@@ -225,7 +244,7 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/gemb_classes_binning.jl")
 #
 # Total runtime is approximately 5-6 hours, with most time spent on
 # synthesis error calculation and multi-mission synthesis steps.
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_synthesis.jl")
+include("geotile_synthesis.jl")
 
 # land_surface_model_routing.jl downloads GLDAS LSMS and routes runoff through river network
 # 1. download GLDAS LSMs
@@ -236,7 +255,7 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/geotile_synthesis.jl")
 # 6. save river flux 
 # 7. [optional] compare with discharge from Collins et al. 2024
 
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/land_surface_model_routing.jl")
+include("land_surface_model_routing.jl")
 
 # glacier_routing.jl analyzes glacier meltwater routing and discharge by:
 #
@@ -276,4 +295,7 @@ include("/home/gardnera/Documents/GitHub/Altim.jl/src/land_surface_model_routing
 # - How glacier meltwater enters and moves through river networks
 # - Relative contributions of glacier melt to river discharge
 # - Spatial and temporal patterns in glacier changes and runoff
-include("/home/gardnera/Documents/GitHub/Altim.jl/src/glacier_routing.jl")
+include("glacier_routing.jl")
+
+
+include("regional_results.jl")
