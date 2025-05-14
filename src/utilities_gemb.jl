@@ -516,10 +516,10 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
 
             for Δheight in dΔheight
                 #Δheight = first(dΔheight)
-                smb0 = smb[At(geotiles[gindex, :id]), index_gemb, At(pscale), At(Δheight)] # smb is in unit of m ice equivalent [m i.e.]
+                smb0 = smb[At(geotiles[gindex, :id]), index_gemb, At(pscale), At(Δheight)] # smb is in unit of km3 assuming an ice density of 910 kg/m3
                 smb0 = dropdims(sum(smb0, dims=:geotile), dims=:geotile)
 
-                fac0 = fac[At(geotiles[gindex, :id]), index_gemb, At(pscale), At(Δheight)]
+                fac0 = fac[At(geotiles[gindex, :id]), index_gemb, At(pscale), At(Δheight)] # fac is in unit of km3
                 fac0 = dropdims(sum(fac0, dims=:geotile), dims=:geotile)
 
                 res = dv0 .- (smb0 .+ fac0 .- (discharge_km3yr .* Δdecyear))

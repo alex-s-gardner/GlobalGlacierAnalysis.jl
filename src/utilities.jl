@@ -1,5 +1,6 @@
 # utilities for working building geogrid point database
 include("local_paths.jl")
+
 global pathlocal = setpaths()
 const world = Extent(X=(-180, 180), Y=(-90, 90))
 
@@ -1042,19 +1043,13 @@ end
 converts DateTime to decimalyear [e.g. decimalyear(DateTime("2018-10-24")) = 2018.813698630137]
 """
 function decimalyear(datetime)
-
-    # check if date is a leapyear
-    if isleapyear(datetime)
-        number_of_days = 366
-    else
-        number_of_days = 365
-    end
-
-    # calculate decimal year
-    decyear = year(datetime) + dayofyear(datetime) / number_of_days
-
+    year = Dates.year(datetime)
+    day_of_year = Dates.dayofyear(datetime)
+    days_in_year = Dates.daysinyear(year)
+    decyear = year + (day_of_year / days_in_year)
     return decyear
 end
+
 
 """
     decimalyear2datetime(decyear)
@@ -4141,6 +4136,34 @@ rginum2txt = Dict(
     99 => "global" ,
 )
 
+rginum2enclosed_alphanumerics = Dict(
+    1 => "①" ,
+    2 => "②" ,
+    3 => "③" ,
+    4 => "④" ,
+    5 => "⑤",
+    6 => "⑥" ,
+    7 => "⑦" ,
+    8 => "⑧" ,
+    9 => "⑨" ,
+    10 => "⑩" ,
+    11 => "⑪" ,
+    12 => "⑫" ,
+    13 => "⑬" ,
+    14 => "⑭" ,
+    15 => "⑮" ,
+    16 => "⑯" ,
+    17 => "⑰" ,
+    18 => "⑱" ,
+    19 => "⑲" ,
+    98 => "Ⓗ",
+    99 => "Ⓖ",
+)
+
+
+
+
+
 
 unit2areaavg = Dict(
     "km⁻³"=>"m", 
@@ -4234,8 +4257,8 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
         out_var_trend = string(tsvar)*"_trend"
         out_var_amp = string(tsvar)*"_amplitude"
         out_var_phase = string(tsvar)*"_phase"
-
         df[!, out_var_offset] = zeros(nrow(df))
+
         df[!, out_var_trend] = zeros(nrow(df))
         df[!, out_var_amp] = zeros(nrow(df))
         df[!, out_var_phase] = zeros(nrow(df))
@@ -4421,11 +4444,49 @@ Convert a NetCDF variable to a DimensionalData.DimArray.
 - Preserves dimension names and coordinates from the NetCDF dataset
 - Converts dimension names to symbols for DimensionalData compatibility
 """
-function nc2dd(ds, varname)
-    dnames = NCDatasets.dimnames(ds[varname])
-    da = DimArray(ds[varname], tuple([Dim{Symbol(dname)}(ds[dname]) for dname in dnames]...))
+function nc2dd(cfv)
+    dnames = NCDatasets.dimnames(cfv)
+
+    if in("units", keys(cfv.attrib)) 
+        unit = cfv.attrib["units"]
+        try
+            units = Unitful.uparse(unit; unit_context=Unitful.unitmodules)
+        catch
+            units = Altim.unit_convert[unit]
+        end
+    else
+        units = NoUnits
+    end
+
+    da = DimArray(collect(cfv[:,:]) * units, tuple([Dim{Symbol(dname)}(cfv[dname]) for dname in dnames]...))
     return da
 end
+
+
+function gt2cubicms!()
+    volume2mass = Altim.δice / 1000
+
+    # date interval in seconds
+    Threads.@threads for tsvar in tsvars
+        ddate = colmetadata(glaciers, tsvar, "date")
+        Δdate = Second.(unique(Day.(ddate[2:end] .- ddate[1:end-1])))
+
+        if length(Δdate) > 1
+            error("Time steps are not uniform")
+        else
+            Δt = Δdate[1]
+        end
+
+        for g in eachrow(glaciers)
+            #g = first(eachrow(glaciers))
+            # divide by 1000 to convert to m w.e. to km w.e. ... then convert to m^3 s-1 [1E3^3/Δt.value] ..
+            ro = g[tsvar] .* g[:area_km2] .* volume2mass # convert from mie -> volume -> mass
+            g[tsvar][2:end] = diff(ro) / 1000 * (1E3^3 / Δt.value)
+        end
+    end
+    return glaciers
+end
+
 
 
 
@@ -4525,3 +4586,357 @@ function propagate_relative_diff_error(A, B, σ_A, σ_B)
     σ = sqrt((σ_A / B)^2 + ((A * σ_B) / B^2)^2)
     return σ
 end
+
+
+"""
+    read_grace_rgi(; path2file=setpaths()[:grace_rgi])
+
+Read GRACE (Gravity Recovery and Climate Experiment) data for RGI (Randolph Glacier Inventory) regions.
+
+This function loads GRACE data from a MATLAB file and converts region codes from letter-based 
+abbreviations to standard RGI numerical identifiers (e.g., "ALA" to "rgi1").
+
+# Arguments
+- `path2file`: Path to the GRACE RGI data file (MATLAB format)
+
+# Returns
+- A dictionary mapping RGI region identifiers to their corresponding GRACE data
+
+# Note
+The function converts region codes from the original letter-based abbreviations (e.g., "ALA" for Alaska)
+to the standard RGI numerical format (e.g., "rgi1").
+"""
+function read_grace_rgi(;path2file=setpaths()[:grace_rgi])
+
+    grace0 = matread(path2file)
+
+    # rgi leter to digit mapping
+    old2new = Dict(
+        "PAT" => "rgi18", 
+        "GRE" => "rgi5", 
+        "NAS" => "rgi10", 
+        "ICE" => "rgi6", 
+        "TRP" => "rgi16",
+        "SAW" => "rgi14",
+        "SAE" => "rgi15",
+        "CDN" => "rgi3",
+        "CAS" => "rgi13",
+        "AND" => "rgi17",
+        "CDS" => "rgi4",
+        "ANT" => "rgi19",
+        "CEU" => "rgi11",
+        "ALA" => "rgi1",
+        "SVB" => "rgi7",
+        "WNA" => "rgi2", 
+        "NEZ" => "rgi18",
+        "RAI" => "rgi9",
+        "SCA" => "rgi8"
+    )
+
+
+    grace = Dict(any(keys(old2new).== key) ? (old2new[key]) => val : (key) => val for (key, val) in grace0)
+    return grace
+end
+
+"""
+    grace_masschange(; path2file=setpaths()[:grace_rgi])
+
+Load and organize GRACE (Gravity Recovery and Climate Experiment) mass change data for glacier regions.
+
+This function reads GRACE data for RGI (Randolph Glacier Inventory) regions and organizes it into a
+dimensional array structure with dimensions for region, date, and error bounds.
+
+# Arguments
+- `path2file`: Path to the GRACE RGI data file (MATLAB format). Defaults to the path from `setpaths()[:grace_rgi]`.
+
+# Returns
+- A DimensionalData array with dimensions for RGI regions (1-19, plus 98 for HMA and 99 for Global),
+  dates, and error bounds (false=value, true=error).
+
+# Note
+The error values are multiplied by 2 to represent 95% confidence intervals.
+"""
+function grace_masschange(; path2file=setpaths()[:grace_rgi])
+    grace_raw = Altim.read_grace_rgi(; path2file)
+
+    # organize GRACE grace data into a DimArray
+    drgi = Dim{:rgi}(collect([1:19..., 98:99...]))
+    ddate = Dim{:date}(vec(Altim.datenum2date.(grace_raw["rgi1"]["dM_gt_mdl_fill_date"])))
+    derror = Dim{:error}([false, true])
+
+    grace = fill(NaN, drgi, ddate, derror)
+
+    for rgi in drgi
+        #rgi = drgi[1]
+        if rgi == 98
+            rgi_id = "HMA"
+        elseif rgi == 99
+            rgi_id = "Global"
+        else
+            rgi_id = "rgi$(rgi)"
+        end
+
+        if haskey(grace_raw, rgi_id)
+            grace[At(rgi), :, At(false)] = vec(grace_raw[rgi_id]["dM_gt_mdl_fill"])
+
+            ## multiply by 2 to get 95% confidence interval
+            grace[At(rgi), :, At(true)] = vec(grace_raw[rgi_id]["dM_sigma_gt_mdl_fill"]) * 2
+        end
+    end
+
+    return grace
+end
+
+
+function check_for_all_nans(d)
+    for k in keys(d)
+        if all(isnan.(d[k]))
+            error("all NaNs for $k")
+        end
+    end
+end
+
+
+function resample(colorscheme::Symbol, n)
+    newscheme = ColorSchemes.ColorScheme(
+        get(ColorSchemes.colorschemes[colorscheme], (0:n-1) / (n-1))
+    )
+    return newscheme
+end
+
+
+function stringofvectors2string(strings, delim="")
+    return join(strings; delim="_")
+end
+
+function glambie2024(; path2glambie=paths = setpaths()[:glambie_2024])
+    df = CSV.read(path2glambie, DataFrame)
+
+    drgi = Dim{:rgi}(vcat(collect(1:19), 98, 99))
+    derror = Dim{:error}([false, true])
+    @warn "GlaMBIE dates are shifted by up to 6 months from the original data to align dates across hemispheres"
+    ddate = Dim{:date}(collect(Altim.decimalyear2datetime.(2000:2024)); name="GlaMBIE 2024 cumulative glacier mass balance [GLAMBIE]")
+
+    glambie_Gt = fill(NaN, drgi, ddate, derror)
+
+    for (i, rgi) in enumerate(drgi)
+        if rgi == 98
+            continue
+        elseif rgi == 99
+            i = i-1
+        end
+        scol = (i - 1) * 3 + 1
+        date1 = round.(df[:, scol])
+        valid = .!ismissing.(date1)
+        date1 = collect(Altim.decimalyear2datetime.(date1[valid]))
+
+        glambie_Gt[At(rgi), At(date1), At(false)] = coalesce.(df[valid, scol+1], NaN)
+        glambie_Gt[At(rgi), At(date1), At(true)] = coalesce.(df[valid, scol+2], NaN)
+    end
+
+ 
+    glambie_Gt[At(98), :, :] .= 0
+    for rgi in 13:15
+        glambie_Gt[At(98), :, At(false)] .+= glambie_Gt[At(rgi), :, At(false)]
+        glambie_Gt[At(98), :, At(true)] .+= glambie_Gt[At(rgi), :, At(true)].^2
+    end
+
+    glambie_Gt[At(98), :, At(true)] = sqrt.(glambie_Gt[At(98), :, At(true)])
+
+    @warn "GlaMBIE data is linearly interpolated over missing date values"
+    for rgi in drgi
+        for err_flag in derror
+            valid = .!isnan.(glambie_Gt[At(rgi), :, At(err_flag)])
+            if !all(valid)
+                fit = curve_fit(Altim.model1_trend, collect(Altim.decimalyear.(ddate[valid])), collect(glambie_Gt[At(rgi), :, At(err_flag)][valid]), Altim.p_trend)
+                glambie_Gt[At(rgi), .!valid, At(err_flag)] = Altim.model1_trend(Altim.decimalyear.(collect(ddate[.!valid])), fit.param)
+            end
+        end
+    end
+    
+    return (glambie_Gt)
+end
+ 
+
+"""
+    gt_per_yr_to_m3_per_s(gt_per_yr::Real)
+
+Convert water flow rate from Gigatonnes per year (Gt/yr) to cubic meters per second (m³/s).
+
+# Arguments
+- `gt_per_yr`: Flow rate in Gigatonnes per year
+
+# Returns
+- Flow rate in cubic meters per second
+
+# Example
+```julia
+flow = gt_per_yr_to_m3_per_s(31.536) # ≈ 1000 m³/s
+```
+"""
+function gt_per_yr_to_m3_per_s(gt_per_yr::Real)
+    # 1 Gt = 1e9 tonnes = 1e12 kg
+    # 1 m³ of water = 1000 kg
+    # 1 year = 365.25 * 24 * 60 * 60 seconds
+    return gt_per_yr * 1e9 / (365.25 * 24 * 60 * 60)
+end
+
+"""
+    m3_per_s_to_gt_per_yr(m3_per_s::Real)
+
+Convert water flow rate from cubic meters per second (m³/s) to Gigatonnes per year (Gt/yr).
+
+# Arguments
+- `m3_per_s`: Flow rate in cubic meters per second
+
+# Returns
+- Flow rate in Gigatonnes per year
+
+# Example
+```julia
+flow = m3_per_s_to_gt_per_yr(1000) # ≈ 31.536 Gt/yr
+```
+"""
+function m3_per_s_to_gt_per_yr(m3_per_s::Real)
+    # 1 m³ of water = 1000 kg
+    # 1 Gt = 1e12 kg
+    # 1 year = 365.25 * 24 * 60 * 60 seconds
+    return m3_per_s * (365.25 * 24 * 60 * 60) / 1E9
+end 
+
+
+
+
+function dimarray2netcdf(da, filename; name = "var", units = nothing, global_attributes = nothing)
+    
+    NCDataset(filename, "c") do ds
+        # get dimensions
+        da_dims = dims(da)
+
+        # step 1: define dimensions
+        for dim in da_dims
+            dname = string(DimensionalData.name(dim));
+            defDim(ds, dname, length(dim))
+        end
+
+        # step 2: add dim variables & metadata
+        for dim in da_dims
+            dname = string(DimensionalData.name(dim));
+            d = defVar(ds, dname, val(val(dim)), (dname,))
+
+            if eltype(dim) <: Number
+                d.attrib["units"] = string(Unitful.unit(dim[1]))
+            end
+
+            # add metadata
+            for (k,v) in DD.metadata(dim)
+                d.attrib[k] = v
+            end
+        end
+
+        # step 3: add variable
+        v = defVar(ds, name, ustrip.(parent(da)), string.(DimensionalData.name.(da_dims)))
+        
+        # step 4: add variable metadata
+        if units == nothing
+            if eltype(da) <: Number
+                v.attrib["units"] = string(Unitful.unit(da[1]))
+            end
+        else
+            v.attrib["units"] = string(units)
+        end
+
+        for (k,v) in DD.metadata(da)
+            d.attrib[k] = v
+        end
+
+        # step 5: add global attributes
+        if global_attributes != nothing
+            for (k,v) in global_attributes
+                ds.attrib[k] = v
+            end
+        end
+
+        return filename
+    end;
+end
+
+
+function netcdf2dimarray(filename; varname=nothing)
+
+    # read the netcdf file
+    ds = NCDatasets.Dataset(filename) 
+
+    # get the dimension names
+    dnames = NCDatasets.dimnames(ds)
+
+    # get the variable name
+    if  varname === nothing
+        varname = setdiff(keys(ds), dnames)
+        if length( varname) != 1
+            error(" varname must be specified if there is not exactly one variable in the netcdf file")
+        end
+        varname = first( varname)
+    end
+
+    # get the units of variable
+    da = _var_from_netcdf(ds, varname, dnames)
+    
+    return da
+end
+
+
+function _var_from_netcdf(ds, varname, dnames)
+    units = _units_from_netcdf(ds, varname)
+    if !isnothing(units)
+        da = DimArray(ds[varname] * units, tuple(_dim_from_netcdf.(Ref(ds), dnames)...); metadata=ds[varname].attrib)
+    else
+        da = DimArray(ds[varname], tuple(_dim_from_netcdf.(Ref(ds), dnames)...); metadata=ds[varname].attrib)
+    end
+    return da
+end
+
+function _dim_from_netcdf(ds, dname)
+    units = _units_from_netcdf(ds, dname)
+    if !isnothing(units)
+        dim = Dim{Symbol(dname)}(ds[dname][:]*units; metadata=ds[dname].attrib)
+    else
+        dim = Dim{Symbol(dname)}(ds[dname][:]; metadata=ds[dname].attrib)
+    end
+    return dim
+end
+
+function _units_from_netcdf(ds, varname)
+
+    # units can not be applied to non-numeric data
+    if !(eltype(ds[varname]) <: Number)
+        units = nothing
+    else
+        if haskey(ds[varname].attrib, "units")
+            if isempty(ds[varname].attrib["units"])
+                units = NoUnits
+            else
+                units = ds[varname].attrib["units"];
+                if isempty(units)
+                    units = nothing
+                else
+                    try
+                        units = uparse(units; unit_context=Unitful.unitmodules)
+                    catch
+                        @warn "could not parse units for $varname"
+                        units = nothing
+                    end
+                end
+            end
+        else 
+            units = nothing
+        end
+    end
+    return units
+end
+
+
+
+unit_convert = Dict()
+unit_convert["m3 s^-1"] = u"m^3/s"
+unit_convert["kg s^-1"] = u"kg/s"

@@ -245,6 +245,9 @@ include("gemb_classes_binning.jl")
 # Total runtime is approximately 5-6 hours, with most time spent on
 # synthesis error calculation and multi-mission synthesis steps.
 include("geotile_synthesis.jl")
+include("summary_files.jl")
+
+include("synthesis_plots_gis.jl")
 
 # land_surface_model_routing.jl downloads GLDAS LSMS and routes runoff through river network
 # 1. download GLDAS LSMs
@@ -296,6 +299,7 @@ include("land_surface_model_routing.jl")
 # - Relative contributions of glacier melt to river discharge
 # - Spatial and temporal patterns in glacier changes and runoff
 include("glacier_routing.jl")
-
-
+include("gmax_global.jl")
+include("river_buffer_population.jl")
+include("gmax_point_figure.jl")
 include("regional_results.jl")

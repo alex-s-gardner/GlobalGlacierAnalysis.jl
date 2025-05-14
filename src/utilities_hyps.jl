@@ -55,6 +55,7 @@ offset_trend_seasonal2::Function =
         p[2] .* t .+
         p[3] .* sin.(2π .* t) .+
         p[4] .* cos.(2π .* t)
+        
 
 offset_trend_acceleration_seasonal2::Function =
     offset_trend_acceleration_seasonal2(t, p) =
@@ -65,6 +66,7 @@ offset_trend_acceleration_seasonal2::Function =
         p[5] .* cos.(2π .* t)
 
 const p_offset_trend_seasonal = zeros(4)
+
 
 function geotiles_mutually_exclusive_rgi!(geotiles) 
     reg = names(geotiles);
@@ -1458,39 +1460,6 @@ function read_hock2019(; datadir=setpaths().hock_2019)
 
     return (; dm_gt)
 end
-
-function read_grace_rgi(;datadir=setpaths()[:grace_rgi])
-
-    grace0 = matread(datadir)
-
-    # rgi leter to digit mapping
-    old2new = Dict(
-        "PAT" => "rgi18", 
-        "GRE" => "rgi5", 
-        "NAS" => "rgi10", 
-        "ICE" => "rgi6", 
-        "TRP" => "rgi16",
-        "SAW" => "rgi14",
-        "SAE" => "rgi15",
-        "CDN" => "rgi3",
-        "CAS" => "rgi13",
-        "AND" => "rgi17",
-        "CDS" => "rgi4",
-        "ANT" => "rgi19",
-        "CEU" => "rgi11",
-        "ALA" => "rgi1",
-        "SVB" => "rgi7",
-        "WNA" => "rgi2", 
-        "NEZ" => "rgi18",
-        "RAI" => "rgi9",
-        "SCA" => "rgi8"
-    )
-
-
-    grace = Dict(any(keys(old2new).== key) ? (old2new[key]) => val : (key) => val for (key, val) in grace0)
-    return grace
-end
-
 
 function plot_height_time(dh1; geotile, fig_suffix, fig_folder, figure_suffix, mask=:glacier, mission, showplots=false)
     height = dims(dh1, :height)

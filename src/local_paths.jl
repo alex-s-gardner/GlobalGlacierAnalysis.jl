@@ -83,6 +83,8 @@ function setpaths()
             not_ocean_shp="/mnt/bylot-r3/data/vector_files/not_ocean.shp", # GGSHHS_f_L1 +  scripps_antarctica_grounded
             rgi6_regions_shp="/mnt/bylot-r3/data/vector_files/00_rgi60_O1Regions_fix.shp",
             water_shp="/mnt/bylot-r3/data/vector_files/GSHHS_f_L2.shp", #GSHHG lakes
+            continents="/mnt/bylot-r3/data/vector_files/World_Continents.geojson",
+            countries="/mnt/bylot-r3/data/vector_files/ne_10m_admin_0_countries.geojson",
 
             # grace timeseries data for validation [created in MATLAB using jplMasconTS.m]
             grace_rgi = "/mnt/bylot-r3/data/GRACE/dM_grace_rgi.mat",
@@ -94,6 +96,7 @@ function setpaths()
             hock_2019 = "/mnt/bylot-r3/data/glacier_mb/Hock2019/S0022143019000224sup001.nc",
             ipcc_ar6 = "/mnt/bylot-r3/data/glacier_mb/IPCCAR6/",
             wimberly_2024 = "/mnt/bylot-r3/data/glacier_mb/Wimberly2024/all_rf_aligned_data.csv",
+            glambie_2024 = "/mnt/bylot-r3/data/glacier_mb/glambie/41586_2024_8545_MOESM4_ESM_Gt.csv",
 
             # path to river files
             river = "/mnt/bylot-r3/data/rivers/MERIT_Hydro_v07_Basins_v01",

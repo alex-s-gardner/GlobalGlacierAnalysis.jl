@@ -54,6 +54,7 @@ begin
     using CairoMakie
     using ProgressMeter
     using SortTileRecursiveTree
+    using Extents
     using FileIO
     using DataFrames
     using NCDatasets
@@ -63,11 +64,15 @@ begin
     using Interpolations
     using Arrow
     using LsqFit
+    using SortTileRecursiveTree
+    using Unitful
 end
 
 
 # This section sets up paths and constants needed for glacier routing analysis
 begin
+    glacier_summary_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+    glacier_summary_riverflux_file = replace(glacier_summary_file, ".nc" => "_riverflux.nc")
     route_rgi2ocean = ["19"] 
 
     # Time conversion constant
@@ -87,9 +92,8 @@ begin
     # Note: Two options for river data - using corrected or uncorrected data
 
     # Uncorrected river paths (currently used)
-    rivers_paths = Altim.allfiles(paths[:river]; fn_endswith= "MERIT_Hydro_v07_Basins_v01.shp")
+    rivers_paths = Altim.allfiles(paths[:river]; fn_endswith="MERIT_Hydro_v07_Basins_v01.shp", fn_startswith="riv_pfaf")
     glacier_rivers_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
-
 
     # Output paths for processed data
     glacier_rivers_runoff_path = replace(glacier_rivers_path, ".arrow" => "_runoff.arrow")
@@ -98,6 +102,9 @@ begin
     glacier_sinks_grouped_path = joinpath(paths[:data_dir], "glacier_sinks_grouped.fgb")
 
 
+    # TODO: I need to update to use the new glacier_flux path
+    # glacier_flux = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+    
     glacier_vars_fns = reduce(vcat,Altim.allfiles.(["/mnt/bylot-r3/data/binned_unfiltered/2deg/", "/mnt/bylot-r3/data/binned/2deg/"]; fn_endswith="synthesized_perglacier.jld2"))
     # glacier_vars_fns = ["/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_synthesized_perglacier.jld2"]
 
@@ -165,7 +172,7 @@ if !isfile(glacier_rivers_path)
     basin_geometries = GO.tuples(basins.geometry)
 
     # Build a spatial index for the basins
-    tree = STRtree(basins.geometry; nodecapacity=3)
+    tree = SortTileRecursiveTree.STRtree(basins.geometry; nodecapacity=3)
 
     # Iterate over the points and find the first basin that intersects with each point
     # Prefilter by the basins that could possibly intersect with each point
@@ -185,10 +192,10 @@ if !isfile(glacier_rivers_path)
 
     # identify the river that each glacier is closest to
     # load in river reaches
-    col_names = [ "geometry",  "COMID", "NextDownID", "up1"]
+    col_names = [ "geometry",  "COMID", "NextDownID", "up1", "lengthkm"]
     riv = GeoDataFrames.read.(rivers_paths)
     rivers = reduce(vcat, r[:,col_names] for r in riv)
-    tree = STRtree(rivers.geometry; nodecapacity=3)
+    tree = SortTileRecursiveTree.STRtree(rivers.geometry; nodecapacity=3)
 
     river_indices = zeros(Union{Int64,Missing}, size(pts))
     @showprogress dt=1 desc="Locating closest river..." Threads.@threads :greedy for (idx, pt) in enumerate(pts)
@@ -231,22 +238,22 @@ if !isfile(glacier_rivers_path)
 
     # identify just those rivers that recieve glacier meltwater
     glacier_melt_rivers = unique(reduce(vcat, glaciers.RiverIDTrace))
-    rivers_glacier_melt = rivers[in.(rivers.COMID, Ref(glacier_melt_rivers)), :]
+    rivers = rivers[in.(rivers.COMID, Ref(glacier_melt_rivers)), :]
 
     # map glaciers to each downstream rivers
-    rivers_glacier_melt[!,  :glacier_table_row] .= [Vector{Int64}()]
+    rivers[!,  :glacier_table_row] .= [Vector{Int64}()]
 
-    @showprogress dt=1 desc="Mapping glaciers to downstream rivers..." Threads.@threads :greedy for r in eachrow(rivers_glacier_melt)
+    @showprogress dt=1 desc="Mapping glaciers to downstream rivers..." Threads.@threads :greedy for r in eachrow(rivers)
         r.glacier_table_row =  findall(in.(Ref(r.COMID), glaciers.RiverIDTrace))
     end
 
-    rivers_glacier_melt[!, :RGIId] = [glaciers.RGIId[idx] for idx in rivers_glacier_melt.glacier_table_row]
+    rivers[!, :RGIId] = [glaciers.RGIId[idx] for idx in rivers.glacier_table_row]
 
     # determine which rivers flow to the ocean
     river2ocean_path = joinpath(paths.data_dir, "rivers/Collins2024/riv_pfaf_ii_MERIT_Hydro_v07_Basins_v01_coast")
     river2ocean_files = readdir(river2ocean_path; join=true)
     river2ocean_files = filter(fn -> Base.contains(fn, ".shp"), river2ocean_files)
-    rivers_glacier_melt[!, :ocean_terminating] .= false
+    rivers[!, :ocean_terminating] .= false
 
     river2ocean = GeoDataFrames.read(river2ocean_files[1])
     for fn in river2ocean_files[2:end]
@@ -256,10 +263,33 @@ if !isfile(glacier_rivers_path)
         end
     end
 
-    idx = [any(rid .== river2ocean.COMID) for rid in rivers_glacier_melt.COMID]
-    rivers_glacier_melt[idx, :ocean_terminating] .= true
+    idx = [any(rid .== river2ocean.COMID) for rid in rivers.COMID]
+    rivers[idx, :ocean_terminating] .= true
 
-    GeoDataFrames.write(glacier_rivers_path, rivers_glacier_melt)
+    rivers = GeoDataFrames.read(glacier_rivers_path)
+    rivers[!, :continent] .= ""
+    rivers[!, :country] .= ""
+    rivers[!, :centroid] = GO.centroid.(rivers.geometry)
+    tree = SortTileRecursiveTree.STRtree(rivers[!, :centroid])
+
+    # Assign continent to each river segment
+    continents = GeoDataFrames.read(paths.continents)
+
+    @time Threads.@threads for r in eachrow(continents) # [4.5 min]
+        query_result = SortTileRecursiveTree.query(tree, GI.extent(r.geometry))
+        index = GO.intersects.(rivers.centroid[query_result], Ref(r.geometry))
+        rivers[query_result[index], :continent] .= r.CONTINENT
+    end
+
+    # Assign country to each river segment
+    countries = GeoDataFrames.read(paths[:countries])
+    @time Threads.@threads for r in eachrow(countries) # [2.5 min]
+        query_result = SortTileRecursiveTree.query(tree, GI.extent(r.geometry))
+        index = GO.intersects.(rivers.centroid[query_result], Ref(r.geometry))
+        rivers[query_result[index], :country] .= r.SOVEREIGNT
+    end
+
+    GeoDataFrames.write(glacier_rivers_path, rivers[:, Not(:centroid)])
 end
 
 
@@ -289,124 +319,134 @@ end
 
 
 begin # [4 minutes]
-    @showprogress dt=1 desc="routing glacier variables..." for glacier_vars_fn in glacier_vars_fns
-        glaciers = copy(GeoDataFrames.read(glacier_routing_path)) # getting a strange issue with scope later on so using copy
-        geotile_perglacier = load(glacier_vars_fn, "glaciers")
+    vars2route=["runoff"]
 
-        tsvars=["runoff"]
+    glaciers = copy(GeoDataFrames.read(glacier_routing_path)) # getting a strange issue with scope later on so using copy
 
-         #[1 min]
-
-        # ensure that glaciers0 RGIId order matches glaciers order
-        @assert glaciers0.RGIId == glaciers.RGIId
-        glaciers[!, :area_km2] = glaciers0[:, :area_km2]
-
-        for tsvar in tsvars
-            glaciers[!, tsvar] = glaciers0[:, tsvar]
-            glaciers = colmetadata!(glaciers, tsvar, "date", colmetadata(glaciers0, tsvar, "date"), style=:note)
-        end
-
-        glaciers = Altim.mie2cubicms!(glaciers; tsvars)
-
-        # interpolate glacier runoff to the 1st of every month
-        for tsvar in tsvars # [30 seconds]
-        #tsvar = "runoff"
-            t = colmetadata(glaciers, tsvar, "date")
-            yrange = extrema(Dates.year.(t))
-            t0 = [Dates.DateTime(y,m,1) for m in 1:12, y in yrange[1]:yrange[2]][:];
-
-            tms = Dates.datetime2epochms.(t)
-            dt = unique(tms[2:end] .- tms[1:end-1])
-            @assert length(dt) == 1
-
-            t0ms = Dates.datetime2epochms.(t0)
-
-            #scale for efficiency of interpolation
-            t0ms = (t0ms .- tms[1]) ./  dt[1] .+ 1
-
-            Threads.@threads for g in eachrow(glaciers) #[30 seconds]
-                A = g[tsvar];
-                valid = .!isnan.(A)
-                if any(valid)
-                    itp = extrapolate(interpolate(A[valid], BSpline(Quadratic())), NaN)
-                    foo = itp(t0ms .- findfirst(valid) .+ 1)
-                    (tsvar == "runoff") ? (foo[foo .< 0] .= 0) : nothing
-                    g[tsvar] = foo
-                else
-                    g[tsvar] = fill(NaN, length(t0ms))
-                end
-            end
-            
-            #update column metadata
-            colmetadata!(glaciers, tsvar, "date", t0; style=:note)
-        end
-
-        # this takes 1 min to load
-        rivers = GeoDataFrames.read(glacier_rivers_path)
-
-        rivers[!, :basin02] = floor.(Int16, rivers.COMID./1000000)
-        rivers[!, :headbasin] = rivers.up1 .== 0
-
-        # if there is no input from upstream then it is a head basin
-        # This is needed as only a subset of the full river network is routed
-        rivers[!, :headbasin] .|= .!in.(rivers.COMID, Ref(unique(rivers.NextDownID)))
-
-        # add glacier runoff to the rivers
-        for tsvar in tsvars
-            rivers[!,  tsvar] = [zeros(length(glaciers[1,tsvar])) for r in 1:nrow(rivers)]
-            colmetadata!(rivers, tsvar, "date", colmetadata(glaciers, tsvar, "date"), style=:note)
-        end
+    glacier_flux_nc = NCDataset(glacier_summary_file)
         
-        # glacier inputs to rivers
-        valid_temporal_range = falses(size(glaciers[1,first(tsvars)]))
-        map(tsvar -> valid_temporal_range .|= (.!isnan.(glaciers[1, tsvar])), tsvars)
+    glacier_flux0 = Dict()
 
-        dcomid = Dim{:COMID}(rivers.COMID)
-        dTi = Ti(colmetadata(glaciers, first(tsvars), "date")[valid_temporal_range])
-        river_inputs = Dict()
-        river_flux = Dict()
+    for tsvar in vars2route
+    #tsvar = "runoff"
+        var0 = Altim.nc2dd(glacier_flux_nc[tsvar])
+
+        # convert from Gt to kg³/s
+        dTi = dims(var0, :Ti)
+        Δdate = Second.(unique(Day.(val(dTi)[2:end] .- val(dTi)[1:end-1])))
+
+        # Gt per month
+        glacier_flux0[tsvar] = var0[:, 2:end]
+        glacier_flux0[tsvar][:,:] =  diff(parent(var0), dims=2)
+        glacier_flux0[tsvar] = uconvert.(u"kg", glacier_flux0[tsvar]) ./ Δdate
+    end
+
+    # interpolate to the 1st of every month
+    glacier_flux = Dict()
+    for tsvar in vars2route # [30 seconds]
+        var0 = glacier_flux0[tsvar]
+        dTi = dims(var0, :Ti)
+        drgi = dims(var0, :rgiid)
         
-        for tsvar in tsvars
-            river_inputs[tsvar] = zeros(eltype(glaciers[1,tsvar]), (dTi, dcomid))
+        yrange = extrema(Dates.year.(dTi))
+        t0 = [Dates.DateTime(y,m,1) for m in 1:12, y in yrange[1]:yrange[2]][:];
+        t0 = t0[(t0 .>= dTi[1]) .& (t0 .<= dTi[end])]
+        dTi0 = Ti(t0)
+        glacier_flux[tsvar] = zeros(drgi,dTi0)* u"kg/s"
 
-            # need to sum as multiple glaciers can flow into the same river
-            for r in eachrow(glaciers[glaciers.RiverID .!= 0, :])
-                river_inputs[tsvar][:, At(r.RiverID)] .+= r[tsvar][valid_temporal_range]
-            end
+        tms = Dates.datetime2epochms.(val(dTi));
+        dt = unique(tms[2:end] .- tms[1:end-1]);
+        @assert length(dt) == 1
 
-            # accululate inputs downstream
-            river_flux[tsvar] = Altim.flux_accumulate!(river_inputs[tsvar], rivers.COMID, rivers.NextDownID, rivers.headbasin,  rivers.basin02) #[< 1 second]
+        t0ms = Dates.datetime2epochms.(t0)
 
-            # save data as netcdf
-            # data needs to be Float32 (not Real) for saving as netcdf
-            river_flux[tsvar] = Float32.(river_flux[tsvar])
-        end
+        #scale for efficiency of interpolation
+        t0ms = (t0ms .- tms[1]) ./  dt[1] .+ 1
 
-        # save as netcdf
-        glacier_rivers_runoff_qout_path = replace(glacier_vars_fn, ".jld2" => "_rivers.nc")
-        NCDataset(glacier_rivers_runoff_qout_path,"c") do ds
-            data_dims = dims(river_flux[first(tsvars)])
-
-            # First all dimensions need to be defined
-            for dim in data_dims
-                dname = string(DimensionalData.name(dim));
-                defDim(ds, dname, length(dim))
-            end
-
-            # now add the variables
-            for dim in data_dims
-                dname = string(DimensionalData.name(dim));
-                defVar(ds, dname, val(val(dim)), (dname,))
-            end
-
-            for tsvar in tsvars
-                v = defVar(ds, "$tsvar", parent(river_flux[tsvar]), string.(DimensionalData.name.(data_dims)))
-                v.attrib["units"] = "m3 s-1"
-                v.attrib["long_name"] = "glacier $tsvar river flux"
-
-                # add global attributes
-                ds.attrib["title"] = "river flux from modeled glacier $tsvar"
+        Threads.@threads for rgi in drgi
+            A = var0[At(rgi), :]
+            valid = .!isnan.(A)
+            if any(valid)
+                itp = extrapolate(interpolate(A[valid], BSpline(Quadratic())), NaN * u"kg/s")
+                foo = itp.(t0ms .- findfirst(valid) .+ 1)
+                (tsvar == "runoff") ? (foo[foo .< 0* u"kg/s"] .= 0 * u"kg/s") : nothing
+                glacier_flux[tsvar][At(rgi), :] = foo
+            else
+                glacier_flux[tsvar][At(rgi), :] = fill(NaN, length(t0ms))* u"kg/s"
             end
         end
     end
+
+    # this takes 1 min to load
+    rivers = GeoDataFrames.read(glacier_rivers_path)
+    rivers[!, :basin02] = floor.(Int16, rivers.COMID./1000000)
+    rivers[!, :headbasin] = rivers.up1 .== 0
+    rivers[!, :longitude] = getindex.(GO.centroid.(rivers.geometry), 1)
+    rivers[!, :latitude] = getindex.(GO.centroid.(rivers.geometry), 2)
+
+    # if there is no input from upstream then it is a head basin
+    # This is needed as only a subset of the full river network is routed
+    rivers[!, :headbasin] .|= .!in.(rivers.COMID, Ref(unique(rivers.NextDownID)))
+
+    dcomid = Dim{:COMID}(rivers.COMID)
+    dTi = dims(glacier_flux[first(vars2route)], :Ti)
+    river_inputs = Dict()
+    river_flux = Dict()
+
+    for tsvar in vars2route
+        tsvar = "runoff"
+        river_inputs[tsvar] = zeros(eltype(glacier_flux[tsvar]), (dTi, dcomid))
+
+        # need to sum as multiple glaciers can flow into the same river
+        for r in eachrow(glaciers[glaciers.RiverID .!= 0, :])
+            # r = eachrow(glaciers[glaciers.RiverID .!= 0, :])[1]
+            river_inputs[tsvar][:, At(r.RiverID)] .+= glacier_flux[tsvar][At(r.RGIId), :]
+        end
+
+        # accululate inputs downstream
+        river_flux[tsvar] = Altim.flux_accumulate!(river_inputs[tsvar], rivers.COMID, rivers.NextDownID, rivers.headbasin, rivers.basin02) #[< 1 second]
+
+        # save data as netcdf
+        # data needs to be Float32 (not Real) for saving as netcdf
+        river_flux[tsvar] = Float32.(river_flux[tsvar])
+    end
+
+    dstack = DimStack(getindex.(Ref(river_flux), vars2route); name=Symbol.(vars2route))
+    
+    # save to netcdf
+    NCDataset(glacier_summary_riverflux_file, "c") do ds
+
+        data_dims = dims(dstack)
+
+        # First all dimensions need to be defined
+        for dim in data_dims
+            dname = string(DimensionalData.name(dim));
+            defDim(ds, dname, length(dim))
+        end
+
+        # now add the variables
+        for dim in data_dims
+            dname = string(DimensionalData.name(dim));
+            d = defVar(ds, dname, val(val(dim)), (dname,))
+            if DateTime <: eltype(dim)
+                d.attrib["cf_role"] = "timeseries_id";
+            end
+        end
+
+        for vaname in keys(dstack)
+            v = defVar(ds, "$vaname", ustrip.(parent(dstack[vaname])), string.(DimensionalData.name.(data_dims)))
+            v.attrib["units"] = string(Unitful.unit(dstack[vaname][1]))
+        end
+
+        # add latitude and longitude [This is a hack until I can get geometry into a NetCDF]
+        defVar(ds, "latitude", rivers.latitude, string.(DimensionalData.name.(data_dims[2:2])))
+        defVar(ds, "longitude", rivers.longitude, string.(DimensionalData.name.(data_dims[2:2])))
+
+        # add global attributes
+        ds.attrib["title"] = "river flux from glacier model"
+        ds.attrib["version"] = "beta - " * Dates.format(now(), "yyyy-mm-dd")
+        ds.attrib["featureType"] = "timeSeries";
+
+        println("glacier output saved to $glacier_summary_riverflux_file")
+    end;
 end

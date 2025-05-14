@@ -40,7 +40,6 @@
 # Total runtime is approximately 5-6 hours, with most time spent on
 # synthesis error calculation and multi-mission synthesis steps.
 
-
 using Dates
 using ProgressMeter
 force_remake_before = Date(2025,3,21);
@@ -60,7 +59,6 @@ begin
     using LsqFit
     using Distances
     using ProgressMeter
-    using Plots
     using DataFrames
     using Rasters
     using GeoDataFrames
@@ -91,8 +89,6 @@ begin
     paths = Altim.pathlocal
     geotile_width = 2;
     downscale_to_glacier_method = "area"
-    reference_run = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_synthesized.jld2"
-    path2runs_override = nothing #[reference_run]
 
     # to include in uncertainty
     project_id = ["v01"]
@@ -328,7 +324,7 @@ end
 #    - Weight different missions when combining their measurements
 #    - Account for varying uncertainties between missions
 #    - Optimize the final synthesis of elevation changes
-@time path2geotile_synthesis_error = geotile_synthesis_error(; 
+path2geotile_synthesis_error = geotile_synthesis_error(; 
     path2runs, 
     outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2", 
     force_remake_before,
@@ -355,12 +351,8 @@ geotile_synthesize_runs(;
 # Load geotile info for mutiple surface masks
 begin
     # Update paths to point to synthesized data
-    if isnothing(path2runs_override)
-        path2runs = replace.(path2runs, "aligned.jld2" => "synthesized.jld2")
-    else
-        path2runs = path2runs_override
-    end
-    
+    path2runs = replace.(path2runs, "aligned.jld2" => "synthesized.jld2")
+
     # Load elevation change data to get geotile dimensions
     dh = FileIO.load(path2runs[1], "dh_hyps")
 
@@ -453,9 +445,12 @@ end
 #    - Includes area normalization of mean absolute deviation (MAD)
 
 # Takes ~13 seconds
+
 begin
     # load gemb data
     # Note: GEMB volume change is for a single surface mask... this is a hack has making gemb dv for multiple surface masks is onerious... that said, because GEMB data is calibrated to altimetry that uses different surface masks.. this is mostly a non-issue
+
+    # NOTE: Variables are in units of mie
     smb, fac = load(filename_gemb_geotile_filled_dv, ("smb", "fac"))
  
     # add in groups
@@ -468,8 +463,6 @@ begin
     end
 
     @showprogress desc="Finding optimal GEMB fits to altimetry data..." Threads.@threads for binned_synthesized_file in path2runs
-    #for binned_synthesized_file in [reference_run]
-    #binned_synthesized_file = reference_run
         synthesized_gemb_fit = replace(binned_synthesized_file,  ".jld2" => "_gemb_fit.arrow")
 
 
@@ -529,117 +522,6 @@ begin
     end
 end
 
-# DOWNSCALE OPTIMAL GEMB MODEL TO INDIVIDUAL GLACIERS
-# 1. Loading the GEMB fit parameters and height change data for each geotile
-# 2. Converting geotile height changes to per-glacier values
-# 3. Scaling GEMB variables (SMB, FAC, runoff) using fit parameters and converting to per-glacier values
-# This takes ~8 min minutes per input file [5.5 hours for all]
-if true
-
-    @showprogress desc="Downscaling optimal GEMB data to individual glaciers..." for binned_synthesized_file in path2runs
-        #binned_synthesized_file = reference_run
-
-        run_parameters = Altim.binned_filled_fileparts(binned_synthesized_file)
-        sm = run_parameters.surface_mask;
-
-        glaciers0 = copy(glaciers[sm])
-        geotiles0 = copy(geotiles[sm])
-        
-        synthesized_gemb_fit = replace(binned_synthesized_file,  ".jld2" => "_gemb_fit.arrow")
-        perglacier_synthesized_file = replace(binned_synthesized_file, ".jld2" => "_perglacier.jld2")
-        gemb_fit = GeoDataFrames.read(synthesized_gemb_fit)
-
-        if !isfile(perglacier_synthesized_file) || !isnothing(force_remake_before)
-
-            if isfile(perglacier_synthesized_file) && !isnothing(force_remake_before)
-                if Dates.unix2datetime(mtime(perglacier_synthesized_file)) > force_remake_before
-                    @warn "Skipping $(perglacier_synthesized_file) because it was created after $force_remake_before"
-                    return
-                end
-            end
-
-            ### DOWNSCALE TO EACH GLACIER BY HYPSOMETRY 
-            # NOTE: you get strange spatial gradients in smb due to a lack of spatial gradents in 
-            # climate forcing [like leeward side of mountain ranges]
-            # therefore it is currently recommended to use the downscale by "area" method
-
-            #println("start downscaling from geotile to glacier which will take ~8 minutes per file...")
-            t1 = time()
-
-            if downscale_to_glacier_method == "hypsometry"
-
-                dh = load(binned_synthesized_file, "dh_hyps")
-            
-                glaciers0 = Altim.geotile2glacier!(glaciers0, dh; varname = "dh");
-
-                # load example geotile to get dimensions
-                filename_gemb_geotile_filled = replace(filename_gemb_geotile, ".jld2" => "_$(gemb_fit.id[1])_filled.jld2")
-                smb = load(filename_gemb_geotile_filled, "smb")
-            
-                dgeotile = dims(dh, :geotile)
-                ddate = dims(smb, :date)
-                dheight = dims(smb, :height)
-                dpscale = dims(smb, :pscale)
-                dΔheight = dims(smb, :Δheight)
-
-                var = fill(NaN, dgeotile, ddate, dheight)
-
-                # scale smb, fac, runoff [NOTE: all are in unit of m i.e.]
-                for varname = ["smb", "fac", "runoff"]
-                    @showprogress desc="Populate calibrated $(varname)..." Threads.@threads for gt in eachrow(gemb_fit)
-                        filename_gemb_geotile_filled = replace(filename_gemb_geotile, ".jld2" => "_$(gt.id)_filled.jld2")
-                        var0 = load(filename_gemb_geotile_filled, varname)
-                        var[At(gt.id), :, :] = var0[:,:,At(gt.pscale), At(gt.Δheight)]
-                    end
-
-                    glaciers0 = Altim.geotile2glacier!(glaciers0, var; varname)
-                end
-            elseif downscale_to_glacier_method == "area"
-                ### DOWNSCALE TO EACH GLACIER FRACTIONAL AREA WITHIN EACH GEOTILE
-                glacier_area_km2 = sum.(glaciers0.area_km2)
-
-                for varname = ["dh", "smb", "fac", "runoff"]
-
-                    if varname == "dh"
-                        dh = load(binned_synthesized_file, "dh_hyps")
-                        var0 = Altim.dh2dv(dh, geotiles0);
-                    else
-                        var0 = load(filename_gemb_geotile_filled_dv, varname )
-                    end
-                    
-                    ddate = dims(var0, :date)
-                    glaciers0[!,varname] =  [fill(NaN, ddate) for _ in 1:nrow(glaciers0)]
-
-                    for geotile in unique(glaciers0.geotile)
-                    #geotile = "lat[+28+30]lon[+082+084]"
-                        gindex = findall(geotile .== glaciers0.geotile)
-                        if varname != "dh"
-                            gfit = gemb_fit[findfirst(isequal(geotile), gemb_fit.id),:]
-                            gt_dv = var0[At(geotile), :, At(gfit.pscale), At(gfit.Δheight)]
-                        else
-                            gt_dv = var0[At(geotile), :, :]
-                        end
-
-                        garea = sum.(glaciers0[gindex, :area_km2])
-                        gweighting = garea ./ sum(garea)
-                        for (i,ig) in enumerate(gindex)
-                            glaciers0[ig,varname][:] = gt_dv * gweighting[i] ./ garea[i] * 1000 # convert from km3 to m i.e.
-                        end
-                    end
-                end 
-            else
-                error("downscale_to_glacier_method must be either \"hypsometry\" or \"area\"")
-            end
-
-            FileIO.save(perglacier_synthesized_file, Dict("glaciers" => glaciers0))
-
-            fn = splitpath(perglacier_synthesized_file)
-            #println("downscaling from geotile to glacier complete $(round(Int,time() -t1))s: $(fn[end])")
-        end
-    end
-end
-
-
 # This section processes synthesized altimetry and GEMB data at the geotile level
 # Key steps:
 #
@@ -678,9 +560,6 @@ begin
     # removed Threads.@threads due to memory issues
     @showprogress desc="Computing calibrated geotile level data timeseries for all runs..." for binned_synthesized_file in path2runs 
 
-    #for binned_synthesized_file in [reference_run]
-    #binned_synthesized_file = reference_run
-        
         binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
 
         run_parameters = Altim.binned_filled_fileparts(binned_synthesized_file)
@@ -736,11 +615,12 @@ begin
 
                     # include discharge average over total glacier area [i.e. save in units of mie]
                     index = Altim.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
-                    geotile.discharge = sum(discharge.discharge_gtyr[index])/volume2mass * Δdecyear # to units of mie
+                    geotile.discharge = sum(discharge.discharge_gtyr[index])/volume2mass * Δdecyear # Gt to units of mie
             end
 
             # add discharge date metadata
             colmetadata!(geotiles0, "discharge", "date", collect(ddate), style=:note)
+            colmetadata!(geotiles0, "discharge", "units", "km3 [i.e.]", style=:note)
 
             # Process each variable
             for varname in varnames
@@ -759,30 +639,34 @@ begin
 
                 # Add date metadata for time series
                 colmetadata!(geotiles0, varname, "date",collect(ddate), style=:note)
+                colmetadata!(geotiles0, varname, "units", "km3 [i.e.]", style=:note)
                 
                 # Apply GEMB scaling and convert units for each geotile
                 for geotile in eachrow(geotiles0)
-                    geotile[varname] = var0[At(geotile.id), :, At(geotile.pscale),At(geotile.Δheight)];
+                    geotile[varname] = var0[At(geotile.id), :, At(geotile.pscale), At(geotile.Δheight)];
                 end
             end
 
             # modeled dv
             geotiles0[!, :dv] = (geotiles0[:, :smb] .- geotiles0[:, :discharge] .+ geotiles0[:, :fac])
-            colmetadata!(geotiles0, "dv", "date", collect(ddate), style=:note)
+            colmetadata!(geotiles0, "dv", "date", collect(ddate), style=:note) # to units of km3 assuming an ice density of 910 kg/m3
+            colmetadata!(geotiles0, "dv", "units", "km3 [i.e.]", style=:note)
 
             # modeled dm
-            geotiles0[!, :dm] = (geotiles0[:, :smb] .- geotiles0[:, :discharge]) .* volume2mass # to units of mwe [kg/m²]
+            geotiles0[!, :dm] = (geotiles0[:, :smb] .- geotiles0[:, :discharge]) .* volume2mass # to units of Gt
             colmetadata!(geotiles0, "dm", "date", collect(ddate), style=:note)
+            colmetadata!(geotiles0, "dm", "units", "Gt", style=:note)
 
             # altimetry dm
             geotiles0[!, :dm_altim] = copy(geotiles0[!, :dv_altim])
             for r in eachrow(geotiles0)
                 model = LinearInterpolation(r.fac, Altim.decimalyear.(colmetadata(geotiles0, "fac", "date")))
                 fac = model(Altim.decimalyear.(colmetadata(geotiles0, "dv_altim", "date")))
-                r.dm_altim = (r.dv_altim .- fac) .* volume2mass # in units of mwe [kg/m²]
+                r.dm_altim = (r.dv_altim .- fac) .* volume2mass # in units of Gt
             end
 
             colmetadata!(geotiles0, "dm_altim", "date", colmetadata(geotiles0, "dv_altim", "date"), style=:note)
+            colmetadata!(geotiles0, "dm_altim", "units", "Gt", style=:note)
 
             varnames_all = vcat(varnames, "discharge", "dv", "dm", "dm_altim")
             
@@ -826,84 +710,4 @@ begin
             FileIO.save(binned_synthesized_dv_file, Dict("geotiles" => geotiles0))
         end
     end
-end
-
-# export trends and amplitudes for plotting of reference_run only
-begin     
-    binned_synthesized_file = reference_run
-    binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
-
-    outfile = joinpath(paths.data_dir, "project_data", "geotiles_rates.fgb");
-
-    if !isfile(outfile) || !isnothing(force_remake_before)
-
-        if isfile(outfile) && !isnothing(force_remake_before)
-            if Dates.unix2datetime(mtime(outfile)) > force_remake_before
-                @warn "Skipping $(outfile) because it was created after $force_remake_before"
-                return
-            end
-        end
-
-        geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
-
-        vars_no_write = setdiff(names(geotiles0), ["id", "glacier_frac", "landice_frac", "floating_frac", "geometry", "group", "pscale", "Δheight", "mie2cubickm", "rgiid"])
-        vars_ts = setdiff(vars_no_write, ["extent", "area_km2"])
-        
-
-        # Fit temporal trends to all variables
-        geotiles0 = Altim.df_tsfit!(geotiles0, vars_ts; datelimits = (DateTime(2000,1,1), DateTime(2023,1,1)))
-        
-        # Export results, excluding raw time series
-        source_crs1 = GFT.EPSG(4326)
-        isvec = []
-        for i = 1:ncol(geotiles0)
-            push!(isvec, typeof(geotiles0[1,12]) >: Vector)
-        end
-
-        GeoDataFrames.write(joinpath(paths.data_dir, "project_data", "geotiles_rates_km3yr.fgb"), geotiles0[:, Not(vars_no_write)]; crs=source_crs1)
-
-
-        # now do the same but for area averaged rates of change 
-        for varname in vars_ts
-            geotiles0[:, varname] ./= geotiles0[:, :mie2cubickm]
-        end
-
-        # Fit temporal trends to all variables (easier than finding all of the fits and then multiplying by mie2cubickm)
-        geotiles0 = Altim.df_tsfit!(geotiles0, vars_ts; datelimits = (DateTime(2000,1,1), DateTime(2025,1,1)))
-
-
-        # plot a histogram of the rates
-        f = Figure();
-
-        ax1 = f[1, 1] = Axis(f; xlabel = "trend [m i.e. yr⁻¹]", ylabel = "count")
-        CairoMakie.stephist!(geotiles0[:, :dv_trend], bins = -5:0.25:5; label = "dh")
-        CairoMakie.stephist!(geotiles0[:, :dv_altim_trend], bins = -5:0.25:5; label = "dh altim"); 
-        axislegend(ax1, framevisible = false); 
-
-        ax2 = f[1, 2] = Axis(f; xlabel = "amplitude [m i.e.]", ylabel = "count")
-        CairoMakie.stephist!(geotiles0[:, :dv_amplitude], bins = 0:0.25:5; label = "dh")
-        CairoMakie.stephist!(geotiles0[:, :dv_altim_amplitude], bins = 0:0.25:5; label = "dh altim"); 
-        axislegend(ax2, framevisible = false); 
-       
-        display(f)
-
-        # plot a histogram of pscale and Δheight
-        synthesized_gemb_fit = replace(binned_synthesized_file, ".jld2" => "_gemb_fit.arrow")
-        gemb_fit = GeoDataFrames.read(synthesized_gemb_fit);
-
-        f = Figure();
-        ax1 = f[1, 1] = Axis(f; xlabel = "pscale", ylabel = "count")
-        CairoMakie.stephist!(gemb_fit[:, :pscale], bins = 0.25:0.25:4)
-        ax2 = f[1, 2] = Axis(f; xlabel = "Δheight [m]", ylabel = "count")
-        CairoMakie.stephist!(gemb_fit[:, :Δheight], bins = -3000:200:3000); 
-        #axislegend(ax1, framevisible = false); 
-        display(f)
-
-        CairoMakie.save(replace(outfile, ".fgb" => ".png"), f)
-
-        GeoDataFrames.write(outfile, geotiles0[:, Not(vars_no_write)]; crs=source_crs1)
-    end
-
-    # rsync -rav devon:/mnt/bylot-r3/data/project_data/ ~/data/Altim/project_data/
-    # Sync command for reference
 end

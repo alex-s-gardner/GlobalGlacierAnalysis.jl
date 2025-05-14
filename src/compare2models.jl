@@ -5,28 +5,35 @@ begin
     import GeometryOps as GO
     using DimensionalData
     using SortTileRecursiveTree
+    using CairoMakie
     import GeoInterface as GI
     using FileIO
     using DataFrames
     using Dates
     using Statistics
     using LsqFit
+    using Unitful
+    using Altim.MyUnits
 
     dates2average = [Date("2000-01-01"), Date("2025-01-01")]
+    #glacier_runoff_reference = "binned_unfiltered/2deg/glacier_dh_best_cc_meanmadnorm5_v01_filled_ac_p2_synthesized_perglacier.jld2"
+    glacier_summary_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+   
     paths = Altim.pathlocal
-    glacier_runoff_reference = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_synthesized_perglacier.jld2"
+    km2Gt = 910/1000
 end
 
 # match individual glaciers to major river basins
 begin #[70s cold]
-    # load glacier runoff data
+    
+    # load glacier geometry
     glaciers = GeoDataFrames.read(paths[:glacier_individual_outlines])
     glaciers[!, :center_pts] = GI.Point.(glaciers.CenLon, glaciers.CenLat)
 
     # load large river basins and subset to those in wimberly 2024
     basins = GeoDataFrames.read(paths[:river_major_basins])
 
-    # load wimberly 2024 data to subset basins
+    # load wimberly 2024 data to subset basins [is in units of Gt]
     runoff_modeled = Altim.wimberly2024()
     dbasin = collect(dims(runoff_modeled, :Basin))
 
@@ -49,41 +56,46 @@ end
 
 begin
     # load glacier runoff data
-    glacier_runoff = load(glacier_runoff_reference, "glaciers") # units =  [m i.e.]
-    ddate = dims(glacier_runoff.runoff[1], :date)
+    glacier_runoff = NCDataset(glacier_summary_file)
+
+    # convert to DimensionalData
+    glacier_runoff = Altim.nc2dd(glacier_runoff["runoff"])
+
+    
+    dTi = dims(glacier_runoff, :Ti)
+
     # convert form DateTime to Date to be compatible with wimberly 2024
-    ddate = Dim{:date}(Date.(ddate))
+    ddate = Dim{:date}(Date.(dTi))
+    drgiid = dims(glacier_runoff, :rgiid)
 
-    # convert from perglacier geotile (glacier can call in multiple geotiles) to perglacier [5 min]
-    @time glacier_runoff = Altim.perglacier_geotile2glacier(glacier_runoff; tsvars=["runoff"])
+    sindex = sortperm(val(drgiid))
+    glacier_runoff = glacier_runoff[rgiid=sindex]
 
+    drgiid = dims(glacier_runoff, :rgiid)
+    
     # ensure that glaciers0 RGIId order matches glaciers order
-    @assert glacier_runoff.RGIId == glaciers.RGIId
+    @assert collect(val(drgiid)) == glaciers.RGIId
 
-    # convert from m.i.e. to km3.i.e.
-    for r in eachrow(glacier_runoff)
-        r.runoff .*= r.area_km2/1000
-    end
-
-    # add basin to glacier runoff
-    glacier_runoff[!, :basin] .= glaciers[!, :basin]
+    # add glacier runoff
+    glaciers[!, :runoff] = eachrow(parent(glacier_runoff))
+    glaciers0 = deepcopy(glaciers)
 
     # drop glaciers not in wimberly 2024 basins
-    glacier_runoff = glacier_runoff[glacier_runoff.basin .!= "", :]
+    glaciers0 = glaciers0[glaciers0.basin .!= "", :]
 
-    # group glaciers by basin
-    gdf = groupby(glacier_runoff, :basin)
+    # group glaciers0 by basin
+    gdf = groupby(glaciers0, :basin)
 
     # sum runoff by basin
     dbasin = dims(runoff_modeled, :Basin)
 
     index_date = (ddate .> dates2average[1]) .& (ddate .< dates2average[2])
 
-    basin_runoff = zeros(Ti(collect(ddate[index_date]) .- Day(15)),dbasin)
+    basin_runoff = zeros(Ti(collect(ddate[findall(index_date)]) .- Day(15)), dbasin)* u"Gt"
 
     for basin in dbasin
         foo = reduce(hcat, gdf[(basin,)].runoff);
-        foo[isnan.(foo)] .= 0
+        foo[isnan.(foo)] .= 0 * u"Gt"
         cummulative_runoff = vec(sum(foo, dims=2))
         runoff = diff(cummulative_runoff)
 
@@ -112,27 +124,27 @@ begin
                 if model == "GEMB"
                     ts = basin_runoff[:, At(basin)]
                 else
+                    # take the median across GCMs
                     ts = dropdims(median(runoff_modeled[:, :, At(ssp), At(basin), At(model)], dims=:GCM), dims=:GCM);   
                 end
 
-                basin_runoff_monthly[:, At(basin), At(ssp), At(model)] .= collect(mean.(groupby(ts, Ti => months(1, start=1))))
+                basin_runoff_monthly[:, At(basin), At(ssp), At(model)] .= ustrip(collect(mean.(groupby(ts, Ti => Bins(month, 1:12)))))
                 
-                ts_annual = sum.(groupby(ts, Ti => year))
+                gts = groupby(ts, Ti => year)
+                ts_annual = ustrip(sum.(gts[length.(gts) .== 12]))
                 fit = curve_fit(Altim.model_trend, 1:length(ts_annual),ts_annual,  Altim.p_trend)
-                basin_runoff_trend[At(basin), At(ssp), At(model)] = fit.param[2]*10 # make trend per decade
+                basin_runoff_trend[At(basin), At(ssp), At(model)] = fit.param[2] 
 
-                basin_runoff_mean[At(basin), At(ssp), At(model)] = mean(ts);
+                basin_runoff_mean[At(basin), At(ssp), At(model)] = mean(ts_annual);
             end
         end
     end
 end
 
-using CairoMakie
+		
+palette = (; color=reverse(Makie.resample_cmap(:Paired_4, length(dmodel))))
 
-cmap = :Paired_4		
-
-palette = (; color=reverse(Makie.resample_cmap(cmap, length(dmodel))))
-
+ssp = "ssp585"
 scale = identity
 for (k, da) in enumerate([basin_runoff_trend, basin_runoff_mean])
     f = Figure()
@@ -167,12 +179,13 @@ for (k, da) in enumerate([basin_runoff_trend, basin_runoff_mean])
     f = Figure()
 
     if k == 1
-        limits = [-0.5, 3]
-        units = "[Δkm³/decade]"
+        limits = [-0.5, 3]*0.1
+        units = "[Gt/yr²]"
         outfile = joinpath(paths[:figures], "wimberly2024_trend_scatter.png")
     else
         limits = [0, 6]
-        units = "[km³/year]"
+        units = "[Gt/yr]"
+        outfile = joinpath(paths[:figures], "wimberly2024_rate_scatter.png")
     end
 
     r = 1
@@ -207,6 +220,7 @@ for (k, da) in enumerate([basin_runoff_trend, basin_runoff_mean])
     end
 
     display(f)
+    save(outfile, f)
 end
 
 # plot monthy data 
@@ -232,3 +246,6 @@ begin
 
     save(outfile, f)
 end
+
+
+

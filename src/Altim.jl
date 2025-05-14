@@ -1,5 +1,13 @@
 module Altim
 
+    module MyUnits
+       using Unitful; @unit Gt "Gt" M 1u"Pg" false
+    end
+
+    function __init__()
+       Unitful.register(MyUnits)
+    end
+
     using Proj
     using Arrow
     using DataFrames
@@ -22,6 +30,7 @@ module Altim
     using GeoTiles
     using NearestNeighbors
     using Stencils  
+    using NonlinearSolve
     #using Infiltrator
     using Rasters
     using MAT
@@ -41,6 +50,8 @@ module Altim
     using FlexiJoins
     using ProgressMeter
     using Loess
+    using Unitful
+    Unitful.register(MyUnits)
 
     using LinearAlgebra
     using Rotations
@@ -51,9 +62,9 @@ module Altim
     using AbstractTrees
     using ProgressMeter
     using Random
-    using AbstractTrees
-    #using RangeExtractor
 
+    using RangeExtractor
+    import DimensionalData as DD
     #using MLJ
     #using MLJLinearModels
     using LazyGrids
@@ -83,7 +94,7 @@ module Altim
     include("utilities_geotile_processing.jl")
     include("utilities_routing.jl")
     include("utilities_postprocessing.jl")
-    include("/home/gardnera/Documents/GitHub/Altim.jl/src/STRTreesAbstractTreesExt.jl")
+    # include("/home/gardnera/Documents/GitHub/Altim.jl/src/STRTreesAbstractTreesExt.jl")
 
     export Extent
     export bin, binnedfiltering, crop!, decimalyear, download!, epsg2epsg, epsg2epsg_nodata

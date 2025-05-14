@@ -2436,7 +2436,7 @@ end
 
 
 """
-    perglacier_geotile2glacier(geotile_perglacier; tsvars=["dh", "smb", "fac", "runoff"])
+    perglacier_geotile2glacier_OLD(geotile_perglacier; tsvars=["dh", "smb", "fac", "runoff"])
 
 Convert per-glacier-geotile data to per-glacier data by consolidating values across geotiles.
 
@@ -2457,7 +2457,7 @@ Convert per-glacier-geotile data to per-glacier data by consolidating values acr
   - If multiple geotiles contain valid data, sums the values
 - Uses multi-threading for performance
 """
-function perglacier_geotile2glacier(geotile_perglacier;  tsvars = ["dh", "smb", "fac", "runoff"])
+function perglacier_geotile2glacier_OLD(geotile_perglacier;  tsvars = ["dh", "smb", "fac", "runoff"])
         
     glaciers = DataFrame(RGIId=sort!(unique(geotile_perglacier.RGIId)))
     glaciers[!, :area_km2] = zeros(nrow(glaciers))

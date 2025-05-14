@@ -342,7 +342,7 @@ For each major basin, this function:
 The function processes each major basin in parallel using multiple threads.
 flux_accumulate! is insanely fast.
 """
-function flux_accumulate!(river_inputs, id, nextdown_id, headbasin, majorbasin_id)
+function flux_accumulate!(river_inputs, id, nextdown_id, headbasin, majorbasin_id; accumulated_length = false)
     # sum river inputs going downstream to get total river flux     
 
     Threads.@threads for majorbasin in unique(majorbasin_id) #[2 min]
@@ -369,10 +369,17 @@ function flux_accumulate!(river_inputs, id, nextdown_id, headbasin, majorbasin_i
             id1 = id0[flowdown_now]
             nextdown_id1 = nextdown_id0[flowdown_now]
 
-            # a loop there seems to be faster than a view
-            for (from_id, to_id) in zip(id1, nextdown_id1) 
-                 river_inputs[:, At(to_id)] .+= parent(river_inputs[:, At(from_id)])
-            end
+            # a loop here seems to be faster than a view
+            if accumulated_length
+                 for to_id in unique(nextdown_id1)
+                    from_id = id1[nextdown_id1.==to_id]
+                    river_inputs[At(to_id)] += maximum(river_inputs[At(from_id)])
+                end
+            else
+                for (from_id, to_id) in zip(id1, nextdown_id1) 
+                    river_inputs[:, At(to_id)] .+= parent(river_inputs[:, At(from_id)])
+                end
+            end  
 
             touched[:] = flowdown_now .| touched
 
@@ -395,7 +402,6 @@ function flux_accumulate!(river_inputs, id, nextdown_id, headbasin, majorbasin_i
     end
     return river_inputs
 end
-
 
 function linear_reservoir_impulse_response_monthly(Tb)
     #Tb = 45 #days
@@ -442,4 +448,158 @@ function apply_vector_impulse_resonse!(M, impulse_resonse)
             M[i, j, :] = Q1[1:k]
         end
     end
+end
+
+
+
+# load in river reaches
+function river_reaches(rivers_paths; col_names=nothing)
+    rivers = fill(DataFrame(),length(rivers_paths))
+
+    Threads.@threads for i in eachindex(rivers_paths)
+        if isnothing(col_names)
+            rivers[i] = GeoDataFrames.read(rivers_paths[i])
+        else
+            rivers[i] = GeoDataFrames.read(rivers_paths[i])[:, col_names]
+        end
+    end
+    
+    rivers = reduce(vcat, rivers)
+    sort!(rivers, [:COMID])
+    return rivers
+end
+
+
+function river_cumulative_lengths(rivers)
+
+    # add basin02 and headbasin flags to glacier rivers
+    rivers[!, :basin02] = floor.(Int16, rivers.COMID ./ 1000000)
+    rivers[!, :headbasin] = rivers.up1 .== 0
+
+    # if there is no input from upstream then it is a head basin
+    # This is needed as only a subset of the full river network is routed
+    rivers[!, :headbasin] .|= .!in.(rivers.COMID, Ref(unique(rivers.NextDownID)))
+
+    dcomid = Dim{:COMID}(rivers.COMID)
+    river_lengths = DimArray(rivers.lengthkm, dcomid; name = "river lengths [km]")
+
+    river_lengths = Altim.flux_accumulate!(river_lengths, rivers.COMID, rivers.NextDownID, rivers.headbasin, rivers.basin02; accumulated_length=true)
+
+    return river_lengths
+end
+
+
+
+function compute_population(gpw_ras, rivers, country_polygons, gmax, runoff, buffer_radii; progress=true)
+    m2deg = 0.0000089932
+    
+    countries = unique(country_polygons[!, :country])
+    filter!(!=(""), countries)
+
+    dgmax = Dim{:gmax}(gmax; metadata=Dict(:longname => "maximum monthly glacier fraction of total river flux", :units => "fraction"))
+    drunoff = Dim{:runoff}(runoff; metadata=Dict(:longname => "minimum runoff flux during gmax", :units => "m³/s"))
+
+    dbuffer = Dim{:buffer}(buffer_radii; metadata=Dict(:longname => "buffer radius", :units => "m"))
+    dcountry = Dim{:country}(countries; metadata=Dict(:longname => "country", :units => ""))
+
+    population = zeros(dcountry, dgmax, drunoff,dbuffer; name="population")
+
+    source_crs1 = GFT.EPSG(4326)
+    target_crs1 = GFT.EPSG(3857)
+
+    country_polygons[!, :geometry] = _validate_convert.(country_polygons[:, :geometry])
+
+    prog = progress ? ProgressMeter.Progress(length(population); desc="Extracting population for each county...") : nothing
+    
+    for country in dcountry # having issues with PROJError: pipeline: Pipeline: too deep recursion when using Threads.@threads
+
+        country_polygon = country_polygons[country_polygons.country.==country, :geometry]
+        country_polygon = reduce(LibGEOS.union, country_polygon)
+
+        for gmax in dgmax
+            for runoff in drunoff
+
+                river_idx = (rivers[:, :gmax_avg] .>= gmax) .& (rivers[:, :country] .== country) .& (rivers[:, :runoff_max_avg] .>= runoff)
+
+                if !any(river_idx)
+                    update!(prog, prog.core.counter + length(dbuffer))
+                    continue
+                end
+
+                geom1 = rivers[river_idx, :geometry]
+
+                # extract points
+                geom1 = reduce(vcat, _get_point_subset.(geom1; subsample=10))
+    
+                # project to web-mercador for equal area projection
+                geom1 = GO.reproject(geom1, source_crs1, target_crs1; always_xy=true)
+
+                for buffer_radius in dbuffer
+                    # printstyled("\ncountry: $country, gmax: $gmax, buffer_radius: $buffer_radius \n"; color=:red)
+                    
+                    # buffer
+                    geom = GO.buffer(geom1, buffer_radius)
+
+                    # project back to geographic coordinates
+                    geom = GO.reproject(geom, target_crs1, source_crs1; always_xy=true)
+
+                    # GO.union is hopeless
+                    #GO.union(geom[1], geom[2]; target=GI.PolygonTrait())
+                    #GI.Polygon(GI.LinearRing(collect(GI.getpoint(geom[1]))))
+
+                    # convert geometry to LibGEOS to use thier union function
+                    geom = _validate_convert.(geom)
+                    geom = filter(!isnothing, geom)
+
+                    # union all the polygons
+                    try
+                        geom = reduce(LibGEOS.union, geom)
+                    catch
+                        printstyled("\nerror unioning geometry for country: $country, gmax: $gmax, buffer_radius: $buffer_radius\n"; color=:red)
+                        progress ? next!(prog) : nothing
+                        continue
+                    end
+
+                    # trim to country boundaries
+                    geom = LibGEOS.intersection(country_polygon, geom)
+
+                    total_pop = Rasters.zonal(sum, gpw_ras; of=geom, skipmissing=true)
+                    population[At(country), At(gmax), At(runoff), At(buffer_radius)] += total_pop
+
+                    progress ? next!(prog) : nothing
+                end
+            end
+        end
+    end
+    finish!(prog)
+
+    return population
+end
+
+
+ function _get_point_subset(geom; subsample=10)
+
+    pts = GI.getpoint(geom)
+    if length(pts) < subsample
+        pts = GO.centroid(geom)
+    else
+        pts = collect(pts)
+        idx = collect(1:10:length(pts))
+        idx[end] = length(pts)
+        pts = pts[idx]
+    end
+
+    return pts
+end 
+
+function _validate_convert(geom)
+    try
+        geom = GI.convert(LibGEOS, geom)
+        if !LibGEOS.isValid(geom)
+            geom = nothing
+        end
+    catch
+        geom = nothing
+    end
+    return geom
 end

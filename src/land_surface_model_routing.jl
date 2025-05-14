@@ -33,12 +33,11 @@ begin
     download_lsm_files = false
     lsm_names = ["GLDAS_CLSM10", "GLDAS_VIC10", "GLDAS_NOAH10"]
 
-
     #grid resolution
     grid_res = 1.
 
     paths = Altim.pathlocal
-    rivers_path = joinpath(paths.data_dir, "rivers/MERIT_Hydro_v07_Basins_v01")
+    rivers_path = joinpath(paths[:river])
     rivers_paths = Altim.allfiles(rivers_path; fn_startswith="riv_pfaf", fn_endswith= "MERIT_Hydro_v07_Basins_v01.shp")
     basins_paths = Altim.allfiles(rivers_path; fn_startswith="cat_pfaf", fn_endswith=".shp")
     glacier_rivers_path = joinpath(rivers_path, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
@@ -50,7 +49,7 @@ begin
     glacier_routing_path = replace(glacier_outlines_path, ".gpkg" => "_routing.arrow")
    
     # Use uncorrected ensemble simulations only
-    river_Q_path_ens = joinpath(paths.data_dir, "rivers/Collins2024/Qout_pfaf_ii_GLDAS_ENS_M_1980-01_2009-12_utc/")
+    river_Q_path_ens = joinpath(paths[:data_dir], "rivers/Collins2024/Qout_pfaf_ii_GLDAS_ENS_M_1980-01_2009-12_utc/")
     river_Q_files = readdir(river_Q_path_ens; join=true)
 
     # Total runoff is the sum of subsurface runoff “Qsb_tavg” and surface runoff “Qs_tavg”.
@@ -104,14 +103,8 @@ begin #[~2 min]
     sort!(basins, [:COMID])
 
     # load in river reaches
-    rivers = fill(DataFrame(),length(rivers_paths))
-    col_names = ["geometry", "COMID", "NextDownID", "maxup"]
-    Threads.@threads for i in eachindex(rivers_paths)
-        rivers[i] = GeoDataFrames.read(rivers_paths[i])[:, col_names]
-    end
-    rivers = reduce(vcat, rivers)
-    sort!(rivers, [:COMID])
-
+    rivers = Altim.river_reaches(rivers_paths; col_names=["geometry", "COMID", "NextDownID", "maxup"])
+    
     if nrow(rivers) == nrow(basins)
         basins[!,:NextDownID] = rivers[:,:NextDownID]
         basins[!,:HeadBasin] = rivers[:, :maxup] .== 0
@@ -131,7 +124,6 @@ begin #[~2 min]
     basins[!, :basin02] = floor.(Int16, basins.COMID./1000000)
     basins[!, :centroid] = GO.centroid.(basins.geometry)
 end
-
 
 
 # load gridded runoff data
@@ -165,9 +157,9 @@ for i in eachindex(runoff_vars)
         # average 3-hour accumulation over all 3-hour intervals in April 1979. To compute
         # monthly accumulation, use this formula:
         # Qs_acc (April){kg/m2} = Qs_acc (April){kg/m2/3hr} * 8{3hr/day} * 30{days}
-        # so we need to devide by 8*30 to get m3 s-1 per m2
+        # so we need to devide by 8*30 to get m3 s^-1 per m2
 
-        # to get m3 s-1 per m2 we simply devide by the number of seconds in a 3hr interval
+        # to get m3 s^-1 per m2 we simply devide by the number of seconds in a 3hr interval
         dt = 60*60*3
         Q[runoff_var] ./= dt
 
@@ -187,6 +179,9 @@ for i in eachindex(runoff_vars)
         lines!(Q[:Qsb_acc][180, 80, :]);p  # sanity check
     end
 
+    # scale snow runoff for testing of impact on gmax
+ 
+
     # sum runoff variables
     Q = reduce(+, Q[k] for k in keys(Q))
 
@@ -200,7 +195,7 @@ for i in eachindex(runoff_vars)
         river_inputs = zeros(eltype(Q), dTi, dcomid)
 
         @showprogress dt = 5 desc = "Adding surface + subsurface runoff to each basin ..." Threads.@threads for r in eachrow(basins) #[2 min]
-            # multiply by area in m2 to get m3 s-1 [raw area is in km2]
+            # multiply by area in m2 to get m3 s^-1 [raw area is in km2]
             river_inputs[:, At(r.COMID)] = Q[Near(r.centroid[1]), Near(r.centroid[2]), :] .* (r.unitarea .* 1e6)
         end
     end
@@ -219,6 +214,10 @@ for i in eachindex(runoff_vars)
         # data needs to be Float32 (not Real) for saving as netcdf
         data = Float32.(glacier_river_land_flux)
 
+        if isfile(glacier_rivers_land_flux_paths[i])
+            rm(glacier_rivers_land_flux_paths[i])
+        end
+        
         # save as netcdf
         NCDataset(glacier_rivers_land_flux_paths[i],"c") do ds
             data_dims = dims(data)
@@ -236,7 +235,7 @@ for i in eachindex(runoff_vars)
             end
 
             v = defVar(ds, "flux", parent(data), string.(DimensionalData.name.(data_dims)))
-            v.attrib["units"] = "m3 s-1"
+            v.attrib["units"] = "m3 s^-1"
             v.attrib["long_name"] = "river flux"
 
             # add global attributes
@@ -255,7 +254,7 @@ if validate_output # [5 min]
     ds = Dataset(fn, "r")
     t = collect(ds[:time])
 
-    #for fn in river_Q_files [m3 s-1]
+    #for fn in river_Q_files [m3 s^-1]
     dti = Dim{:Ti}(t)
     dcomid= Dim{:COMID}(basins.COMID)
     riverQ = zeros(Float32, (dti, dcomid))

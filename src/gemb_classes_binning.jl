@@ -1,11 +1,11 @@
-## NOTE: raw GREMB output is in unit of m ice equivalent assuing an ice density of 910 kg/m3
+## NOTE: raw GREMB output is in unit of m ice equivalent assuming an ice density of 910 kg/m3
 
 # This script processes GEMB (Glacier Energy Mass Balance) model data into geotiles and regions.
 # Key processing steps:
 #
 # 1. Initialization (~1 min):
 #    - Sets up project parameters (dates, heights, precipitation scales)
-#    - Loads required packages and geotile definitions
+#    - Loads required packages and geotile definitions 
 #    - Configures input/output paths
 #
 # 2. GEMB Data Merging (~3 min):
@@ -34,7 +34,8 @@
 #
 # Total runtime is approximately 9.5 hours, with most time spent on gap filling
 # and creating height classes in step 4.
-#@time begin
+
+@time begin
     # This section initializes the GEMB (Glacier Energy Mass Balance) model:
     #
     # Key steps:
@@ -660,7 +661,7 @@
 
             # create volume change time series for each geotile
             df_index = findfirst(isequal(geotile), geotiles.id)
-            area = ones(length(ddate), 1) * hcat(geotiles[df_index, :area_km2])' ./ 1000 # divide by 1000 so that result in km3 (NOTE: vars are in mwe)
+            area = ones(length(ddate), 1) * hcat(geotiles[df_index, :area_km2])' ./ 1000 # divide by 1000 so that result in km3 (NOTE: vars are in mie)
             for k in collect(keys(gemb_gt))
                 for pscale in dpscale
                 #pscale = first(dpscale)            
@@ -768,7 +769,7 @@
 
             # create volume change time series for each geotile
             df_index = findfirst(isequal(geotile), geotiles.id)
-            area = ones(length(ddate), 1) * hcat(geotiles[df_index, :area_km2])' ./ 1000 # divide by 1000 so that result in km3 (NOTE: vars are in mwe)
+            area = ones(length(ddate), 1) * hcat(geotiles[df_index, :area_km2])' ./ 1000 # divide by 1000 so that result in km3 (NOTE: vars are in mie)
             for k in collect(keys(gemb_new))
                 for pscale in dpscale_new
                 #pscale = first(dpscale)            
@@ -846,5 +847,4 @@
         
         save(filename_gemb_geotile_filled_extra_extrap_dv, gemb_dv)
     end
-
 end
