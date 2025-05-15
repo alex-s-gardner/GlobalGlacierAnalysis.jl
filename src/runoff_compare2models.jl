@@ -1,5 +1,5 @@
 """
-    compare2models.jl
+    runoff_compare2models.jl
 
 Compare glacier runoff estimates between GEMB and models from Wimberly et al. 2024.
 
@@ -31,8 +31,7 @@ begin
     using Altim.MyUnits
 
     dates2average = [Date("2000-01-01"), Date("2025-01-01")]
-    #glacier_runoff_reference = "binned_unfiltered/2deg/glacier_dh_best_cc_meanmadnorm5_v01_filled_ac_p2_synthesized_perglacier.jld2"
-    glacier_summary_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+    glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
    
     paths = Altim.pathlocal
     km2Gt = 910/1000

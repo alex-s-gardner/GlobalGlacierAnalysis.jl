@@ -12,6 +12,9 @@ into single, seamless datasets. It processes four NASADEM data types:
 
 The VRTs enable efficient access to the entire NASADEM dataset without
 requiring all component files to be loaded into memory simultaneously.
+
+For downloading the NASADEM data see:
+https://portal.opentopography.org/datasetMetadata?otCollectionID=OT.032021.4326.2 
 """
 using ArchGDAL, Altim
 

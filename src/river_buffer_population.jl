@@ -64,10 +64,10 @@ begin
     rivers_path = joinpath(paths.data_dir, "rivers/MERIT_Hydro_v07_Basins_v01")
     glacier_rivers_path = joinpath(rivers_path, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
-    glacier_summary_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+    glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
     glacier_summary_gmax_file = replace(glacier_summary_file, ".nc" => "_gmax.gpkg")
 
-    population_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_gmax_buffer_population.nc")
+    population_file = joinpath(paths[:project_dir], "gardner2025_gmax_buffer_population.nc")
 end
 
 begin

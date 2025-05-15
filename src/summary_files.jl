@@ -39,8 +39,8 @@ begin
     using Altim.MyUnits
     Unitful.register(MyUnits)
 
-    geotile_summary_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_geotile_summary.nc")
-    glacier_summary_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+    geotile_summary_file = joinpath(paths[:project_dir], "gardner2025_geotile_summary.nc")
+    glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
 
     reference_run = "binned/2deg/glacier_dh_best_meanmadnorm5_v01_filled_ac_p2_synthesized.jld2"
     reference_period = (DateTime(2000, 1, 1), DateTime(2000, 12, 31))

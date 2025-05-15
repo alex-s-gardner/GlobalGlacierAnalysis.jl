@@ -30,7 +30,7 @@ begin
 
     paths = Altim.pathlocal
 
-    glacier_flux_path = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary_riverflux.nc")
+    glacier_flux_path = joinpath(paths[:project_dir], "gardner2025_glacier_summary_riverflux.nc")
 
     glacier_rivers_land_flux_path = joinpath(paths[:river],"riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_Qs_acc_Qsb_acc.nc")
     glacier_rivers_snow_flux_path = joinpath(paths[:river],"riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_Qsm_acc.nc")

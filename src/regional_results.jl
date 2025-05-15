@@ -35,7 +35,7 @@ This script processes and analyzes glacier mass change data at regional scales.
 """
 
 # NOTE: errors are at the 95% confidence interval from the reference run for this study and 95% confidence interval from GRACE
-@time begin
+#@time begin
     using Altim
     using DataFrames
     using FileIO
@@ -55,7 +55,7 @@ This script processes and analyzes glacier mass change data at regional scales.
 
     # to include in uncertainty
     reference_run = "binned/2deg/glacier_dh_best_meanmadnorm5_v01_filled_ac_p2_synthesized.jld2"
-    glacier_flux_path = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+    glacier_flux_path = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
 
     project_id = ["v01"]
     surface_mask = ["glacier", "glacier_rgi7"]
@@ -77,7 +77,7 @@ This script processes and analyzes glacier mass change data at regional scales.
 
     paths = Altim.pathlocal
     path2reference = joinpath(paths[:data_dir], reference_run)
-    glacier_summary_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+    glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
 
     # path2perglacier = replace(path2reference, ".jld2" => "_perglacier.jld2")
     path2discharge = joinpath(paths[:data_dir], "GlacierOutlines/GlacierDischarge/global_glacier_discharge.jld2")

@@ -968,8 +968,10 @@ Reads glacier mass change projections from IPCC AR6 Figure 9.21 data files.
 The function processes both the main data files and corresponding error files,
 organizing them into multidimensional arrays indexed by RGI region, date, and scenario.
 
-# rsync -r devon:/mnt/bylot-r3/data/binned/2deg/figures /Users/gardnera/Research/20_01_GlobalGlacierChange/version\ 2/
+rsync -r devon:/mnt/bylot-r3/data/binned/2deg/figures /Users/gardnera/Research/20_01_GlobalGlacierChange/version 2/
 """
+
+
 function read_ipccar6(;datadir=setpaths()[:ipcc_ar6], start2007=false)
     # Data from IPCC AR6 Figure 9.21
     fn_endswith = ".csv"

@@ -31,7 +31,7 @@ begin
 
     paths = Altim.pathlocal
 
-    glacier_summary_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+    glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
     glacier_summary_riverflux_file = replace(glacier_summary_file, ".nc" => "_riverflux.nc")
     glacier_summary_gmax_file = replace(glacier_summary_file, ".nc" => "_gmax.pkg")
 

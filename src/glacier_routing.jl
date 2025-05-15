@@ -68,7 +68,7 @@ glacier routing workflow, including paths to glacier outlines, river networks,
 and output locations for processed data.
 """
 begin
-    glacier_summary_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+    glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
     glacier_summary_riverflux_file = replace(glacier_summary_file, ".nc" => "_riverflux.nc")
     route_rgi2ocean = ["19"] 
 
@@ -100,7 +100,7 @@ begin
 
 
     # TODO: I need to update to use the new glacier_flux path
-    # glacier_flux = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+    # glacier_flux = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
     
     glacier_vars_fns = reduce(vcat,Altim.allfiles.(["/mnt/bylot-r3/data/binned_unfiltered/2deg/", "/mnt/bylot-r3/data/binned/2deg/"]; fn_endswith="synthesized_perglacier.jld2"))
     # glacier_vars_fns = ["/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_synthesized_perglacier.jld2"]

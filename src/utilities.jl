@@ -1616,10 +1616,6 @@ _dy(v, gsy) = (-v[1] - 2 * v[2] - v[3] + v[7] + 2 * v[8] + v[9]) / (8 * gsy) # f
 _ddx(v, gsx) = ((v[4] + v[6]) / 2 - v[5]) / (gsx .^ 2) # for GeoArrays x is rows
 _ddy(v, gsy) = ((v[2] + v[8]) / 2 - v[5]) / (gsy .^ 2) # for GeoArrays y is columns
 
-
-"""
-    geotile_extract_dem(geotile, geotile_dir, dem; filter_halfwidth, filter_kernel, slope, job_id, force_remake)
-"""
 """
     geotile_extract_dem(geotile_id, geotile_dir, dem; kwargs...) -> Nothing
 
