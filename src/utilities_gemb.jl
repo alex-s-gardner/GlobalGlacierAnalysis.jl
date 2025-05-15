@@ -1,3 +1,15 @@
+"""
+    gemb_read(gemb_files; vars=[...])
+
+Read GEMB (Glacier Energy and Mass Balance) data from multiple files.
+
+# Arguments
+- `gemb_files`: Array of file paths to GEMB data files
+- `vars`: Array of variable names to read from the files. Default includes all common variables.
+
+# Returns
+A DataFrame containing the requested variables from all files concatenated together.
+"""
 function gemb_read(
     gemb_files;
     vars=[
@@ -91,6 +103,19 @@ function gemb_read(
 end
 
 
+"""
+    gemb_read2(gemb_file; vars="all", datebin_edges=nothing)
+
+Read GEMB data from a single file with optional date binning.
+
+# Arguments
+- `gemb_file`: Path to a GEMB data file
+- `vars`: Either "all" to read all variables, or an array of specific variable names
+- `datebin_edges`: Optional array of date edges for binning the data
+
+# Returns
+A dictionary containing the requested variables with optional date binning applied.
+"""
 function gemb_read2(gemb_file; vars = "all", datebin_edges = nothing)
        
     vars0=["latitude","longitude", "date", "smb", "fac", "ec", "acc", "runoff", "melt", "fac_to_depth", "height", "refreeze", "t_air", "rain"]
@@ -184,6 +209,17 @@ function gemb_read2(gemb_file; vars = "all", datebin_edges = nothing)
 end
 
 
+"""
+    gemb2dataframe(; path2file)
+
+Convert GEMB data from a JLD2 file to a DataFrame format.
+
+# Arguments
+- `path2file`: Path to a JLD2 file containing GEMB data
+
+# Returns
+A DataFrame with GEMB variables organized by RGI region, height adjustment, and precipitation scale.
+"""
 function gemb2dataframe(;
     path2file="/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2023_820_40_racmo_grid_lwt_e97_0_geotile_filled_d_reg.jld2"
 )
@@ -224,6 +260,18 @@ function gemb2dataframe(;
     return df
 end
 
+"""
+    gemb_classes_densify!(df; n_densify=4)
+
+Densify GEMB parameter classes by interpolating between existing parameter values.
+
+# Arguments
+- `df`: DataFrame containing GEMB data with pscale and Δheight parameters
+- `n_densify`: Number of interpolated points to add between existing parameter values (default: 4)
+
+# Returns
+The input DataFrame with additional interpolated parameter combinations added.
+"""
 function gemb_classes_densify!(df; n_densify = 4)
 
     # interpolate between gemb classes
@@ -302,18 +350,15 @@ end
 
 
 """
-    _matrix_shift_ud!(matrix, shift)
+    _matrix_shift_ud!(matrix, shift; exclude_zeros_in_extrapolation=false, npts_linear_extrapolation=Inf)
 
 Shifts a matrix up or down by a specified number of rows, with linear extrapolation at boundaries.
 
 # Arguments
 - `matrix`: Input matrix to be shifted in-place
 - `shift`: Integer number of rows to shift. Positive shifts down, negative shifts up.
-
-# Details
-For positive shifts, values are shifted down and linear extrapolation is used to fill the top rows.
-For negative shifts, values are shifted up and linear extrapolation is used to fill the bottom rows.
-The extrapolation uses a linear fit based on normalized height coordinates.
+- `exclude_zeros_in_extrapolation`: If true, zero values are excluded when calculating extrapolation
+- `npts_linear_extrapolation`: Maximum number of points to use for linear extrapolation
 
 # Returns
 The modified input matrix
@@ -384,6 +429,21 @@ function _matrix_shift_ud!(matrix, shift; exclude_zeros_in_extrapolation=false, 
 end
 
 
+"""
+    gemb_rate_physical_constraints!(gemb)
+
+Apply physical constraints to GEMB rate variables to ensure consistency.
+
+# Arguments
+- `gemb`: Dictionary containing GEMB variables
+
+# Returns
+The input dictionary with physically consistent values:
+- Negative values for accumulation, rain, melt, and refreeze are set to zero
+- Refreeze cannot exceed melt
+- Runoff equals melt minus refreeze
+- SMB equals accumulation minus runoff minus evaporation/condensation
+"""
 function gemb_rate_physical_constraints!(gemb)
     acc = gemb["acc"]
     acc[acc.<0] .= 0
@@ -423,10 +483,9 @@ Calibrate the SMB model to grouped geotiles to handle glaciers that cross multip
 - `discharge`: Discharge data
 - `geotiles`: DataFrame containing geotile information
 - `examine_model_fits`: Optional geotile ID to examine model fits for debugging 
-    -> e.g. examine_model_fits = "lat[+78+80]lon[-096-094]"
 
 # Returns
-- DataFrame with calibrated parameters for each geotile: id, extent, pscale, Δheight, and mad
+DataFrame with calibrated parameters for each geotile: id, extent, pscale, Δheight, and mad
 """
 function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_model_fits = nothing)
 
@@ -605,8 +664,23 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
     
 end
 
+"""
+    add_pscale_classes(var0, dpscale_new; allow_negative=false)
 
-# this function is used to add pscale classes gemb 
+Interpolate and extrapolate values across a new set of precipitation scale factors.
+
+# Arguments
+- `var0`: Input dimensional array with dimensions (:date, :height, :pscale, :Δheight)
+- `dpscale_new`: New precipitation scale factor dimension to interpolate/extrapolate to
+- `allow_negative`: Whether to allow negative values in the output (default: false)
+
+# Returns
+A new dimensional array with the same structure as `var0` but with the new pscale dimension.
+
+This function performs linear interpolation for pscale values within the range of the original
+data, and linear extrapolation for values outside that range. For extrapolation, it uses either
+the first/last three points or all available points depending on data availability.
+"""
 function add_pscale_classes(var0, dpscale_new; allow_negative=false)
 
     ddate = dims(var0, :date)

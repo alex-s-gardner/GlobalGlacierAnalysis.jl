@@ -1,7 +1,25 @@
-unit = u"kg/s"
-unit_str = string(u"kg/s")
-uparse(unit_str)
+"""
+    summary_files.jl
 
+Generate summary files for glacier mass change analysis.
+
+This script processes glacier elevation change data and glacier surface mass balance model
+outputs to create summary files at both geotile and individual glacier levels. It calculates
+mass change trends and associated uncertainties, combining data from multiple model runs to
+produce robust estimates.
+
+The workflow:
+1. Loads and processes glacier elevation change data from multiple model runs
+2. Computes mean values and uncertainties across different model configurations
+3. Aggregates results by geotile and individual glacier
+4. Performs validation checks on global mass change trends
+5. Saves results to NetCDF files for further analysis
+
+Key outputs:
+- Glacier-level mass change time series with uncertainty estimates
+- Geotile-level aggregated statistics
+- NetCDF files containing all variables with proper units and metadata
+"""
 
 begin
     using Altim

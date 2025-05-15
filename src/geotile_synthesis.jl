@@ -1,54 +1,30 @@
-# This script performs synthesis and analysis of glacier elevation change data.
-# Key processing steps:
-#
-# 1. Initialization and Setup (~1 min):
-#    - Imports required packages for data processing and analysis
-#    - Sets up paths and parameters for geotile synthesis
-#    - Configures project ID, surface masks, DEM sources
-#    - Builds parameter combinations for uncertainty analysis
-#
-# 2. Glacier Hypsometry Processing (~37 min per inventory):
-#    - Processes both RGI6 and RGI7 glacier inventories
-#    - Calculates area-elevation distributions for each glacier
-#    - Saves hypsometry data to JLD2 files
-#
-# 3. Discharge Data Processing:
-#    - Handles measured discharge data
-#    - Estimates discharge for unmeasured areas using SMB
-#    - Combines measured and estimated discharge
-#
-# 4. Synthesis Error Calculation (~2 hrs):
-#    - Calculates uncertainties for combining multiple altimetry missions
-#    - Saves error estimates for later weighting
-#
-# 5. Multi-mission Data Synthesis (~2 hrs):
-#    - Combines data from multiple altimetry missions
-#    - Uses synthesis errors to weight different missions
-#    - Processes 252 run files
-#
-# 6. Geotile to Glacier Downscaling:
-#    - Converts geotile-level data to individual glaciers
-#    - Uses either hypsometry or area-based methods
-#    - Handles GEMB variables (SMB, FAC, runoff)
-#
-# 7. Time Series Analysis and Export:
-#    - Fits models to glacier time series (2000-2023)
-#    - Calculates glacier centroids
-#    - Exports rates to geospatial formats
-#    - Creates gridded SMB averages
-#
-# Total runtime is approximately 5-6 hours, with most time spent on
-# synthesis error calculation and multi-mission synthesis steps.
+"""
+    geotile_synthesis.jl
 
-using Dates
-using ProgressMeter
-force_remake_before = Date(2025,3,21);
+Main script for synthesizing glacier elevation change data across geotiles.
 
-# set force_remake == true to redo all steps from scratch
-force_remake_hypsometry = false; # these files are not altimetry dependent
-force_remake_discharge = false; # these files are not altimetry dependent
-force_remake_geotile_groups = false; # these files are not altimetry dependent
+This script performs several key operations:
+1. Calculates glacier hypsometry for different glacier inventories
+2. Estimates global glacier discharge
+3. Synthesizes elevation change data from multiple altimetry missions
+4. Calibrates GEMB (Glacier Energy and Mass Balance) model to altimetry data
+5. Computes volume and mass change time series for each geotile
 
+The workflow handles multiple surface masks (glacier inventories), combines
+measured and modeled discharge data, and applies calibration parameters to
+GEMB model outputs to match altimetry observations.
+"""
+
+begin
+    using Dates
+    using ProgressMeter
+    force_remake_before = Date(2025,3,21);
+
+    # set force_remake == true to redo all steps from scratch
+    force_remake_hypsometry = false; # these files are not altimetry dependent
+    force_remake_discharge = false; # these files are not altimetry dependent
+    force_remake_geotile_groups = false; # these files are not altimetry dependent
+end
 # LOAD PACKAGES,SET PATHS AND PARAMETERS
 begin
     using Altim
@@ -76,15 +52,6 @@ begin
     using Loess
     using DataInterpolations
     include("utilities_synthesis.jl")
-
-    # 1. Loads local configuration paths
-    # 2. Sets key parameters:
-    #    - Project ID, surface masks, DEM sources, and processing options for uncertainty analysis
-    #    - Latitude threshold for discharge-to-SMB conversion
-    #    - Geotile width of 2 degrees
-    #    - Time period for equilibrium calculations
-    # 3. Builds parameter combinations and filters to only include existing files
-    # 4. Sets up paths for glacier geometry files (RGI v6 and v7)
 
     paths = Altim.pathlocal
     geotile_width = 2;
@@ -163,18 +130,20 @@ begin
 
 end
 
-# GLACIER HYPSOMETRY BY GEOTILE
-# For each inventory:
-# 1. Generates output filename for storing hypsometry data
-# 2. Determines glacier ID field name based on RGI version (RGIId for v6, rgi_id for v7)
-# 3. If output file doesn't exist:
-#    - Reads glacier outlines from GeoPackage file
-#    - Loads Copernicus DEM elevation data 
-#    - Defines elevation bins for hypsometry calculation
-#    - Gets geotiles (2-degree grid cells) containing glaciers
-#    - Calculates area-elevation distribution (hypsometry) for each glacier-geotile combination
-#    - Saves results to JLD2 file
-# Note: Hypsometry calculation takes ~37 minutes per inventory
+
+"""
+    Calculate glacier hypsometry for each surface mask inventory
+
+Processes each glacier inventory to calculate area-elevation distributions:
+1. Determines appropriate glacier ID field based on RGI version
+2. Reads glacier outlines from the specified inventory
+3. Loads COP30 DEM and defines elevation bins
+4. Identifies geotiles containing glaciers
+5. Calculates hypsometric area distribution for each glacier-geotile combination
+6. Saves results to JLD2 file for later use
+
+Note: This calculation is computationally intensive (~37 minutes per inventory)
+"""
 for sm in surface_mask 
     begin
         # Set the glacier ID attribute name based on RGI version
@@ -214,23 +183,21 @@ for sm in surface_mask
     end 
 end
 
+"""
+Process and calculate global glacier discharge data.
 
-# GLACIER DISCHARGE
-# This section processes glacier discharge data by:
-# 1. Loading RGI6 glacier hypsometry data
-# 2. Getting geotiles containing glaciers and initializing parameters:
-#    - Filters to tiles with glaciers
-#    - Sets precipitation scaling to 1.0 (no scaling) 
-#    - Sets height adjustment to 0
-# 3. Loading and processing SMB data:
-#    - Loads SMB data for each geotile
-#    - Converts geotile-level data to per-glacier values
-# 4. Handling discharge data:
-#    - Estimates discharge for unmeasured glaciers using SMB
-#    - Combines with measured discharge data
-#    - Sets negative discharge values to zero
-# 5. Saves the final combined discharge data to file
+This section:
+1. Loads glacier hypsometry data from previously generated files
+2. Downscales geotile-level GEMB model data to individual glaciers using either hypsometry or area-based methods
+3. Estimates discharge for unmeasured glaciers based on surface mass balance
+4. Combines estimated discharge with measured discharge data
+5. Saves the combined dataset to a file
 
+Parameters:
+- Uses global variables for file paths and configuration settings
+- Supports "hypsometry" or "area" downscaling methods
+- Applies discharge estimation only for glaciers with non-zero area
+"""
 if .!isfile(globaldischarge_fn) || force_remake_discharge # Load RGI6 glacier hypsometry data from previously generated file glacier_geotile_hyps_fn = joinpath(paths.data_dir, "GlacierOutlines/rgi60/rgi60_Global.gpkg")
     sm = "glacier"
     
@@ -312,43 +279,53 @@ else
 end
 
 
-# MISSION ERROR AS SPREAD OF ALL MODEL RUNS
-# 1. Calls geotile_synthesis_error() function which:
-#    - Takes path to run files as input
-#    - Processes ~252 run files (takes ~2 hours)
-#    - Calculates errors/uncertainties for synthesizing different missions
-#    - Saves results to a JLD2 file at specified output path
-#    - Has option to force remaking the error file
-#
-# 2. The synthesis errors will be used later to:
-#    - Weight different missions when combining their measurements
-#    - Account for varying uncertainties between missions
-#    - Optimize the final synthesis of elevation changes
+
 path2geotile_synthesis_error = geotile_synthesis_error(; 
     path2runs, 
     outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2", 
     force_remake_before,
 )
 
-# SYNTHESIS OF ALL MISSIONS
-# 1. Takes ~13 min to process 252 run files
-# 2. Combines data from specified missions:
-#    - Hugonnet glacier mass balance
-#    - GEDI laser altimetry 
-#    - ICESat laser altimetry
-#    - ICESat-2 laser altimetry
-# 3. Uses synthesis error calculations from previous step to:
-#    - Weight contributions from each mission
-#    - Account for varying uncertainties
-# 4. Can force reprocessing of synthesis with force_remake_before
-# rm.(allfiles("/mnt/bylot-r3/data/binned/2deg/"; fn_endswith = "synthesized.jld2"))
+
+"""
+    geotile_synthesize_runs(;
+        path2runs,
+        path2geotile_synthesis_error,
+        missions2include=["hugonnet" "gedi" "icesat" "icesat2"],
+        force_remake_before
+    )
+
+Synthesize elevation change data from multiple altimetry missions into a unified dataset.
+
+# Arguments
+- `path2runs`: Paths to the aligned altimetry data files
+- `path2geotile_synthesis_error`: Path to the geotile synthesis error file
+- `missions2include`: Array of mission names to include in the synthesis
+- `force_remake_before`: Date threshold for forcing remake of existing files
+"""
 geotile_synthesize_runs(;
     path2runs,
-    path2geotile_synthesis_error, missions2include=["hugonnet" "gedi" "icesat" "icesat2"],
+    path2geotile_synthesis_error, 
+    missions2include=["hugonnet" "gedi" "icesat" "icesat2"],
     force_remake_before
 )
 
-# Load geotile info for mutiple surface masks
+
+"""
+Load and prepare geotile data for multiple surface masks.
+
+This function:
+1. Updates file paths to point to synthesized data
+2. Loads elevation change data to extract geotile dimensions
+3. Processes geotiles for each surface mask by:
+   - Generating geotiles with hypsometry information
+   - Making geotiles mutually exclusive by RGI region
+   - Aligning geotile indices with elevation change dimensions
+   - Standardizing area column names
+4. Returns dictionaries of geotiles and glaciers for each surface mask
+
+Returns dictionaries of geotiles and glaciers indexed by surface mask.
+"""
 begin
     # Update paths to point to synthesized data
     path2runs = replace.(path2runs, "aligned.jld2" => "synthesized.jld2")
@@ -384,26 +361,24 @@ begin
     end
 end
 
-# IDENTIFY GEOTILE GROUPINGS FOR MODEL CALLIBRATION
-# 1. Initializes columns in geotiles dataframe to store:
-#    - Indices of intersecting glaciers (discharge_ind)
-#    - Indices of connected geotiles (geotile_intersect)
-#
-# 2. Finds intersections between large glaciers (>100 km2) and geotiles:
-#    - Builds spatial index tree for efficient intersection testing
-#    - For each geotile, finds intersecting glaciers using tree queries
-#
-# 3. Groups connected geotiles:
-#    - Identifies geotiles that share glaciers
-#    - Creates groups of connected geotiles
-#    - Applies manual overrides for specific cases where large glaciers 
-#      cross tiles but should be treated separately
-#
-# 4. Saves results:
-#    - Converts geotile extents to rectangles
-#    - Writes geotile groups to file, excluding temporary columns
-# This takes ~10 seconds
 
+
+"""
+    Group geotiles based on glacier overlap
+
+This code identifies and groups geotiles that are connected by large glaciers
+that cross tile boundaries. This ensures that glaciers spanning multiple tiles
+are treated consistently in subsequent analysis.
+
+The function:
+1. Uses a minimum glacier area threshold (default 100 km²) to identify large glaciers
+2. Identifies which geotiles these large glaciers overlap with
+3. Creates groups of connected geotiles based on shared glaciers
+4. Applies manual grouping overrides for specific regions
+5. Saves the grouping information to a file for later use
+
+The grouping is only recalculated if the output file doesn't exist or if forced.
+"""
 if !isfile(geotile_groups_fn) || force_remake_geotile_groups
 #@time begin
     # Filter for large glaciers (>100 km2) that may cross tile boundaries
@@ -424,28 +399,22 @@ if !isfile(geotile_groups_fn) || force_remake_geotile_groups
 end
 
 
-# FIND OPTIMAL GEMB MODEL FIT TO ALTIMETRY DATA
-# 1. Loads GEMB data:
-#    - Reads SMB (Surface Mass Balance) and FAC (Firn Air Content) from filled geotile data
-#
-# 2. For each binned/synthesized altimetry file:
-#    - Converts elevation change (dh) to volume change (dv) for each geotile
-#    - Performs sanity checks to ensure no geotiles contain only NaN values
-#
-#    - Handles troubleshooting for specific geotiles if needed
-# 3. Fits GEMB model to altimetry data:
-#    - Calibrates model at regional rather than individual geotile scale
-#    - This approach handles cases where glacier discharge crosses multiple geotiles
-#    - Future improvements could include:
-#      * Identifying geotile groups that enclose glacier groups
-#      * Calculating flux across geotiles
-#
-# 4. Saves results:
-#    - Stores fit parameters and statistics for each geotile group
-#    - Includes area normalization of mean absolute deviation (MAD)
 
-# Takes ~13 seconds
+"""
+    Calibrate GEMB model to altimetry data
 
+This function calibrates the Glacier Energy and Mass Balance (GEMB) model to match altimetry observations:
+1. Loads GEMB surface mass balance (SMB) and firn air content (FAC) data
+2. Assigns geotile groups based on glacier connectivity
+3. For each altimetry dataset:
+   - Converts elevation change to volume change
+   - Finds optimal GEMB parameters by fitting to altimetry data
+   - Accounts for glacier groups to handle glaciers spanning multiple tiles
+   - Calculates mean absolute deviation (MAD) as a quality metric
+   - Saves calibration parameters to Arrow files for later use
+
+The calibration is only performed if output files don't exist or if forced by date.
+"""
 begin
     # load gemb data
     # Note: GEMB volume change is for a single surface mask... this is a hack has making gemb dv for multiple surface masks is onerious... that said, because GEMB data is calibrated to altimetry that uses different surface masks.. this is mostly a non-issue
@@ -522,31 +491,29 @@ begin
     end
 end
 
-# This section processes synthesized altimetry and GEMB data at the geotile level
-# Key steps:
-#
-# 1. Data Loading and Setup:
-#    - Loads discharge data and mass conversion factors
-#    - Processes each run file from path2runs
-#    - Copies glacier and geotile data for current surface mask
-#
-# 2. Geotile Processing:
-#    - Filters geotiles to only those containing glaciers
-#    - Assigns group IDs from geotile_groups
-#    - Adds GEMB fit parameters and mass conversion factors
-#    - Processes discharge data for each geotile
-#
-# 3. Variable Processing:
-#    - Handles multiple variables: dv_altim, runoff, fac, smb, etc.
-#    - Converts units and applies GEMB scaling
-#    - Calculates derived variables like dv, dm, dm_altim
-#
-# 4. Assign rgi ids and save:
-#    - Averages discharge, dv, dm by geotile groups
-#    - Assigns RGI region IDs
-#    - Saves processed data to JLD2 files
-#
 
+
+"""
+Generate calibrated geotile-level timeseries by combining altimetry and GEMB model data.
+
+This function:
+1. Loads synthesized altimetry data and GEMB fit parameters
+2. Processes each geotile containing glaciers
+3. Applies calibration parameters from GEMB model fits
+4. Converts elevation changes to volume and mass changes
+5. Handles discharge data and firn air content corrections
+6. Aggregates data for glacier groups that span multiple geotiles
+7. Computes regional estimates by RGI region
+
+The function creates comprehensive timeseries including:
+- Altimetry-derived volume changes (dv_altim)
+- Surface mass balance components (runoff, smb, rain, etc.)
+- Discharge estimates
+- Combined model-based volume/mass changes (dv, dm)
+- Altimetry-derived mass changes with firn correction (dm_altim)
+
+Output is saved as JLD2 files with "_gembfit_dv.jld2" suffix.
+"""
 begin
     # Load synthesized data and GEMB fit parameters
     discharge = load(globaldischarge_fn, "discharge")

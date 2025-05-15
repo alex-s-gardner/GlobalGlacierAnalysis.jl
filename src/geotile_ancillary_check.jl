@@ -1,5 +1,16 @@
-# CEHCK THAT ALL ALTIM, MASK, and DEM FILES EXIST & ARE OF THE SAME LEGTH... 
-# ... AND DELETE THOSE THAT ARE NOT
+"""
+    geotile_ancillary_check.jl
+
+Validates and cleans ancillary data files associated with altimetry measurements.
+
+This script:
+1. Checks that all altimetry, mask, and DEM files exist for each geotile
+2. Verifies that ancillary files have the same number of rows as their corresponding altimetry files
+3. Deletes any ancillary files with mismatched row counts to prevent data inconsistencies
+
+The script processes multiple altimetry missions (ICESat-2, ICESat, GEDI, Hugonnet) and
+various ancillary data types (masks, DEMs, canopy height).
+"""
 
 using Arrow
 using Altim

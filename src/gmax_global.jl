@@ -1,4 +1,19 @@
-# Calculate the climatological maximum monthly fractional contribution of glacier runoff to total river flux [gmax]
+"""
+    gmax_global.jl
+
+Calculate the climatological maximum monthly fractional contribution of glacier runoff to total river flux (gmax).
+
+This script:
+1. Loads glacier runoff and river flux data from NetCDF files
+2. Calculates the fraction of total river flux contributed by glacier runoff
+3. Determines the maximum monthly contribution (gmax) for each river segment
+4. Processes river network data to identify terminal points (sinks)
+5. Adds glacier discharge data from external sources
+6. Writes results to GeoPackage files for further analysis
+
+The script handles time series data from 2000-2024 and focuses on peak runoff periods.
+"""
+
 begin
     using NCDatasets
     using GeoDataFrames
@@ -31,7 +46,20 @@ begin
     SECONDS_PER_DAY = 86400
 end
 
-#@time begin
+"""
+Calculate the maximum monthly fractional contribution of glacier runoff to total river flux.
+
+This function:
+1. Loads glacier runoff and river flux data from NetCDF files
+2. Aligns time series data and ensures consistent dimensions
+3. Focuses on peak runoff periods (±2 months around maximum) for each river segment
+4. Calculates the fraction of total river flux contributed by glacier runoff
+5. Determines monthly averages and extremes (min/max) of glacier contribution
+6. Adds results to river network data for spatial analysis
+
+Returns a GeoDataFrame with river segments and their glacier runoff contribution metrics.
+"""
+@time begin
     # load data from netcdf files
     glacier_flux_nc = NCDataset(glacier_summary_riverflux_file)
     river_flux_nc = NCDataset(glacier_rivers_land_flux_path)
@@ -143,7 +171,22 @@ end
     GeoDataFrames.write(glacier_summary_gmax_file , rivers)
 end
 
-# create a point dataset of river sinks
+"""
+Create a point dataset of river sinks with discharge information.
+
+This function:
+1. Loads glacier river network data
+2. Identifies terminal rivers (sinks) where rivers end
+3. Converts river geometries to point centroids
+4. Adds runoff information from the rivers dataframe
+5. Incorporates discharge data from external sources
+6. Categorizes sinks by type (ocean terminating, inland, etc.)
+7. Calculates marker sizes based on runoff volume
+8. Saves the resulting point dataset to disk
+
+The output is a GeoPackage file containing point geometries for all river sinks
+with associated attributes for visualization and analysis.
+"""
 @time begin #[90s]
     # load glacier river paths
     glacier_rivers = GeoDataFrames.read(glacier_rivers_path)

@@ -31,7 +31,7 @@ module Altim
     using NearestNeighbors
     using Stencils  
     using NonlinearSolve
-    #using Infiltrator
+  
     using Rasters
     using MAT
     using ScatteredInterpolation
@@ -39,7 +39,7 @@ module Altim
     using LsqFit
     using CSV
     using NCDatasets
-    #using GeoStats
+
     using Distances
     using DataInterpolations
     using ColorSchemes
@@ -65,15 +65,12 @@ module Altim
 
     using RangeExtractor
     import DimensionalData as DD
-    #using MLJ
-    #using MLJLinearModels
     using LazyGrids
 
     using LibGEOS
     using GeoInterface
     using Shapefile
     using FileIO
-    #using Plots
 
     import GeometryOps as GO
     import GeoInterface as GI
@@ -99,7 +96,7 @@ module Altim
     export Extent
     export bin, binnedfiltering, crop!, decimalyear, download!, epsg2epsg, epsg2epsg_nodata
     export geotile_build, geotile_define, geotile_download_granules!, geotile_extent
-    export geotile_search_granules, geotile_id, granules_load, pointextract, points_plus
+    export geotile_search_granules, geotile_id, granules_load, pointextract
     export range, regular_grid, regular_grid_extents, searchdir, setpaths, utm_epsg, within
     export madnorm, ts_fit, geotile_utm!, geoid, geotile_extract_dem, dem_height
     export geotile_aggrigate_reduce, geotile_ts_fit, itslive_zone, itslive_epsg, itslive_proj!

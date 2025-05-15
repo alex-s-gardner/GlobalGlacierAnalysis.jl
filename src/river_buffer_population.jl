@@ -1,3 +1,25 @@
+"""
+    river_buffer_population.jl
+
+Analyze population living near glacier-fed rivers globally.
+
+This script calculates and visualizes the number of people living within various 
+buffer distances of rivers with different glacier melt contribution thresholds.
+It processes global population density data, river networks, and glacier runoff 
+information to quantify population exposure to changes in glacier-fed river systems.
+
+The analysis:
+1. Loads global population density data and river networks with glacier attributes
+2. Calculates population within specified buffer distances of glacier-fed rivers
+3. Generates visualizations of population exposure by country and continent
+4. Provides summary statistics for different scenarios (low, medium, high exposure)
+
+Key parameters:
+- gmax: Maximum glacier contribution threshold (%)
+- buffer_radii: Distance from rivers (meters)
+- runoff: River discharge threshold (m³/s)
+"""
+
 begin
     progress = true
 
@@ -120,7 +142,7 @@ if !isfile(population_file)
 
     # compute population for each country as a function of maximum glacier fraction and buffer radius
     gmax =[25, 50]# [25, 50]
-    buffer_radii = [1_000, 5_000, 10_000, 20_000, 30_000, 40_000, 50_000]
+    buffer_radii = [1_000, 5_000, 10_000, 15_000, 20_000, 25_000, 30_000, 40_000, 50_000]
     runoff = [0, 1.0, 2.5, 5.0, 10.0, 100.0, 1000.0] # runoff threshold [m³/s]
 
     # subset to just Canada for testing 

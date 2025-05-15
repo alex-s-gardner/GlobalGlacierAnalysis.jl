@@ -1,4 +1,20 @@
  
+"""
+    glacier_outlines_fix_merge.jl
+
+Process and merge RGI 7.0 glacier outlines into a single GeoPackage file.
+
+This script:
+1. Copies the original RGI 7.0 glacier outlines to a new directory
+2. Converts all shapefiles to MULTIPOLYGON geometry with XY dimensions
+3. Reads all converted shapefiles into GeoDataFrames
+4. Merges all GeoDataFrames into a single dataframe
+5. Writes the merged data to a GeoPackage file
+
+The script ensures consistent geometry types across all glacier outlines
+for improved compatibility with GIS applications.
+"""
+
 using ArchGDAL
 using GeoTiles
 using GeoDataFrames

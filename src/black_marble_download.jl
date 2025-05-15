@@ -1,21 +1,15 @@
+
 """
-Download NASA's Black Marble nighttime lights imagery from 2016.
+    download_black_marble_2016()
 
-This script downloads the Black Marble nighttime lights imagery tiles from NASA's servers.
-The imagery is split into 8 tiles (A1-D2) covering different regions of the Earth.
+Download NASA's Black Marble 2016 nighttime imagery tiles.
 
-The script:
-1. Uses aria2c for reliable downloads with resume capability
-2. Retries failed downloads automatically
-3. Downloads all 8 tiles (A1-D2) to the specified local folder
+Downloads the 8 tiles (A1-D2) of the Black Marble 2016 nighttime imagery from NASA's
+Earth Observatory website. Uses aria2c for efficient downloading with automatic retry
+capability in case of connection failures.
 
-Dependencies:
-- Aria2_jll: For the aria2c download utility
-
-Output:
-- Downloads .tif files to the specified folder path
+The files are saved to the directory "/Users/gardnera/data/BaseMaps/BlackMarble_2016".
 """
-
 using Aria2_jll
 
 finished = false

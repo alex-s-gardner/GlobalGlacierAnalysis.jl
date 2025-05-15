@@ -1,28 +1,18 @@
-# This script calculates hypsometric (elevation-binned) area distributions for different masks:
-#
-# Configuration:
-# - Uses 2-degree geotile width
-# - Processes COP30 v2 DEM for elevation data
-# - Calculates areas for glacier, land, RGI7 glaciers, and glacier buffer zones
-#
-# Processing steps:
-# 1. Set up configuration:
-#    - Load required packages and utilities
-#    - Define geotile width, DEM source, and masks to process
-#    - Set up elevation bin ranges
-#
-# 2. For each mask type (glacier, land, etc):
-#    - Set up output paths and files
-#    - Load DEM raster and mask shapefiles
-#    - Filter geotiles to those with glacier coverage
-#    - Calculate binned areas using parallel processing
-#    - Save results to Arrow files
-#
-# Special handling:
-# - Land mask is inverted from water mask
-# - Land calculations exclude glacier areas
-# - Uses threading for parallel processing
-# - Only processes geotiles with glacier coverage
+"""
+    geotile_hyps.jl
+
+Generate hypsometric area distributions for geotiles.
+
+This script:
+1. Calculates area distributions by elevation for different land cover masks
+2. Processes data for glacier, land, and buffer zone areas
+3. Uses COP30 DEM (or other specified DEM) for elevation binning
+4. Saves results as Arrow files in the analysis/binned directory
+5. Supports multithreaded processing for efficiency
+
+The output files contain area in km² binned by elevation for each geotile,
+which can be used for hypsometric analysis of glacier and land areas.
+"""
 
 begin
     using Altim

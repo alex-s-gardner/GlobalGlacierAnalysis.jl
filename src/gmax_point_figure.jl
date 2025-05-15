@@ -1,4 +1,20 @@
-# Calculate gmax climatological maximum monthly fractional contribution of glacier runoff to total river flux
+"""
+    gmax_point_figure.jl
+
+Calculate and visualize the climatological maximum monthly fractional contribution of glacier runoff to total river flux (gmax).
+
+This script:
+1. Loads glacier runoff and river flux data from NetCDF files
+2. Processes time series data for specific geographic locations
+3. Creates visualizations showing:
+   - River flux components (land, snow, glacier)
+   - Glacier runoff as a fraction of total river flux
+   - The maximum monthly contribution (gmax) with seasonal patterns
+4. Saves the resulting figures for each location
+
+The script handles data from 2000-2024 and focuses on key river basins near glaciated regions.
+"""
+
 begin
     using NCDatasets
     using GeoDataFrames
@@ -175,4 +191,3 @@ location = locations[1]
     output_path = joinpath(paths[:figures], "riverflux_$out_name.png")
     save(output_path, fig)
 end
-

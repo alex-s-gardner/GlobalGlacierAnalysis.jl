@@ -1,28 +1,17 @@
 """
-Coregister altimetry data to reference DEM for a specific geographic region.
+    coregester_hugonnet.jl
 
-This script performs coregistration of various altimetry products to a reference DEM
-within a specified geographic region. The coregistration process aligns the altimetry 
-data with the DEM to minimize systematic offsets.
+Coregister elevation data products to a reference DEM for a specific geographic region.
 
-Key operations:
-1. Sets up project parameters (geotile width, grid spacing, domain)
-2. Loads project paths, products and geotiles
-3. Defines geographic extent for processing
-4. Performs coregistration for each altimetry product
+This script:
+1. Sets up configuration parameters for geotile processing (width, grid spacing)
+2. Defines project parameters and domain (landice)
+3. Loads project paths, products, and geotiles
+4. Subsets geotiles to a specific region in British Columbia, Canada
+5. Coregisters each product to the Copernicus 30m DEM (cop30_v2)
 
-Parameters:
-- geotile_width: Width of geotiles in degrees (default: 2)
-- grid: Tuple defining node spacing and width for coregistration grid
-- project_id: Project identifier (default: :v01) 
-- domain: Processing domain (:landice or :all)
-- ext: Geographic extent for processing
-
-The script uses the Altim.geotile_coregister function to perform the actual
-coregistration for each product.
-
-Dependencies:
-Altim, Extents, Arrow, DataFrames, ProfileView, Plots
+The coregistration process aligns elevation data from different sources to minimize
+systematic offsets, improving the accuracy of elevation change measurements.
 """
 
 using Altim
@@ -56,6 +45,3 @@ for product in products
         Altim.geotile_coregister(geotile, paths[product.mission].geotile, dem)
 end
 
-#histogram(df.dx, bins=-20:1:20, label="dx");
-#histogram(df.dy, bins=-20:1:20, label="dy");
-#histogram(df.dz, bins = -20:1:20, label="dz");

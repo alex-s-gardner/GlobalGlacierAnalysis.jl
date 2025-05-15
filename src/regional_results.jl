@@ -50,6 +50,8 @@ This script processes and analyzes glacier mass change data at regional scales.
     using StatsBase
     using FlexiJoins
     import GeometryOps as GO
+    using NCDatasets
+    using CSV
 
     # to include in uncertainty
     reference_run = "binned/2deg/glacier_dh_best_meanmadnorm5_v01_filled_ac_p2_synthesized.jld2"
@@ -75,7 +77,9 @@ This script processes and analyzes glacier mass change data at regional scales.
 
     paths = Altim.pathlocal
     path2reference = joinpath(paths[:data_dir], reference_run)
-    path2perglacier = replace(path2reference, ".jld2" => "_perglacier.jld2")
+    glacier_summary_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
+
+    # path2perglacier = replace(path2reference, ".jld2" => "_perglacier.jld2")
     path2discharge = joinpath(paths[:data_dir], "GlacierOutlines/GlacierDischarge/global_glacier_discharge.jld2")
     path2rgi_regions = paths[:rgi6_regions_shp]
 
@@ -139,7 +143,7 @@ end
     if occursin("glacier_rgi7", reference_run)
         error("rivers have only been calculated for rgi6 so this will throw an error if using glacier_rgi7")
     else
-        dm_gt_sinktype = Altim.rgi_endorheic(path2river_flux, path2perglacier)
+        dm_gt_sinktype = Altim.rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend)
         endorheic_scale_correction = 1 .- dm_gt_sinktype[:,:, At(true)] ./ dm_gt_sinktype[:,:, At(false)]
     end
 
@@ -176,6 +180,25 @@ begin
 
     # dump table to console
     Altim.show_error_bar_table(regional_results)
+
+    # for saving to csv
+    regional_results_out = copy(regional_results)
+    colnames = names(regional_results_out)
+    delete_index = falses(length(colnames))
+    delete_cols_containing =["discharge_amplitude", "discharge_phase", "discharge_acceleration", "gsi_phase", "gsi_amplitude", "gsi_acceleration"]
+    for delete_col in delete_cols_containing
+        delete_index .|= occursin.(Ref(delete_col), colnames)
+    end
+    regional_results_out = regional_results_out[:, .!delete_index]
+
+
+    dm_altim_index = findall(occursin.(Ref("dm_altim"), colnames))
+    for i in dm_altim_index
+        rename!(regional_results_out, colnames[i] => replace(colnames[i], "altim" => "altimetry"))
+    end
+
+    output_file = joinpath(paths[:project_dir], "Gardner2025_regional_results.csv")
+    CSV.write(output_file, regional_results_out)
 end
 
 begin
@@ -187,14 +210,6 @@ begin
     println("----------- from $(dates4trend[1]) to $(dates4trend[2]) -----------")
     regional_results = Altim.error_bar_table(region_fits, varnames, params, setdiff(drgi, exclude_regions); digits=2);
     Altim.show_error_bar_table(regional_results; cols2display = 1)
-
-    println("----------- from $(dates_firstdecade[1]) to $(dates_firstdecade[2]) -----------")
-    regional_results_firstdecade = Altim.error_bar_table(region_fits_firstdecade, varnames, params, setdiff(drgi, exclude_regions); digits=2);
-    Altim.show_error_bar_table(regional_results_firstdecade; cols2display = 1)
-
-    println("----------- from $(dates_lastdecade[1]) to $(dates_lastdecade[2]) -----------")
-    regional_results_lastdecade = Altim.error_bar_table(region_fits_lastdecade, varnames, params, setdiff(drgi, exclude_regions); digits=2);
-    Altim.show_error_bar_table(regional_results_lastdecade; cols2display = 1)
 
 end
 
@@ -285,7 +300,6 @@ begin
     println("$(round(Int, total_runoff/(total_runoff + total_discharge)*100))% ($(total_runoff) ± $(total_runoff_err)) Gt/yr came from runoff")
 
 
-
     # compute amplitude and trend difference if using static fac 
     amp_static_fac_frac = round.((region_fits[At("dv"), :, At("amplitude"), At(false)] * 0.85) ./ region_fits[At("dm"), :, At("amplitude"), At(false)] .- 1, digits = 2);
     println("----------------------------------------------------------------------------")
@@ -295,16 +309,18 @@ begin
     println("\n----------------------------------------------------------------------------\n")
 
 
-    rgis = setdiff(drgi, [5, 19, 13, 12, 14, 15, 99])
+    rgis = setdiff(drgi, [5, 19, 13, 14, 15, 99])
     for yvar = ["dm", "dm_altim"]
-        xvar = "dm_grace"
+    #yvar = "dm"
+    xvar = "dm_grace"
         println("----------------------------------------------------------------------------")
         println("                  $xvar vs $yvar for rgi regions")
+
         x = region_fits_grace[At(xvar), At(rgis), At("trend"), At(false)];
         y = region_fits_grace[At(yvar), At(rgis), At("trend"), At(false)];
-        yscale = endorheic_scale_correction[At(rgis)]
-
-        println("RMSE = $(round(sqrt(mean((x .- (y .* yscale)) .^ 2)), digits=1)) Gt/yr")
+        yscale = endorheic_scale_correction[At("dm"), At(rgis)]
+        rmse = sqrt(mean((x .- (y .* yscale)) .^ 2))
+        println("RMSE = $(round(rmse, digits=1)) Gt/yr")
 
         rmse_incl_endorheic = sqrt(mean((x .- y) .^ 2))
         println("RMSE including endorheic = $(round(rmse_incl_endorheic, digits=1)) Gt/yr")
@@ -316,7 +332,7 @@ begin
 end
 
 # create plots
-#begin
+begin
     # set grace Antarctic and Greenland to NaNs othersise ice sheet will be plotted with glaciers
     regions["dm_grace"][At([5, 19]), :, :] .= NaN;
 
@@ -351,7 +367,7 @@ end
         rgi_regions = setdiff(collect(dims(runs_rgi["dm_altim"], :rgi)), exclude_regions),
         fontsize=15,
         cmap=:Dark2_4,
-        region_order,
+        region_order = Dim{:rgi}(setdiff(region_order,  exclude_regions)),
         daterange=DateTime(2000, 1, 1):Month(1):DateTime(2025, 1, 1),
     );
     display(f)
@@ -433,7 +449,7 @@ end
             end
             x = region_fits_grace[At(xvar), At(rgi), At("trend"), At(false)]
             y = region_fits_grace[At(yvar), At(rgi), At("trend"), At(false)] 
-            yscale = endorheic_scale_correction[At(rgi)]
+            yscale = endorheic_scale_correction[At("dm"), At(rgi)]
             scatter!(x, y .* yscale; label=Altim.rginum2label(rgi), markersize=15, color=cmap[At(rgi)])
         end
 
@@ -452,13 +468,13 @@ end
         ylims!(ax, -80, 20)
         lines!(ax, [-80, 20], [-80, 20], color=:black, linestyle=:dash)
 
-        rgis = setdiff(region_order, [5, 19])
+        rgis = setdiff(region_order, [5, 19, 13, 14, 15, 99])
         x = region_fits_grace[At(xvar), At(rgis), At("trend"), At(false)];
         y = region_fits_grace[At(yvar), At(rgis), At("trend"), At(false)];
-        yscale = endorheic_scale_correction[At(rgis)]
+        yscale = endorheic_scale_correction[At("dm"), At(rgis)]
         rmse = sqrt(mean((x .- (y .* yscale)) .^ 2))
 
-        text!(-75, 15, text="RMSE = $(round(rmse, digits=1)) Gt/yr", align=(:left, :top))
+        text!(-75, 15, text="RMSE = $(round(rmse, digits=1)) Gt yr⁻¹", align=(:left, :top))
 
         leg = Legend(f[1, 2], ax)
         display(f)
@@ -525,7 +541,7 @@ end
             end
             x = collect(region_fits_grace[At(xvar), At(rgi), At("trend"), At(false)])
             y = collect(runs_rgi_fits_grace[At(yvar), :, At(rgi), At("trend"), At(false)])
-            yscale = endorheic_scale_correction[At(rgi)]
+            yscale = endorheic_scale_correction[At("dm"), At(rgi)]
             scatter!(x .* ones(length(y)), y .* yscale; label=Altim.rginum2label(rgi), markersize=15, color=cmap[At(rgi)])
         end
 
@@ -536,7 +552,7 @@ end
             end
             x = region_fits_grace[At(xvar), At(rgi), At("trend"), At(false)]
             y = region_fits_grace[At(yvar), At(rgi), At("trend"), At(false)] 
-            yscale = endorheic_scale_correction[At(rgi)]
+            yscale = endorheic_scale_correction[At("dm"), At(rgi)]
             scatter!(x, y .* yscale; label=nothing, marker = '○', markersize=15, color=:black)
         end
 
@@ -547,7 +563,7 @@ end
         rgis = setdiff(region_order, [5, 19])
         
         x = region_fits_grace[At(xvar), At(rgis), At("trend"), At(false)];
-        yscale = endorheic_scale_correction[At(rgis)]
+        yscale = endorheic_scale_correction[At("dm"), At(rgis)]
         y = eachslice(runs_rgi_fits_grace[At(yvar), :, At(rgis), At("trend"), At(false)], dims = :run)
         rmse = [sqrt(mean((x .- (y.* yscale)).^2)) for y in y]
      

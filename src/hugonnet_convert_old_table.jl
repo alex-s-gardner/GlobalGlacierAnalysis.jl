@@ -1,3 +1,18 @@
+"""
+    hugonnet_convert_old_table.jl
+
+Convert Hugonnet elevation data from old table format to a standardized structure.
+
+This script:
+1. Processes Arrow files containing elevation data in the old format
+2. Identifies files that need reformatting based on their data structure
+3. Converts nested array structures into flat DataFrame records
+4. Preserves all original data fields while standardizing the format
+5. Writes the reformatted data back to the original files
+
+The reformatting ensures consistent data access patterns for downstream analysis.
+"""
+
 using DataFrames;
 using Altim;
 using Arrow;
@@ -9,7 +24,21 @@ for outfile in fns
     reformat(outfile)
 end
 
+"""
+    reformat(outfile)
 
+Reformat a Hugonnet elevation data file from old nested format to flat structure.
+
+This function:
+1. Loads an Arrow file into a DataFrame
+2. Detects if the file uses the old format with nested arrays
+3. Converts each row with array fields into multiple flat records
+4. Preserves all metadata and measurement values
+5. Writes the reformatted data back to the original file
+
+# Arguments
+- `outfile`: Path to the Arrow file to be reformatted
+"""
 function reformat(outfile)
     t1 = time()
     df = DataFrame(Arrow.Table(outfile))

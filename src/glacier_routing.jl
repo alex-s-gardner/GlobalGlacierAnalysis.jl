@@ -1,46 +1,31 @@
-# Glacier Routing Analysis Script
-#
-# This script analyzes glacier meltwater routing and discharge by:
-#
-# 1. Finding Lowest Points:
-#    - Identifies lowest elevation point within each glacier boundary
-#    - Uses 30m DEM to determine where meltwater enters river network
-#
-# 2. Mapping Drainage Networks:
-#    - Maps glaciers to drainage basins and closest river
-#    - Traces downstream river paths for each glacier
-#    - Identifies rivers receiving glacier meltwater
-#    - Determines ocean vs inland termination points
-#
-# 3. Processing Glacier Variables:
-#    - Converts per-glacier geotile data to single values
-#    - Interpolates variables (elevation change, mass balance, etc) to monthly values
-#    - Converts units from m/year to m³/s where needed
-#
-# 4. Routing Glacier Runoff:
-#    - Maps glacier runoff to river segments
-#    - Calculates monthly mean runoff rates
-#    - Computes fraction of river flow from glacier melt
-#
-# 5. Analyzing Discharge Points:
-#    - Identifies terminal points where rivers/glaciers end
-#    - Maps direct ocean drainage points
-#    - Incorporates discharge measurement points
-#    - Aggregates data into gridded format for visualization
-#
-# 6. Calculating Statistics:
-#    - Converts runoff to water equivalent units
-#    - Fits trends and seasonal cycles to time series
-#    - Calculates spatial averages on lat/lon grid
-#    - Produces final datasets for analysis and visualization
-#
-# The script processes global glacier and river datasets to understand:
-# - How glacier meltwater enters and moves through river networks
-# - Relative contributions of glacier melt to river discharge
-# - Spatial and temporal patterns in glacier changes and runoff
+"""
+# Glacier Routing Module
 
+This module handles the routing of glacier meltwater through river networks.
 
-#begin
+## Key Functionality
+- Imports necessary packages for glacier routing analysis
+- Sets up paths and constants for data processing
+- Finds lowest elevation points for each glacier to determine meltwater entry points
+- Maps glaciers to drainage basins and river networks
+- Traces downstream flow paths for glacier meltwater
+- Calculates and accumulates glacier runoff through river networks
+- Exports results to NetCDF format for further analysis
+
+## Data Sources
+- Glacier outlines and attributes
+- Digital elevation models (30m resolution)
+- River network data from MERIT Hydro
+- GLDAS flux data (corrected and uncorrected versions)
+
+## Workflow
+1. Identify lowest points in glacier boundaries
+2. Map glaciers to drainage basins and nearest rivers
+3. Trace downstream flow paths
+4. Calculate glacier runoff inputs to river segments
+5. Accumulate runoff through river networks
+6. Export results to NetCDF format
+"""
 
 # Import packages needed for glacier:
 begin
@@ -69,7 +54,19 @@ begin
 end
 
 
-# This section sets up paths and constants needed for glacier routing analysis
+"""
+Sets up paths and constants needed for glacier routing analysis.
+
+# Configuration includes:
+- File paths for input/output data
+- Physical constants for unit conversions
+- River network data paths (corrected and uncorrected versions)
+- GLDAS flux data configuration
+
+This section establishes all necessary file paths and constants required for the
+glacier routing workflow, including paths to glacier outlines, river networks,
+and output locations for processed data.
+"""
 begin
     glacier_summary_file = joinpath("/mnt/bylot-r3/data/project_data", "gardner2025_glacier_summary.nc")
     glacier_summary_riverflux_file = replace(glacier_summary_file, ".nc" => "_riverflux.nc")
@@ -132,11 +129,21 @@ begin
     end
 end
 
-## Find the lowest elevation point for each glacier
-# This section reads glacier outlines and finds the lowest elevation point within each glacier boundary
-# by overlaying the glacier geometries on a 30m digital elevation model (DEM).
-# The longitude and latitude coordinates of these lowest points are stored in the glacier dataset.
-# This is important for determining where glacier meltwater enters the river network.
+"""
+    Find the lowest elevation point for each glacier
+
+Identifies the lowest elevation point within each glacier boundary by overlaying
+glacier geometries on a 30m Copernicus DEM. These points represent where glacier
+meltwater likely enters the river network.
+
+The function:
+1. Reads glacier outline geometries from GeoPackage
+2. Overlays geometries on the 30m DEM to find minimum elevation points
+3. Extracts longitude and latitude coordinates of these points
+4. Saves the augmented glacier dataset with minimum elevation coordinates
+
+Only runs if the output file doesn't already exist to avoid redundant processing.
+"""
 if !isfile(glacier_lowest_point_path)
     glaciers = GeoDataFrames.read(paths[:glacier_individual_outlines])
     dem = Raster("/mnt/devon-r2/shared_data/copernicus-dem-30m/DEM.vrt"; lazy=true)
@@ -147,16 +154,22 @@ if !isfile(glacier_lowest_point_path)
 end
 
 
-## Find drainage basins and rivers for each glacier
-# This section maps glaciers to their drainage basins and closest rivers:
-#
-# 1. Reads glacier lowest point data and basin boundaries
-# 2. Uses spatial indexing to efficiently find which basin each glacier point falls within
-# 3. Finds the closest river to each glacier using spatial search with expanding buffers
-# 4. Traces downstream river paths for each glacier to determine full routing
-# 5. Identifies rivers that receive glacier meltwater and maps glaciers to downstream rivers
-# 6. Determines which rivers terminate at the ocean vs inland
-# 7. Saves the processed routing information to files
+"""
+    Find drainage basins and rivers for each glacier
+
+Maps glaciers to their drainage basins and river networks by:
+1. Identifying which drainage basin contains each glacier's lowest point
+2. Finding the closest river to each glacier's lowest point
+3. Tracing the downstream flow path for glacier meltwater
+4. Mapping glaciers to all downstream river segments
+5. Identifying which rivers terminate at the ocean
+6. Assigning continent and country information to each river segment
+
+The function uses spatial indexing for efficient querying and processes data in parallel
+where possible. Results are saved to disk to avoid redundant processing in future runs.
+
+Only executes if the output file doesn't already exist.
+"""
 if !isfile(glacier_rivers_path)
 #begin
     glaciers = GeoDataFrames.read(glacier_lowest_point_path)
@@ -293,31 +306,26 @@ if !isfile(glacier_rivers_path)
 end
 
 
-# This section processes glacier variables, interpolates them to a consistent time series, routes runoff to rivers and saves the results:
-#
-# 1. Reads glacier river network and per-glacier geotile variables
-# 2. Converts per-glacier geotile data (where glaciers can span multiple geotiles) into single values per glacier
-# 3. Verifies glacier IDs match between datasets and copies over area and time series variables
-# 4. Converts units from m/year to m³/s for relevant variables
-# 5. Interpolates glacier variables (runoff) to the 1st of every month:
-#    - Uses quadratic B-spline interpolation
-#    - Handles missing data (NaN values)
-#    - Ensures runoff remains non-negative
-# 6. Routes glacier runoff by:
-#    - Copying runoff values to corresponding river segments
-#    - Summing runoff from multiple glaciers per segment
-#    - Accumulating flow downstream through river network
-# 7. Saves results as NetCDF with:
-#    - River segment IDs
-#    - Monthly glacier runoff flux (m3/s)
-#    - Metadata and attributes
-#
-# The output NetCDF contains:
-# - Dimensions: time and river segment ID (COMID)
-# - Variables: glacier runoff flux in m3/s
-# - Attributes: units, descriptions, etc.
+"""
+    route_glacier_runoff(glacier_routing_path, glacier_summary_file, glacier_summary_riverflux_file, glacier_rivers_path, paths)
 
+Route glacier runoff through river networks.
 
+This function processes glacier runoff data and routes it through downstream river networks:
+1. Loads glacier runoff data from a NetCDF file
+2. Converts runoff from Gt to kg/s
+3. Interpolates values to monthly time steps
+4. Maps glacier runoff to river segments
+5. Accumulates runoff downstream through the river network
+6. Saves the resulting river flux data to a NetCDF file
+
+# Arguments
+- `glacier_routing_path`: Path to glacier routing information
+- `glacier_summary_file`: Path to input glacier runoff data
+- `glacier_summary_riverflux_file`: Path for output river flux data
+- `glacier_rivers_path`: Path to river network data
+- `paths`: Dictionary of project paths
+"""
 begin # [4 minutes]
     vars2route=["runoff"]
 

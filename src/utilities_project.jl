@@ -3,7 +3,19 @@ const δice = 910; #kg m-3
 
 """ 
     ElevationProduct
-Defines ElevationProduct parameter type
+
+Structure defining parameters for an elevation measurement product.
+
+# Fields
+- `mission::Symbol`: Source mission identifier (e.g., :icesat2)
+- `name::Symbol`: Product name (e.g., :ATL06)
+- `version::Int64`: Product version number
+- `id::String`: Short identifier string for the product
+- `error_sigma::Float32`: Standard error estimate in meters
+- `halfwidth::Float32`: Half-width of the kernel used for processing
+- `kernel::Symbol`: Type of kernel used (e.g., :gaussian)
+- `apply_quality_filter::Bool`: Whether to apply quality filtering
+- `coregister::Bool`: Whether to apply coregistration
 """
 @kwdef struct ElevationProduct
     mission::Symbol
@@ -18,7 +30,17 @@ Defines ElevationProduct parameter type
 end
 
 
-# project specific helper funcitons
+"""
+    project_products(; project_id = :v01)
+
+Get the elevation products configuration for a specific project.
+
+# Arguments
+- `project_id::Symbol`: Project identifier (default: :v01)
+
+# Returns
+- Named tuple containing configured ElevationProduct instances for different missions
+"""
 function project_products(; project_id = :v01)
     if project_id == :v01
         product = (
@@ -35,6 +57,17 @@ function project_products(; project_id = :v01)
 end
 
 
+"""
+    project_paths(; project_id = :v01)
+
+Get the file paths configuration for a specific project.
+
+# Arguments
+- `project_id::Symbol`: Project identifier (default: :v01)
+
+# Returns
+- Named tuple containing configured paths for different data products
+"""
 function project_paths(; project_id = :v01)
     if project_id == :v01
         geotile_width = 2 #geotile width [degrees]
@@ -51,6 +84,19 @@ function project_paths(; project_id = :v01)
     return paths
 end
 
+"""
+    project_geotiles(; geotile_width = 2, domain = :all, extent=nothing)
+
+Define geotiles for the project, optionally filtered by domain.
+
+# Arguments
+- `geotile_width::Int`: Width of geotiles in degrees (default: 2)
+- `domain::Symbol`: Domain filter (:all or :landice) (default: :all)
+- `extent`: Optional bounding box to limit geotile creation
+
+# Returns
+- DataFrame of geotiles with their properties
+"""
 function project_geotiles(; geotile_width = 2, domain = :all, extent=nothing)
     paths = setpaths()
     geotiles = GeoTiles.define(geotile_width; extent)
@@ -70,6 +116,17 @@ function project_geotiles(; geotile_width = 2, domain = :all, extent=nothing)
     return geotiles
 end
 
+"""
+    analysis_paths(; geotile_width = 2)
+
+Create and return paths for analysis outputs.
+
+# Arguments
+- `geotile_width::Int`: Width of geotiles in degrees (default: 2)
+
+# Returns
+- Named tuple containing paths for analysis outputs
+"""
 function analysis_paths(; geotile_width = 2)
     paths = (
         binned = joinpath(setpaths().data_dir, "binned", "$(geotile_width)deg"),
@@ -84,6 +141,16 @@ function analysis_paths(; geotile_width = 2)
 end
 
 
+"""
+    project_date_bins()
+
+Define temporal bins for the project.
+
+# Returns
+- Tuple containing (date_range, date_center) where:
+  - date_range: DateTime range with 30-day intervals
+  - date_center: DateTime values at the center of each bin
+"""
 function project_date_bins()
         Δd = 30
         date_range = DateTime(1990):Day(Δd):DateTime(2026, 1, 1)
@@ -92,6 +159,16 @@ function project_date_bins()
     return date_range, date_center
 end
 
+"""
+    project_height_bins()
+
+Define elevation bins for the project.
+
+# Returns
+- Tuple containing (height_range, height_center) where:
+  - height_range: Range of elevation bin edges from 0 to 10000m at 100m intervals
+  - height_center: Values at the center of each elevation bin
+"""
 function project_height_bins()
     Δh = 100;
     height_range = 0:100:10000;
@@ -101,6 +178,14 @@ function project_height_bins()
 end
 
 
+"""
+    mission_land_trend()
+
+Get the land elevation trend correction for each mission.
+
+# Returns
+- DimensionalArray with trend values (m/yr) for each mission
+"""
 function mission_land_trend()
     missions = ["icesat", "icesat2", "gedi", "hugonnet"]
     dmission = Dim{:mission}(missions)

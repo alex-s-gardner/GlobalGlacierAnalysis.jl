@@ -1,3 +1,22 @@
+"""
+    pgc_dems_get.jl
+
+Download and process Polar Geospatial Center (PGC) Digital Elevation Models (DEMs).
+
+This script downloads ArcticDEM or REMA data from PGC's public S3 bucket, 
+processes the individual tiles, and creates a virtual raster (VRT) file 
+that combines all tiles into a single seamless dataset.
+
+The script:
+1. Constructs the appropriate URLs based on the selected DEM, version, and resolution
+2. Downloads all available tiles using aria2 for parallel downloading
+3. Creates a VRT file that virtually combines all downloaded GeoTIFF files
+
+Requirements:
+- aria2 command-line download utility must be installed
+- Sufficient disk space for the downloaded DEM tiles
+"""
+
 using HTTP, JSON, Printf, ArchGDAL
 
 localdatafolder = "/mnt/devon-r2/shared_data/"
@@ -78,4 +97,3 @@ in_tifs = ArchGDAL.read.(in_tifs)
 ArchGDAL.gdalbuildvrt(in_tifs; dest=out_vrt) do vrt
     ArchGDAL.write(vrt,out_vrt)
 end
-

@@ -1,3 +1,18 @@
+"""
+    compare2models.jl
+
+Compare glacier runoff estimates between GEMB and models from Wimberly et al. 2024.
+
+This script:
+1. Loads glacier geometry and matches glaciers to major river basins
+2. Processes glacier runoff data from GEMB and compares with Wimberly 2024 models
+3. Calculates and visualizes differences in trends, means, and monthly patterns
+4. Generates comparison plots for runoff trends, means, and seasonal patterns
+
+The analysis focuses on the period defined by `dates2average` and produces
+multiple visualization outputs in the figures directory.
+"""
+
 begin
     using Altim
     using NCDatasets
@@ -23,7 +38,12 @@ begin
     km2Gt = 910/1000
 end
 
-# match individual glaciers to major river basins
+"""
+Match individual glaciers to major river basins using spatial intersection.
+
+Loads glacier outlines and river basin boundaries, then identifies which glaciers
+fall within the river basins analyzed in Wimberly 2024 study.
+"""
 begin #[70s cold]
     
     # load glacier geometry
@@ -54,6 +74,12 @@ begin #[70s cold]
     end
 end
 
+"""
+Process glacier runoff data and calculate basin-level statistics.
+
+Loads glacier runoff data, groups by basin, and calculates monthly patterns,
+trends, and means for comparison with Wimberly 2024 models.
+"""
 begin
     # load glacier runoff data
     glacier_runoff = NCDataset(glacier_summary_file)
@@ -141,7 +167,12 @@ begin
     end
 end
 
-		
+"""
+Generate histograms comparing differences in trends and means between GEMB and other models.
+
+Creates histograms showing percentage differences between GEMB and Wimberly 2024 models
+for both runoff trends and mean annual runoff values.
+"""		
 palette = (; color=reverse(Makie.resample_cmap(:Paired_4, length(dmodel))))
 
 ssp = "ssp585"
@@ -172,7 +203,12 @@ for (k, da) in enumerate([basin_runoff_trend, basin_runoff_mean])
     save(outfile, f)
 end
 
+"""
+Generate scatter plots comparing GEMB with other models for trends and means.
 
+Creates scatter plots showing the relationship between GEMB estimates and 
+Wimberly 2024 model estimates for both runoff trends and mean annual runoff.
+"""
 scale = identity
 for (k, da) in enumerate([basin_runoff_trend, basin_runoff_mean])
 
@@ -223,7 +259,12 @@ for (k, da) in enumerate([basin_runoff_trend, basin_runoff_mean])
     save(outfile, f)
 end
 
-# plot monthy data 
+"""
+Generate monthly runoff comparison plot between GEMB and other models.
+
+Creates a line plot showing the seasonal pattern of glacier runoff for
+GEMB and Wimberly 2024 models.
+"""
 begin
     total_runoff_monthly = dropdims(sum(basin_runoff_monthly, dims=:Basin), dims=:Basin)
     outfile = joinpath(paths[:figures], "wimberly2024_monthly_runoff.png")
@@ -246,6 +287,3 @@ begin
 
     save(outfile, f)
 end
-
-
-

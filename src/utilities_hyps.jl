@@ -1,73 +1,90 @@
-# density of ice
 
-# Define model that will be fit to all data binned by hypsometry
-#model::Function = model(t, h; t_intercept=2010) = hcat(ones(size(t)), (t .- t_intercept), h, h.^2, cos.(2 * pi * t), sin.(2 * pi * t))
-model1::Function = model1(x, p) =
-    p[1] .+
-    p[2] .* x[:, 1] .+
-    p[3] .* x[:, 1] .^ 2 .+
-    p[4] .* x[:, 2] .+
-    p[5] .* x[:, 2] .^ 2 .+
-    sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* (p[7] .+ p[8] .* x[:, 2] .* p[9] .* x[:, 2] .^ 2)
-
-const p1 = zeros(9);
-const lb1 = [-10.0, -3.0, -2.0, -0.05, -0.0001, -1.0, -7.0, -0.05, -0.001];
-const ub1 = [+10.0, +3.0, +2.0, +0.05, +0.0001, +1.0, +7.0, +0.05, +0.001];
-
-
-# seasonal only [amplitude is a quadratic function of elevation]
-model1_seasonal::Function = model1_seasonal(x, p) = 
-    sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* 
-    (p[7] .+ p[8] .* x[:, 2] .* p[9] .* x[:, 2] .^ 2)
-
-# linear trend
-model_trend::Function = model1_trend(h, p) = p[1] .+ p[2] .* h;
-const p_trend = zeros(2);
-
-# including quadratic for seasonal does not improve std(anom)
-#(p[6] .* cos.(2 .* pi .* x[:, 1]) .+  p[7].* sin.(2 .* pi .* x[:, 1])) .* (1 .+ p[8] .* x[:, 2] .+ p[9] .* x[:, 2] .^ 2)
-#p1 = zeros(9);
-#lb1 = [-10., -3., -2., -.05, -0.0001, -10., -10., -0.01, -0.0001];
-#ub1 = [+10., +3., +2., +.05, +0.0001, +10., +10., +0.01, +0.0001];
-
-# model fit across all geotiles for a region for a given year
-model2::Function = model2(h, p) = p[1] .+ p[2] .* h .+ p[3] .* h .^ 2;
-const p2 = zeros(3);
-const lb2 = [-30.0, -0.1, -0.01];
-const ub2 = [+30.0, +0.1, 0.01];
-
-model3::Function = model3(t, p) = p[1] .+ p[2] .* t .+ p[3] .* t .^ 2 .+ p[4] .* sin.(2 .* pi .* (t .+ p[5]))
-const p3 = zeros(5)
-
-model4::Function = model4(t, p) = p[1] .+ p[2] .* sin.(2 .* pi .* (t .+ p[3]))
-const p4 = zeros(3)
-
-offset_trend_seasonal::Function =
-    offset_trend_seasonal(t, p) =
-    p[1] .+ 
-    p[2] .* t .+ 
-    p[3] .* sin.(2 .* pi .* (t .+ p[4]))
-
-
-offset_trend_seasonal2::Function =
-    offset_trend_seasonal2(t, p) =
+# define models
+begin
+    # Define model that will be fit to all data binned by hypsometry
+    #model::Function = model(t, h; t_intercept=2010) = hcat(ones(size(t)), (t .- t_intercept), h, h.^2, cos.(2 * pi * t), sin.(2 * pi * t))
+    model1::Function = model1(x, p) =
         p[1] .+
-        p[2] .* t .+
-        p[3] .* sin.(2π .* t) .+
-        p[4] .* cos.(2π .* t)
-        
+        p[2] .* x[:, 1] .+
+        p[3] .* x[:, 1] .^ 2 .+
+        p[4] .* x[:, 2] .+
+        p[5] .* x[:, 2] .^ 2 .+
+        sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* (p[7] .+ p[8] .* x[:, 2] .* p[9] .* x[:, 2] .^ 2)
 
-offset_trend_acceleration_seasonal2::Function =
-    offset_trend_acceleration_seasonal2(t, p) =
-        p[1] .+
-        p[2] .* t .+
-        p[3] .* t.^2 .+
-        p[4] .* sin.(2π .* t) .+
-        p[5] .* cos.(2π .* t)
-
-const p_offset_trend_seasonal = zeros(4)
+    const p1 = zeros(9);
+    const lb1 = [-10.0, -3.0, -2.0, -0.05, -0.0001, -1.0, -7.0, -0.05, -0.001];
+    const ub1 = [+10.0, +3.0, +2.0, +0.05, +0.0001, +1.0, +7.0, +0.05, +0.001];
 
 
+    # seasonal only [amplitude is a quadratic function of elevation]
+    model1_seasonal::Function = model1_seasonal(x, p) = 
+        sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* 
+        (p[7] .+ p[8] .* x[:, 2] .* p[9] .* x[:, 2] .^ 2)
+
+    # linear trend
+    model_trend::Function = model1_trend(h, p) = p[1] .+ p[2] .* h;
+    const p_trend = zeros(2);
+
+    # including quadratic for seasonal does not improve std(anom)
+    #(p[6] .* cos.(2 .* pi .* x[:, 1]) .+  p[7].* sin.(2 .* pi .* x[:, 1])) .* (1 .+ p[8] .* x[:, 2] .+ p[9] .* x[:, 2] .^ 2)
+    #p1 = zeros(9);
+    #lb1 = [-10., -3., -2., -.05, -0.0001, -10., -10., -0.01, -0.0001];
+    #ub1 = [+10., +3., +2., +.05, +0.0001, +10., +10., +0.01, +0.0001];
+
+    # model fit across all geotiles for a region for a given year
+    model2::Function = model2(h, p) = p[1] .+ p[2] .* h .+ p[3] .* h .^ 2;
+    const p2 = zeros(3);
+    const lb2 = [-30.0, -0.1, -0.01];
+    const ub2 = [+30.0, +0.1, 0.01];
+
+    model3::Function = model3(t, p) = p[1] .+ p[2] .* t .+ p[3] .* t .^ 2 .+ p[4] .* sin.(2 .* pi .* (t .+ p[5]))
+    const p3 = zeros(5)
+
+    model4::Function = model4(t, p) = p[1] .+ p[2] .* sin.(2 .* pi .* (t .+ p[3]))
+    const p4 = zeros(3)
+
+    offset_trend_seasonal::Function =
+        offset_trend_seasonal(t, p) =
+        p[1] .+ 
+        p[2] .* t .+ 
+        p[3] .* sin.(2 .* pi .* (t .+ p[4]))
+
+
+    offset_trend_seasonal2::Function =
+        offset_trend_seasonal2(t, p) =
+            p[1] .+
+            p[2] .* t .+
+            p[3] .* sin.(2π .* t) .+
+            p[4] .* cos.(2π .* t)
+            
+
+    offset_trend_acceleration_seasonal2::Function =
+        offset_trend_acceleration_seasonal2(t, p) =
+            p[1] .+
+            p[2] .* t .+
+            p[3] .* t.^2 .+
+            p[4] .* sin.(2π .* t) .+
+            p[5] .* cos.(2π .* t)
+
+    const p_offset_trend_seasonal = zeros(4)
+end
+
+"""
+    geotiles_mutually_exclusive_rgi!(geotiles) -> (geotiles, reg)
+
+Make RGI (Randolph Glacier Inventory) regions mutually exclusive in the geotiles DataFrame.
+
+# Arguments
+- `geotiles`: DataFrame containing geotile information with columns for RGI regions (prefixed with "rgi")
+
+# Returns
+- `geotiles`: Modified DataFrame with mutually exclusive RGI regions
+- `reg`: Vector of column names corresponding to RGI regions
+
+# Description
+For each geotile, identifies the RGI region with the largest overlap value and sets all other
+region values to zero, ensuring each geotile is assigned to exactly one RGI region.
+"""
 function geotiles_mutually_exclusive_rgi!(geotiles) 
     reg = names(geotiles);
     reg = reg[startswith.(reg, "rgi")];
@@ -88,27 +105,39 @@ function geotiles_mutually_exclusive_rgi!(geotiles)
     return geotiles, reg
 end
 
-"""
-    hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max=5, smooth_n=9, smooth_h2t_length_scale=800, variogram_range_ratio = false)
 
-Fill gaps in hypsometric elevation change data by fitting and interpolating models.
+"""
+    hyps_model_fill!(dh1, nobs1, params; 
+                     bincount_min=5, 
+                     model1_madnorm_max=5, 
+                     smooth_n=9, 
+                     smooth_h2t_length_scale=800, 
+                     variogram_range_ratio=false, 
+                     show_times=false) -> Union{Nothing, Dict}
+
+Fill gaps in elevation change data using a spatiotemporal model.
 
 # Arguments
-- `dh1`: Dictionary mapping mission names to elevation change DimArrays
-- `nobs1`: Dictionary mapping mission names to observation count DimArrays
-- `params`: Dictionary mapping mission names to parameter DataFrames
-- `bincount_min`: Minimum bin count threshold for valid data points (default: 5)
-- `model1_madnorm_max`: Maximum MAD normalized residual threshold for outlier filtering (default: 5)
+- `dh1`: Dictionary of elevation change DimArrays by mission
+- `nobs1`: Dictionary of observation count DimArrays by mission
+- `params`: Dictionary of parameter DataFrames by mission
+- `bincount_min`: Minimum number of observations required for a valid bin (default: 5)
+- `model1_madnorm_max`: Maximum MAD normalization threshold for outlier filtering (default: 5)
 - `smooth_n`: Number of nearest neighbors for smoothing (default: 9)
-- `smooth_h2t_length_scale`: Length scale for height/time distance weighting in smoothing (default: 800)
-- `variogram_range_ratio`: If true, compute and return variogram range ratios instead of filling data (default: false)
+- `smooth_h2t_length_scale`: Scaling factor for height relative to time (default: 800)
+- `variogram_range_ratio`: Whether to calculate and return variogram range ratios (default: false)
+- `show_times`: Whether to display timing information (default: false)
 
 # Returns
-- If `variogram_range_ratio=true`: Dictionary mapping mission names to range ratio DimArrays
-- Otherwise: Nothing, modifies input arrays in-place
+- If `variogram_range_ratio=true`, returns a dictionary of range ratios by mission
+- Otherwise, modifies `dh1` and `nobs1` in place and returns nothing
 
-Fits elevation change models to valid data points, filters outliers, and interpolates residuals 
-to fill gaps in the data. Uses a combination of global parametric models and local smoothing.
+# Description
+This function fills gaps in elevation change data by:
+1. Filtering data based on observation count and outlier detection
+2. Fitting a spatiotemporal model to the filtered data
+3. Smoothing residuals using k-nearest neighbors
+4. Filling gaps with model predictions plus smoothed residuals
 """
 function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max=5, smooth_n=9, smooth_h2t_length_scale=800, variogram_range_ratio = false, show_times=false)
 
@@ -322,6 +351,27 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
 end
 
 
+"""
+    hyps_amplitude_normalize!(dh1, params; mission_reference = "icesat2")
+
+Normalize seasonal amplitude of elevation change data across different missions.
+
+# Arguments
+- `dh1`: Dictionary of elevation change DimArrays by mission
+- `params`: Dictionary of parameter DataFrames by mission
+- `mission_reference`: Reference mission to normalize against (default: "icesat2")
+
+# Description
+This function adjusts the seasonal amplitude of elevation change data from different
+missions to match a reference mission (default: ICESat-2). For each geotile:
+1. Extracts model parameters for both the target and reference missions
+2. Calculates the difference in seasonal components between the models
+3. Adds this difference to the target mission's data to normalize its seasonal amplitude
+4. Skips geotiles where model parameters are not available for either mission
+
+The function modifies `dh1` in place, adjusting only the seasonal component while
+preserving other aspects of the elevation change signal.
+"""
 function hyps_amplitude_normalize!(dh1, params; mission_reference = "icesat2")
 
     t = Altim.decimalyear.(dims(dh1[first(keys(dh1))], :date))
@@ -371,6 +421,28 @@ function hyps_amplitude_normalize!(dh1, params; mission_reference = "icesat2")
     end
 end
 
+"""
+    hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
+
+Fill empty geotiles with data interpolated from nearby geotiles.
+
+# Arguments
+- `dh1`: Dictionary of elevation change DimArrays by mission
+- `params`: Dictionary of parameter DataFrames by mission
+- `geotiles`: DataFrame containing geotile information
+- `mask`: Symbol specifying which area mask to use (default: `:glacier`)
+
+# Description
+For each mission and geotile:
+1. Identifies geotiles with no data but containing the specified mask type (e.g., glacier)
+2. Finds the nearest 5 geotiles with valid data at overlapping elevation ranges
+3. Interpolates missing data using the median values from neighboring geotiles
+4. Fills any remaining gaps along elevation profiles using linear interpolation
+5. Sets geotiles with no mask area to zero
+
+# Returns
+- Modified `dh1` dictionary with filled geotiles
+"""
 function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
 
     lon = mean.(getindex.(geotiles.extent, :X))
@@ -416,7 +488,6 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
 
             if all(isnan.(dh0))
 
-                
                 # find distance between goetiles
                 dist2geotile = haversine.(Ref(ll[k]), ll, 6371000)
 
@@ -479,13 +550,31 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
 
                 # add back median model offset 
                 dh0 .+= median(dh0_median0)
-
             end
         end
     end
     return dh1
 end
 
+"""
+    hyps_fill_updown!(dh1, geotiles; mask = :glacier) -> dh1
+
+Fill missing elevation data at the lowest and highest elevations within each geotile.
+
+# Arguments
+- `dh1`: Dictionary of elevation change DimArrays by mission
+- `geotiles`: DataFrame containing geotile information
+- `mask`: Symbol specifying which area mask to use (default: `:glacier`)
+
+# Returns
+- `dh1`: The modified input dictionary with filled elevation data
+
+# Description
+For each geotile with valid data, this function extrapolates elevation change values
+to the lowest and highest elevation bands by using the first and last valid values
+in each time series. This prevents gaps at the extremes of the elevation profile.
+The function operates in-place, modifying the input arrays directly.
+"""
 function hyps_fill_updown!(dh1, geotiles; mask = :glacier)
 
     for mission in keys(dh1)
@@ -533,317 +622,26 @@ function hyps_fill_updown!(dh1, geotiles; mask = :glacier)
     return dh1
 end
 
-function plot_dvdm(
-    dv, 
-    dm, 
-    nobs;
-    title=nothing,
-    fontsize=18,
-    colors = palette(:Set1_4, length(keys(dh1))),
-    date_intercept = 2012,
-    area = NaN,
-    area_average_flag=false,
-    dmdm_flag=false,
-    δ_effective="",
-    δ_effective_timeseries = nothing,
-    )
-    
-    f = Figure(backgroundcolor=RGBf(0.98, 0.98, 0.98), size=(1000, 700), fontsize=fontsize)
-
-    ga = f[1:5, 1] = GridLayout()
-    gb = f[6, 1] = GridLayout()
-
-    if !isnothing(title)
-        Label(ga[1, 1, Top()],
-            title, valign=:bottom,
-            font=:bold,
-            padding=(0, 0, 5, 0)
-        )
-    end
-
-    decdate = Altim.decimalyear.(dims(dv, :date).val)
-    kwargs = (; xminorgridvisible=true, xminorticks=IntervalsBetween(5))
-    if dmdm_flag
-        ylabel="mass anomaly [Gt]"
-    elseif area_average_flag
-        ylabel = "height anomaly [m w.e./ m]"
-        dv = deepcopy(dv) ./ area .* 1000
-        dm = deepcopy(dm) ./ area .* 1000
-    else
-        ylabel="mass/volume anomaly [Gt/km³]"
-    end
-
-    axmain = Axis(ga[1, 1]; ylabel, kwargs...)
-
-    hidexdecorations!(axmain; grid=false, minorgrid=false)
-
-    ylabel = dims(nobs, :mission).val;
-    ylabel = replace.(ylabel, "hugonnet" => "ASTER")
-    ylabel = replace.(ylabel, "icesat" => "ICESat")
-    ylabel = replace.(ylabel, "icesat2" => "ICESat-2")
-    ylabel = replace.(ylabel, "gedi" => "GEDI")
-
-    if dmdm_flag
-        axbottom = Axis(gb[1, 1], ylabel="δ [kg m⁻³]")
-    else
-        axbottom = Axis(gb[1, 1]; yticks=(1:4, lowercase.(ylabel)), yticklabelcolor = colors, 
-            yminorgridvisible=true, yminorticks=IntervalsBetween(2), 
-            yminorgridwidth=3, kwargs...)
-        hideydecorations!(axbottom; grid=true, minorgrid=false, ticklabels=false)
-    end
-
-    linkxaxes!(axmain, axbottom)
-
-    # fit model to average across all missions
-    CairoMakie.xlims!(axbottom, 2000, 2024)
-
-    dm0, dm_fit = region_fit(dm, date_intercept)
-    dv0, dv_fit = region_fit(dv, date_intercept)
-
-    # random error
-    rand_err = std(dm_fit.resid) *2
-
-    # correlated error [take as a fraction of the fac correction]
-    correlated_err = 0.3 .* vec(abs.(dv0 .- dm0))
-
-    # combined error 
-    err = correlated_err.+ rand_err
-
-    valid = .!isnan.(dm0.data)
-    if !dmdm_flag
-        CairoMakie.band!(axmain, decdate[valid], dm0.data[valid] .- err[valid] , dm0.data[valid] .+ err[valid], color=(:black, 0.05))
-    end
-
-    if hasdim(dm, :mission)
-        
-        for (i, mission) in enumerate(dims(dm,:mission))
-            dv0 = dv[At(mission),:]
-            dm0 = dm[At(mission),:]
-            if dmdm_flag
-                CairoMakie.lines!(axmain, decdate, vec(dv0), color=(colors[i], 0.5), linewidth=2, label="850 kg m³")
-            else
-                CairoMakie.lines!(axmain, decdate, vec(dv0), color=(colors[i], 0.2), linewidth=2)
-            end
-            CairoMakie.lines!(axmain, decdate, vec(dm0), label="$(ylabel[i])", color=(colors[i], 1), linewidth=2)
-        end
-    else
-        if dmdm_flag
-            CairoMakie.lines!(axmain, decdate, vec(dv), color=(:black, 0.5), linewidth=2)
-        else
-            CairoMakie.lines!(axmain, decdate, vec(dv), color=(:black, 0.2), linewidth=2)
-        end
-        CairoMakie.lines!(axmain, decdate, vec(dm), color=(:black, 1), linewidth=2)
-    end
-
-    if dmdm_flag
-        text = "δ:                   $(δ_effective) kg m³
-trend:            $(round(dm_fit.param[2], digits = 1)) Gt yr⁻¹
-acceleration: $(round(dm_fit.param[3], digits = 1)) Gt yr⁻²
-amplitude:     $(abs(round(dm_fit.param[4], digits = 1))) Gt"
-    elseif area_average_flag
-        text = "trend:            $(round(dm_fit.param[2], digits = 2)) m w.e. yr⁻¹
-acceleration: $(round(dm_fit.param[3], digits = 2)) m w.e. yr⁻²
-amplitude:     $(abs(round(dm_fit.param[4], digits = 2))) m w.e.
-area:             $(round(Int64,area)) km²"
-    else
-        text = "trend:            $(round(dm_fit.param[2], digits = 1)) Gt yr⁻¹
-acceleration: $(round(dm_fit.param[3], digits = 1)) Gt yr⁻²
-amplitude:     $(abs(round(dm_fit.param[4], digits = 1))) Gt
-area:             $(round(Int64,area)) km²"
-    end
-
-    text!(
-        axmain, 0.70, 0.95,
-        text = text,
-        #font=:bold,
-        color=(:black, 1),
-        align=(:left, :top),
-        space=:relative,
-        fontsize=fontsize
-    )
-
-    if dmdm_flag
-     text!(
-        axmain, 0.70, 0.75,
-            text="δ:                   850 kg m³
-trend:            $(round(dv_fit.param[2], digits = 1)) Gt yr⁻¹
-acceleration: $(round(dv_fit.param[3], digits = 1)) Gt yr⁻²
-amplitude:     $(abs(round(dv_fit.param[4], digits = 1))) Gt",
-        #font=:bold,
-        color=(:black, 0.5),
-        align=(:left, :top),
-        space=:relative,
-        fontsize=fontsize
-    )
-    end
-
-    if !dmdm_flag
-        var0 = log.(nobs.data');
-        var0[isinf.(var0)] .= NaN
-
-        hm = CairoMakie.heatmap!(axbottom, decdate, 1:4, var0, colormap=Reverse(:magma),)
-        CairoMakie.Colorbar(f[6, 2], hm; label="log(count)"); #, vertical=false, bbox=axbottom.scene.px_area)
-    else
-      
-        hm = CairoMakie.plot!(axbottom, δ_effective_timeseries)
-        CairoMakie.ylims!(axbottom, (0, 2000))
-   
-    end
-
-    rowgap!(ga, 1)
-    rowgap!(gb, 1)
-
-    return f
-end
-
-function plot_dm_permutations(
-    t, 
-    dm, 
-    title; 
-    colors=ColorSchemes.colorschemes[:tab20c], 
-    date_intercept=2012, 
-    fontsize=18,
-    heightanomaly_flag = false
-    )
-    
-    f = Figure(size=(1500, 500); fontsize);
-    #title = "Randolph Glacier Inventory: Region $(rgi[4:end])"
-    Label(f[0, :], text=title)
-
-    if heightanomaly_flag
-         ax = Axis(f[1, 1:3], ylabel="height anomaly [m]")
-    else
-        ax = Axis(f[1, 1:3], ylabel="mass anomaly [Gt]")
-    end
-
-    l1 = []
-    dm_fit = []
 
 
-    if heightanomaly_flag
-        for row = eachrow(dm)
-            row.dm_gt = row.dm_gt ./ row.area_km2 * 1000
-        end
-    end
+"""
+    hyps_geotile_aggrigate(dv, geotiles, reg; fun=sum::Function) -> DimArray
 
-    for (i, r) in enumerate(eachrow(dm))
-        dm0 = DimArray(r.dm_gt, Dim{:date}(Altim.decimalyear2datetime.(t)))
-        _, dm_fit0 = region_fit(dm0, date_intercept)
+Aggregate elevation change data from geotiles to regional (RGI) level.
 
-        push!(dm_fit,dm_fit0)
-        label = "bin = $(r.binning_method), dem = $(r.dem_id), curve = $(r.curvature_correct), amp = $(r.amplitude_correct)"
-        l1 = lines!(ax, t, r.dm_gt; label, color = colors[i], linewidth=2)
-    end
+# Arguments
+- `dv`: DimArray with dimensions (mission, geotile, date)
+- `geotiles`: DataFrame containing geotile information with RGI region columns
+- `reg`: Vector of RGI region column names
+- `fun`: Aggregation function to apply across geotiles (default: sum)
 
-    if heightanomaly_flag
-        tr = round.(extrema([f.param[2] for f in dm_fit]), digits = 3)
-        acc = round.(extrema([f.param[3] for f in dm_fit]), digits = 3)
-        amp = round.(extrema([abs(f.param[4]) for f in dm_fit]), digits = 3)
-    else
-        tr = round.(extrema([f.param[2] for f in dm_fit]), digits = 1)
-        acc = round.(extrema([f.param[3] for f in dm_fit]), digits = 2)
-        amp = round.(extrema([abs(f.param[4]) for f in dm_fit]), digits = 1)
-    end
+# Returns
+- DimArray with dimensions (mission, rgi, date) containing aggregated values
 
-    if heightanomaly_flag
-     text!(
-        0.60, 0.95,
-        text=
-"trend:            $(tr[1]) to $(tr[2]), m yr⁻¹
-acceleration: $(acc[1]) to $(acc[2]) m yr⁻²
-amplitude:     $(amp[1]) to $(amp[2]) m",
-        #font=:bold,
-        color=(:black, 0.5),
-        align=(:left, :top),
-        space=:relative,
-        fontsize=fontsize
-    )
-
-     else
-     text!(
-        0.60, 0.95,
-        text=
-"trend:            $(tr[1]) to $(tr[2]), Gt yr⁻¹
-acceleration: $(acc[1]) to $(acc[2]) Gt yr⁻²
-amplitude:     $(amp[1]) to $(amp[2]) Gt",
-        #font=:bold,
-        color=(:black, 0.5),
-        align=(:left, :top),
-        space=:relative,
-        fontsize=fontsize
-     )
-     end
-
-    Legend(f[1, 4], ax, framevisible=false)
-    return f
-end
-
-
-function region_fit(dm, date_intercept)
-    decdate = Altim.decimalyear.(dims(dm, :date).val)
-
-    if hasdim(dm, :mission)
-        valid = .!isnan.(dm)
-        dmm =  dropdims(sum(dm .* valid, dims=1) ./ sum(valid, dims=1), dims = :mission)
-        valid = vec(.!isnan.(dmm))
-    else
-        valid = .!isnan.(dm)
-        dmm = dm
-    end
-    dm_fit = curve_fit(model3, decdate[valid] .- date_intercept, dmm[valid], p3)
-    return dmm, dm_fit
-end
-
-
-function old_hyps_volume_change(
-    dh1, 
-    nobs1, 
-    geotiles; 
-    mask = :glacier
-    )
-
-    missions = collect(keys(dh1))
-  
-    dmission = Dim{:mission}(missions)
-    ddate = dims(dh1[first(missions)], :date)
-    dgeotile = dims(dh1[first(missions)], :geotile)
-    
-    dv = fill(NaN, (dmission, dgeotile, ddate))
-    nobs = fill(0, (dmission, dgeotile, ddate))
-    ndate = length(ddate);
-
-    var_area = reduce(hcat, geotiles[:, "$(mask)_area_km2"])
-    var_area = permutedims(repeat(var_area, 1, 1, ndate), (2, 3, 1))
-
-    # if there is no glacier ice then set dhdt to zero
-    for mission in keys(dh1)
-        #mission = first(keys(dh1))
-
-        rrange, = Altim.validrange(vec(any(.!isnan.(dh1[mission]), dims=(1, 3))))
-        area_mask = var_area .== 0
-
-        if rrange.start > 1
-            area_mask[:, 1:(rrange.start-1), :] .= false
-        end
-
-        if rrange.stop < ndate
-            area_mask[:, (rrange.stop+1):end, :] .= false
-        end
-
-        dh1[mission][area_mask] .= 0
-    end
-
-    for mission in keys(dh1)
-        dv[At(mission), :, :] = dropdims(sum(dh1[mission] .* var_area, dims=3), dims=3) / 1000
-    end
-
-    for mission in keys(nobs1)
-        nobs[At(mission), :, :] = dropdims(sum(nobs1[mission], dims=3), dims=3)
-    end
-
-    return dv, nobs
-end
-
+# Description
+For each mission and RGI region, identifies relevant geotiles and applies the 
+specified aggregation function to combine their data into regional values.
+"""
 function hyps_geotile_aggrigate(dv, geotiles, reg; fun=sum::Function)
     dmission, dgeotile, ddate = dims(dv)
     drgi = Dim{:rgi}(reg)
@@ -861,362 +659,25 @@ function hyps_geotile_aggrigate(dv, geotiles, reg; fun=sum::Function)
     return dv_reg
 end
 
-function hyps_offset2reference!(dv_reg, mission_reference)
-    offset = copy(dv_reg[:, :, 1])
-    offset[:] .= 0;
-
-    for mission in dims(offset, :mission)
-        if mission ==  mission_reference 
-            continue
-        end
-        
-        for rgi in dims(offset, :rgi)
-
-            dv1 = dv_reg[At(mission_reference),At(rgi),:]
-            valid1 = .!isnan.(dv1)
-
-            dv2 = dv_reg[At(mission),At(rgi),:]
-            valid2 = .!isnan.(dv2)
-
-            overlap = valid1 .& valid2
-
-            if any(overlap)
-                offset[At(mission),At(rgi)] = median(dv1[overlap]) - median(dv2[overlap])
-            end
-        end
-    end
-
-    for mission in dims(offset, :mission)
-        for rgi in dims(offset, :rgi)
-            dv_reg[At(mission), At(rgi), :] .+= offset[At(mission), At(rgi)]
-        end
-    end
-
-    return offset, dv_reg
-end
-
-function hyps_fac_correction_old(fac, smb, nobs_gemb, dh1, geotiles, reg; mask = :glacier)
-    
-    _, _, dheight = dims(smb)
-    ddate = dims(dh1[first(keys(dh1))], :date)
-    drgi = Dim{:rgi}(reg)
-    h0 = collect(dheight)
-    
-    facv_reg = DimArray(fill(0.0, length(drgi), length(ddate), length(dheight)), (drgi, ddate, dheight))
-    smbv_reg = copy(facv_reg)
-
-    # map gemb date into dh date
-    d1 = Altim.decimalyear.(collect(dims(smb,:date)))
-    kdtree = KDTree(d1')
-    d2 = Altim.decimalyear.(collect(ddate))
-    idxs, dists = nn(kdtree, d2')
-
-    # find first day of valid data 
-    valid_date = falses(length(ddate))
-    for mission in keys(dh1)
-        valid_date .|= vec(any(.!isnan.(dh1[mission]), dims=(1, 3)))
-    end
-    first_valid = findfirst(valid_date)
-    
-
-    for rgi in reg
-        #  <><><><><><><><><><><><><><><><><><> FOR TESTING  <><><><><><><><><><><><><><><><><><>
-        # rgi = "rgi10"
-        #  <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-
-        rgi_ind = geotiles[:, rgi] .> 0
-        geotile = geotiles[rgi_ind, :]
-
-        # remove climatolotgy (assume some rate of vertical flow (divergence))
-
-        fac1 = fac[At(geotile.id),idxs,:]
-        nobs_gemb1 = nobs_gemb[At(geotile.id),idxs,:]
-        smb1 = smb[At(geotile.id), idxs, :]
-        valid1 = .!isnan.(fac1)
-
-        if !any(valid1)
-            continue
-        end
-        area_rgi = vec(sum(reduce(hcat, geotile[:, "$(mask)_area_km2"]), dims=2))
-
-        # average accross all geotiles
-        fac_foo = fac1 .* nobs_gemb1;
-        smb_foo = smb1 .* nobs_gemb1
-        fac_foo[.!valid1] .= 0;
-        smb_foo[.!valid1] .= 0;
-
-        nobs_gemb_foo = valid1 .* nobs_gemb1
-        fac_rgi = dropdims(sum(fac_foo, dims=1) ./ sum(nobs_gemb_foo, dims=1), dims=1)
-        smb_rgi = dropdims(sum(smb_foo, dims=1) ./ sum(nobs_gemb_foo, dims=1), dims=1)
-
-        valid = .!isnan.(fac_rgi)
-
-        # remove first values for each elevation band to get fac anomaly
-        for i = 1:size(fac_rgi,2)
-            if any(valid[:, i])
-                f = findfirst(vec(valid[:, i]))
-                fac_rgi[:, i] .-= fac_rgi[f, i]
-            end
-        end
-
-        # take cumulitive sum of smb
-        for i = 1:size(smb_rgi, 2)
-            if any(valid[:, i])
-                smb_rgi[:, i] = cumsum(smb_rgi[:, i])
-            end
-        end
-
-        # set unmodeled elevations == to first and last modeled levelations
-        valid = .!isnan.(fac_rgi);
-        (crange,_) = Altim.validrange(valid)
-
-        for i in crange
-            if any(valid[i,:])
-                f = findfirst(vec(valid[i,:]))
-                l = findlast(vec(valid[i, :]))
-
-                fac_rgi[i, 1:f] .= fac_rgi[i,f]
-                fac_rgi[i, l:end] .= fac_rgi[i,f]
-
-                smb_rgi[i, 1:f] .= smb_rgi[i,f]
-                smb_rgi[i, l:end] .= smb_rgi[i,f]
-            end
-        end
-
-        # convert from m to km.^3
-        for r in eachrow(fac_rgi)
-            r[:] = r .* area_rgi / 1000
-        end
-
-        # convert from mm to km.^3
-        for r in eachrow(smb_rgi)
-            r[:] = r .* area_rgi ./ (1000^2)
-        end
-
-        # set unmodeled times == to first and last modeled elevations
-        valid = .!isnan.(fac_rgi)
-        (_, rrange) = Altim.validrange(valid)
-        for i in rrange
-            if any(valid[:,i])
-                f = findfirst(vec(valid[:, i]))
-                l = findlast(vec(valid[:, i]))
-
-                fac_rgi[1:f,i] .= fac_rgi[f,i]
-                fac_rgi[l:end,i] .= fac_rgi[l,i]
-
-                smb_rgi[1:f,i] .= smb_rgi[f,i]
-                smb_rgi[l:end,i] .= smb_rgi[l,i]
-            end
-        end
-
-        # fill gap if it exists
-        for r in eachrow(fac_rgi)
-            if any(isnan.(r))
-                valid = .!isnan.(r)
-                itp = DataInterpolations.LinearInterpolation(r[valid].data, h0[valid])
-                r[.!valid] = itp(h0[.!valid])
-            end
-        end
-
-        for r in eachrow(smb_rgi)
-            if any(isnan.(r))
-                valid = .!isnan.(r)
-                itp = DataInterpolations.LinearInterpolation(r[valid].data, h0[valid])
-                r[.!valid] = itp(h0[.!valid])
-            end
-        end
-
-        facv_reg[At(rgi), :, :] = fac_rgi 
-        smbv_reg[At(rgi), :, :] = smb_rgi 
-
-    end
-
-    return facv_reg, smbv_reg
-end
-
-function hyps_scale_fac!(facv_reg, smbv_reg, dv_reg; mission_reference)
-   
-    fac_scale = fill(0., dims(facv_reg, :rgi))
-
-    for rgi in dims(facv_reg, :rgi)
-        fac1 = facv_reg[At(rgi), :]
-        smb1 = smbv_reg[At(rgi), :]
-        geb_dv1 = (smb1 ./ (Altim.δice/1000)) .+ fac1
-        dv1 = dv_reg[At(mission_reference), At(rgi), :]
-
-        # last valid date of gemb that was not interpolated
-        if any(isnan.(facv_reg))
-            lastvalid = dims(facv_reg, :date)[findlast(any(.!isnan.(facv_reg), dims=(1, 2)))[2]]
-        else
-            lastvalid = last(dims(facv_reg, :date))
-        end
-
-
-        # findoverlap
-        valid1 = .!isnan.(fac1)
-        valid2 = .!isnan.(dv1)
-        overlap = vec((valid1 .& valid2) .& (dims(dv1, :date) .<= lastvalid))
-        t = decimalyear.(dims(dv1, :date))
-        
-        # find amplitude
-        dv_fit = curve_fit(model3, t[overlap], dv1[overlap], p3)
-
-        dgemb_fit = curve_fit(model3, t[overlap], geb_dv1[overlap], p3)
-
-        sf = dv_fit.param[4] / dgemb_fit.param[4]
-        if isinf(sf)
-            sf = 0
-        end
-        fac_scale[At(rgi)] = sf
-    end
-
-    # apply scale factor
-    for rgi in dims(facv_reg, :rgi)
-        facv_reg[At(rgi), :, :] .*= fac_scale[At(rgi)]
-        smbv_reg[At(rgi), :, :] .*= fac_scale[At(rgi)] ./ (Altim.δice / 1000) # convert to volume
-    end
-
-    return fac_scale, facv_reg, smbv_reg
-end
-
-
-function hyps_mass_change(dv_reg, facv_reg)
-
-    dm_reg = copy(dv_reg)
-    for rgi in dims(dm_reg, :rgi)
-
-        dfac = facv_reg[At(rgi), :]
-            
-        for mission in dims(dm_reg, :mission)
-
-            dv0 = dv_reg[At(mission), At(rgi), :]
-            dm_reg[At(mission), At(rgi), :] = (vec(dv0) .- vec(dfac)) * (Altim.δice/1000)
-        end
-    end
-    return dm_reg
-end
-
-function plot_altim_grace(
-    altim,
-    grace;
-    zemp = nothing,
-    title=nothing,
-    fontsize=18,
-    date_intercept=2012,
-    area=NaN
-)
-
-    f = Figure(backgroundcolor=RGBf(0.98, 0.98, 0.98), size=(1000, 700), fontsize=fontsize)
-
-    ga = f[1, 1] = GridLayout()
-
-    if !isnothing(title)
-        Label(ga[1, 1, Top()],
-            title, valign=:bottom,
-            font=:bold,
-            padding=(0, 0, 5, 0)
-        )
-    end
-
-    kwargs = (; xminorgridvisible=true, xminorticks=IntervalsBetween(5))
-    axmain = Axis(ga[1, 1]; ylabel="mass anomaly [Gt]", kwargs...)
-
-    #hidexdecorations!(axmain; grid=false, minorgrid=false)
-
-    # fit model to average across all missions
-    xlim = (2000, 2024)
-    CairoMakie.xlims!(axmain, xlim)
-
-    # make sure overlaping dates are used for model fit
-    valid = .!isnan.(altim["dm_gt"])
-    aex = extrema(altim["date"][valid])
-
-    valid = .!isnan.(grace["dm_gt"])
-    gex = extrema(grace["date"][valid])
-
-    if isnothing(zemp)
-        ex = (max(aex[1], gex[1]), min(aex[2], gex[2]))
-    else
-        valid = .!isnan.(zemp["dm_gt"])
-        zex = extrema(zemp["date"][valid])
-        ex = (max(aex[1], gex[1], zex[1]), min(aex[2], gex[2], zex[2]))
-    end
-
-    valid = .!isnan.(altim["dm_gt"]) .& (altim["date"] .>= ex[1]) .& (altim["date"] .<= ex[2])
-    altim_fit = curve_fit(model3, altim["date"][valid] .- date_intercept, altim["dm_gt"][valid], p3)
-    valid = .!isnan.(altim["dm_gt"])
-    CairoMakie.band!(axmain, altim["date"][valid], altim["dm_gt"][valid] .- altim["2sigma_gt"][valid], altim["dm_gt"][valid] .+ altim["2sigma_gt"][valid], color=(:black, 0.05))
-    CairoMakie.lines!(altim["date"], altim["dm_gt"]; label="altimetry")
-
-    valid = .!isnan.(grace["dm_gt"]) .& (grace["date"] .>= ex[1]) .& (grace["date"] .<= ex[2])
-    grace_fit = curve_fit(model3, grace["date"][valid] .- date_intercept, grace["dm_gt"][valid], p3)
-
-    # align grace with altim
-    Δdm = altim_fit.param[1] - grace_fit.param[1]
-    valid = .!isnan.(grace["dm_gt"])
-    gdm = grace["dm_gt"] .+ Δdm
-    CairoMakie.band!(axmain, grace["date"][valid], gdm[valid] .- grace["2sigma_gt"][valid], gdm[valid] .+ grace["2sigma_gt"][valid], color=(:black, 0.05))
-    CairoMakie.lines!(grace["date"], gdm; label="gravimetry")
-
-    zdm = [];
-    if !isnothing(zemp)
-        valid = .!isnan.(zemp["dm_gt"]) .& (zemp["date"] .>= ex[1]) .& (zemp["date"] .<= ex[2])
-        zemp_fit = curve_fit(model2, zemp["date"][valid] .- date_intercept, zemp["dm_gt"][valid], p2)
-
-        display(zemp_fit.param)
-        # align zemp with altim
-        Δdm = altim_fit.param[1] - zemp_fit.param[1]
-        valid = .!isnan.(zemp["dm_gt"])
-        zdm = zemp["dm_gt"] .+ Δdm
-        CairoMakie.band!(axmain, zemp["date"][valid], zdm[valid] .- zemp["2sigma_gt"][valid], zdm[valid] .+ zemp["2sigma_gt"][valid], color=(:black, 0.05))
-        CairoMakie.lines!(zemp["date"], zdm; label="in situ")
-
-        textxoffset = 0.60;
-        txt = "trend:            $(round(Int, altim_fit.param[2])) $(round(Int, grace_fit.param[2]))  $(round(Int, zemp_fit.param[2])) Gt yr⁻¹
-acceleration: $(round(altim_fit.param[3], digits = 1)) $(round(grace_fit.param[3], digits = 1)) $(round(Int, zemp_fit.param[3])) Gt yr⁻²
-amplitude:     $(abs(round(Int, altim_fit.param[4]))) $(abs(round(Int, grace_fit.param[4]))) Gt
-area:             $(round(Int64,area)) km²"
-    else
-        textxoffset = 0.70
-        txt = "trend:            $(round(Int, altim_fit.param[2])) $(round(Int, grace_fit.param[2])) Gt yr⁻¹
-acceleration: $(round(altim_fit.param[3], digits = 1)) $(round(grace_fit.param[3], digits = 1)) Gt yr⁻²
-amplitude:     $(abs(round(Int, altim_fit.param[4]))) $(abs(round(Int, grace_fit.param[4]))) Gt
-area:             $(round(Int64,area)) km²"
-    end
-
-    text!(
-        axmain, textxoffset, 0.95,
-        text = txt,
-        #font=:bold,
-        color=(:black, 0.5),
-        align=(:left, :top),
-        space=:relative,
-        fontsize=fontsize
-    )
-
-    axislegend(axmain; position=:lb, framevisible=false)
-
-    # find range of visible data 
-    valid = (altim["date"] .>= xlim[1]) .& (altim["date"] .<= xlim[2]) .& .!isnan.(altim["dm_gt"])
-    aex = extrema(altim["dm_gt"][valid])
-    
-    valid = (grace["date"] .>= xlim[1]) .& (grace["date"] .<= xlim[2]) .& .!isnan.(grace["dm_gt"])
-    gex = extrema(gdm[valid])
-
-    if isnothing(zemp)
-        ylim = (min(aex[1], gex[1]), max(aex[2], gex[2]))
-    else
-        valid = (zemp["date"] .>= xlim[1]) .& (zemp["date"] .<= xlim[2]) .& .!isnan.(zemp["dm_gt"])
-        zex = extrema(zdm[valid])
-        ylim = (min(aex[1], gex[1], zex[1]), max(aex[2], gex[2], zex[2]))
-    end
-
-    display(ylim)
-    CairoMakie.ylims!(axmain, ylim)
-
-    return f
-end
-
+"""
+    read_zemp2019(; datadir=setpaths().zemp_2019) -> NamedTuple
+
+Read and process glacier mass balance data from Zemp et al. 2019.
+
+# Arguments
+- `datadir`: Directory containing Zemp 2019 data files (default: from setpaths())
+
+# Returns
+- NamedTuple containing:
+  - `dm_gt`: DimArray of cumulative mass change in Gt by RGI region and date
+  - `err_gt`: DimArray of uncertainty values in Gt by RGI region and date
+  - `all`: Dictionary of raw data by RGI region
+
+# Description
+Reads CSV files containing regional glacier mass balance data from Zemp et al. 2019,
+extracts RGI region identifiers from filenames, and organizes the data into DimArrays
+with dimensions for RGI regions and dates (1950-2016).
+"""
 function read_zemp2019(;datadir= setpaths().zemp_2019)
     # Read Zemp 2019 data
     fn_startswith = "Zemp_etal_results_region_"
@@ -1253,6 +714,23 @@ function read_zemp2019(;datadir= setpaths().zemp_2019)
 end
 
 
+"""
+    read_marzeion2020(; datadir=setpaths().marzeion_2020) -> NamedTuple
+
+Read and process glacier mass change data from Marzeion et al. 2020.
+
+# Arguments
+- `datadir`: Directory containing Marzeion 2020 data files (default: from setpaths())
+
+# Returns
+- NamedTuple containing:
+  - `dm_gt`: DimArray of mass change in Gt with dimensions for RGI regions, dates, 
+             climate models, glacier models, and scenarios
+
+# Description
+Reads NetCDF data containing global glacier mass change projections from Marzeion et al. 2020,
+and organizes the data into a multidimensional DimArray with appropriate dimensions.
+"""
 function read_marzeion2020(;datadir= setpaths().marzeion_2020)
 
     foo = Dataset(datadir)
@@ -1274,6 +752,24 @@ function read_marzeion2020(;datadir= setpaths().marzeion_2020)
     return (;dm_gt)
 end
 
+"""
+    read_marzeion2012(; datadir=setpaths().marzeion_2012) -> NamedTuple
+
+Read and process glacier mass change data from Marzeion et al. 2012.
+
+# Arguments
+- `datadir`: Directory containing Marzeion 2012 data files (default: from setpaths())
+
+# Returns
+- NamedTuple containing:
+  - `dm_gt`: DimArray of mass change in Gt with dimensions for RGI regions, dates, 
+             climate models, and scenarios
+  - `err_gt`: DimArray of mass change errors in Gt with the same dimensions
+
+# Description
+Reads MATLAB data containing global glacier mass change projections from Marzeion et al. 2012,
+and organizes the data into multidimensional DimArrays with appropriate dimensions.
+"""
 function read_marzeion2012(; datadir=setpaths().marzeion_2012)
     foo = matread(datadir)
 
@@ -1315,115 +811,24 @@ function read_marzeion2012(; datadir=setpaths().marzeion_2012)
 end
 
 
-function plot_dm(
-    dm;
-    title=nothing,
-    fontsize=18,
-    colors=ColorSchemes.colorschemes[:hawaii100],
-    scale_color = true,
-    date_intercept=2012,
-    date_alignall=(2000, 2005),
-    area=NaN,
-    stats_in_label = false, 
-    xlim=(2000, 2024)
-)
 
-    f = Figure(backgroundcolor=RGBf(0.98, 0.98, 0.98), size=(1000, 700), fontsize=fontsize)
-    ga = f[1, 1] = GridLayout()
+"""
+    read_hock2019(; datadir=setpaths().hock_2019) -> NamedTuple
 
-    # sample by number of 
-    if scale_color
-        colors = colors[1:floor(Int, length(colors) ./ length(dm)):end]
-    end
+Load and organize glacier mass change projections from Hock et al. 2019.
 
-    if !isnothing(title)
-        Label(ga[1, 1, Top()],
-            title, valign=:bottom,
-            font=:bold,
-            padding=(0, 0, 5, 0)
-        )
-    end
+# Arguments
+- `datadir`: Path to the Hock 2019 dataset file (default: from setpaths())
 
-    kwargs = (; xminorgridvisible=true, xminorticks=IntervalsBetween(5))
-    axmain = Axis(ga[1, 1]; ylabel="mass anomaly [Gt]", kwargs...)
+# Returns
+- NamedTuple containing `dm_gt`: DimArray of glacier volume change with dimensions for 
+  RGI regions, dates, climate models, glacier models, and scenarios
 
-    # fit model to average across all missions
-    CairoMakie.xlims!(axmain, xlim)
-
-    # make sure overlaping dates are used for model fit
-    ex = Tuple{Float64,Float64}
-    for (c, d) in enumerate(dm)
-        valid = .!isnan.(d["dm_gt"])
-        aex = extrema(d["date"][valid])
-        if c == 1
-            ex = aex
-        else
-            ex = (max(aex[1], ex[1]), min(aex[2], ex[2]))
-        end
-    end
-
-    # allign all data to first mass change timeseries
-    dm_fit = []
-    dm_ref =
-        for (c, d) in enumerate(dm)
-            valid = .!isnan.(d["dm_gt"]) .& (d["date"] .>= ex[1]) .& (d["date"] .<= ex[2])
-            push!(dm_fit, curve_fit(model2, d["date"][valid] .- date_intercept, d["dm_gt"][valid], p3))
-
-            valid = .!isnan.(d["dm_gt"]) .& (d["date"] .>= date_alignall[1]) .& (d["date"] .<= date_alignall[2])
-            Δdm = mean(d["dm_gt"][valid])
-
-            valid = .!isnan.(d["dm_gt"])
-            d["dm_gt"] .-= Δdm
-            CairoMakie.band!(axmain, d["date"][valid], d["dm_gt"][valid] .- d["2sigma_gt"][valid], d["dm_gt"][valid] .+ d["2sigma_gt"][valid], color=(:black, 0.05))
-
-            if stats_in_label
-                label = "$(d["label"]): $(round(Int, dm_fit[c].param[2])) Gt yr⁻¹ $(round(dm_fit[c].param[3], digits=1)) Gt yr⁻²"
-            else
-                label = d["label"]
-            end
-            CairoMakie.lines!(d["date"], d["dm_gt"]; label, color=colors[c])
-
-        end
-
-    trend = []
-    acc = []
-    for f in dm_fit
-        trend = push!(trend, round(Int, f.param[2]))
-        acc = push!(acc, round(f.param[3], digits=1))
-    end
-
-    axislegend(axmain; position=:lb, framevisible=false)
-
-    # find range of visible data 
-    ylim = Tuple{Float64,Float64}
-    for (c, d) in enumerate(dm)
-        valid = (d["date"] .>= xlim[1]) .& (d["date"] .<= xlim[2]) .& .!isnan.(d["dm_gt"])
-        aex = extrema(d["dm_gt"][valid])
-        if c == 1
-            ylim = aex
-        else
-            ylim = (min(aex[1], ylim[1]), max(aex[2], ylim[2]))
-        end
-    end
-
-    CairoMakie.ylims!(axmain, ylim)
-    
-    d1 = Date(floor(Altim.decimalyear2datetime(ex[1]), Day))
-    d2 = Date(floor(Altim.decimalyear2datetime(ex[2]), Day))
-    txt = "trend fit to overlaping period: $(d1) to $(d2)"
-    text!(
-        axmain, 0.95, 0.00,
-        text=txt,
-        #font=:bold,
-        color=(:black, 0.5),
-        align=(:right, :bottom),
-        space=:relative,
-        fontsize=fontsize/1.5
-    )
-    return f
-end
-
-# read in hock_2019
+# Description
+Reads NetCDF data containing global glacier mass change projections from Hock et al. 2019,
+and organizes the data into a multidimensional DimArray with appropriate dimensions.
+The function handles the complex combination of scenarios, glacier models, and climate models.
+"""
 function read_hock2019(; datadir=setpaths().hock_2019)
     #datadir= setpaths().hock_2019
     foo = Dataset(datadir)
@@ -1461,6 +866,27 @@ function read_hock2019(; datadir=setpaths().hock_2019)
     return (; dm_gt)
 end
 
+"""
+    plot_height_time(dh1; geotile, fig_suffix, fig_folder, figure_suffix, mask=:glacier, mission, showplots=false)
+
+Create a visualization of elevation change data across height and time dimensions.
+
+# Arguments
+- `dh1`: DimArray containing elevation change data
+- `geotile`: Geotile information containing ID and area data
+- `fig_suffix`: Suffix for the figure filename
+- `fig_folder`: Directory where figures will be saved
+- `figure_suffix`: Additional suffix for the figure filename
+- `mask`: Type of area mask to use (default: `:glacier`)
+- `mission`: Mission identifier for the data source
+- `showplots`: Whether to display plots in addition to saving them (default: false)
+
+# Description
+Generates a two-panel figure with:
+1. A heatmap of elevation change data across time (x-axis) and elevation (y-axis)
+2. A bar chart showing area distribution by elevation
+Both panels share the same x-axis scale for direct comparison.
+"""
 function plot_height_time(dh1; geotile, fig_suffix, fig_folder, figure_suffix, mask=:glacier, mission, showplots=false)
     height = dims(dh1, :height)
     valid = geotile["$(mask)_area_km2"] .> 0
@@ -1499,13 +925,51 @@ function plot_height_time(dh1; geotile, fig_suffix, fig_folder, figure_suffix, m
     end
 end
 
+"""
+    plot_height_time(dh1::Dict; geotile, fig_suffix, fig_folder, figure_suffix, mask=:glacier, showplots=false)
+
+Generate height-time plots for all missions in the provided dictionary.
+
+# Arguments
+- `dh1`: Dictionary of elevation change DimArrays by mission
+- `geotile`: Geotile information containing ID and area data
+- `fig_suffix`: Suffix for the figure filename
+- `fig_folder`: Directory where figures will be saved
+- `figure_suffix`: Additional suffix for the figure filename
+- `mask`: Type of area mask to use (default: `:glacier`)
+- `showplots`: Whether to display plots in addition to saving them (default: false)
+
+# Description
+Iterates through all missions in the dictionary and calls the single-mission version
+of plot_height_time for each one, generating separate figures for each mission.
+"""
 function plot_height_time(dh1::Dict; geotile, fig_suffix, fig_folder, figure_suffix, mask=:glacier, showplots=false)
     for mission in keys(dh1)
         plot_height_time(dh1[mission]; geotile, fig_suffix, fig_folder, figure_suffix, mask, mission, showplots)
     end
 end
 
+"""
+    read_ipccar6(; datadir=setpaths()[:ipcc_ar6], start2007=false)
+
+Read IPCC AR6 glacier mass change data from CSV files.
+
+# Arguments
+- `datadir`: Directory containing IPCC AR6 data files (default: from setpaths())
+- `start2007`: Whether to read data starting from 2007 (default: false)
+
+# Returns
+A NamedTuple containing:
+- `dm_gt`: DimArray of glacier mass change values in Gt by RGI region, date, and scenario
+- `err_gt`: DimArray of corresponding error values
+
+# Description
+Reads glacier mass change projections from IPCC AR6 Figure 9.21 data files.
+The function processes both the main data files and corresponding error files,
+organizing them into multidimensional arrays indexed by RGI region, date, and scenario.
+
 # rsync -r devon:/mnt/bylot-r3/data/binned/2deg/figures /Users/gardnera/Research/20_01_GlobalGlacierChange/version\ 2/
+"""
 function read_ipccar6(;datadir=setpaths()[:ipcc_ar6], start2007=false)
     # Data from IPCC AR6 Figure 9.21
     fn_endswith = ".csv"
@@ -1561,6 +1025,29 @@ function read_ipccar6(;datadir=setpaths()[:ipcc_ar6], start2007=false)
     return foo
 end
 
+"""
+    geotile_binarea!(geotile, ras, feature, bin_edges; invert=false, excludefeature=nothing, var_name)
+
+Calculate area distribution by elevation bins for a specific feature within a geotile.
+
+# Arguments
+- `geotile`: Geotile object to be modified with binned area data
+- `ras`: Raster containing elevation data
+- `feature`: Polygon feature to calculate area for
+- `bin_edges`: Elevation bin edges for area calculation
+- `invert`: If true, calculate area outside the feature instead (default: false)
+- `excludefeature`: Optional feature to exclude from area calculation (default: nothing)
+- `var_name`: Name of the variable in geotile to store the binned area results
+
+# Returns
+- Modified geotile with binned area data stored in the specified variable
+
+# Description
+This function calculates the area distribution by elevation bins for a specific feature
+within a geotile. It crops the raster to the geotile extent, creates a mask for the feature,
+calculates the area per cell accounting for latitude-dependent cell size, and bins the
+area by elevation. The results are stored in the geotile object under the specified variable name.
+"""
 function geotile_binarea!(geotile, ras, feature, bin_edges; invert=false, excludefeature=nothing, var_name)
     t1 = time()
     ras0 = read(Rasters.crop(ras, to=geotile.extent));
@@ -1602,6 +1089,23 @@ function geotile_binarea!(geotile, ras, feature, bin_edges; invert=false, exclud
     return geotile
 end
 
+"""
+    geotiles_mask_hyps(surface_mask, geotile_width) -> DataFrame
+
+Load and prepare geotiles with hypsometry data for a specific surface mask.
+
+# Arguments
+- `surface_mask`: String identifier for the surface mask type (e.g., "glacier", "land")
+- `geotile_width`: Width of geotiles in degrees
+
+# Returns
+- DataFrame containing geotile data with hypsometry information and geometry
+
+# Description
+Loads geotile hypsometry data from an Arrow file, processes the extent information,
+and ensures geometry data is properly included by joining with projected geotiles
+if necessary.
+"""
 function geotiles_mask_hyps(surface_mask, geotile_width)
 
     binned_folder = analysis_paths(; geotile_width).binned
@@ -1622,10 +1126,26 @@ function geotiles_mask_hyps(surface_mask, geotile_width)
     # println(gt_file)
     return geotiles
 end
+"""
+    plot_dh(dh_reg, w; title="", xlims=(DateTime(2000), DateTime(2024)), ylims=nothing)
 
+Plot elevation change time series with fitted model parameters.
 
+# Arguments
+- `dh_reg`: DimArray containing elevation change data with mission and date dimensions
+- `w`: Weights for model fitting
+- `title`: Plot title (default: "")
+- `xlims`: X-axis limits as tuple of DateTime objects (default: (DateTime(2000), DateTime(2024)))
+- `ylims`: Y-axis limits (default: nothing)
 
+# Returns
+- `p`: Plots object with elevation change time series
+- `fit_param`: DimArray of fitted model parameters for each mission
 
+# Description
+Fits a model to elevation change data for each mission and creates a plot showing
+time series with labels indicating mean, trend, acceleration, and amplitude values.
+"""
 function plot_dh(dh_reg, w; title="", xlims=(DateTime(2000), DateTime(2024)), ylims=nothing)
     dmission = dims(dh_reg, :mission)
     dmetric = Dim{:metric}(["mean", "trend", "acceleration", "amplitude", "date_intercept"])
@@ -1676,27 +1196,23 @@ function plot_dh(dh_reg, w; title="", xlims=(DateTime(2000), DateTime(2024)), yl
     return p, fit_param
 end
 
-function old_landoffset!(dh1, geotiles, landfit)
 
-    t = Altim.decimalyear.(lookup(dh1[first(keys(dh1))], :date))
-    height = lookup(dh1[first(keys(dh1))], :height)
-    for rgi in lookup(landfit, :rgi)
-        rgi_ind = findall(geotiles[:, rgi] .> 0)
+"""
+    binned_filepath(;binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct)
 
-        for mission in lookup(landfit, :mission)
-            t0 = t .- landfit[At(mission), At(rgi), At("date_intercept")]
-            land_dh = landfit[At(mission), At(rgi), At("mean")] ; #.+ landfit[At(mission), At(rgi), At("trend")] .* t0 .+ landfit[At(mission), At(rgi), At("acceleration")] .* t0.^2
-            for i in rgi_ind
-                for k in eachindex(height)
-                    dh1[mission][i, :, k] .= dh1[mission][i, :, k] .- land_dh
-                end
-            end
-        end
-    end
-    return dh1
-end
+Generate the filepath for binned elevation change data.
 
+# Arguments
+- `binned_folder`: Directory where binned files are stored
+- `surface_mask`: Type of surface mask applied (e.g., "ice", "land")
+- `dem_id`: Identifier for the DEM used
+- `binning_method`: Method used for binning data
+- `project_id`: Project identifier
+- `curvature_correct`: Boolean indicating if curvature correction was applied
 
+# Returns
+- Full filepath to the binned data file with appropriate naming convention
+"""
 function binned_filepath(;binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct)
     if curvature_correct
         runid = "$(surface_mask)_dh_$(dem_id)_cc_$(binning_method)_$(project_id)"
@@ -1709,6 +1225,25 @@ function binned_filepath(;binned_folder, surface_mask, dem_id, binning_method, p
     return binned_file
 end
 
+"""
+    binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
+
+Generate filepath for filled binned elevation change data and corresponding figure suffix.
+
+# Arguments
+- `binned_folder`: Path to the binned folder
+- `surface_mask`: Type of surface mask applied (e.g., "ice", "land")
+- `dem_id`: Identifier for the DEM used
+- `binning_method`: Method used for binning data
+- `project_id`: Project identifier
+- `curvature_correct`: Boolean indicating if curvature correction was applied
+- `amplitude_correct`: Boolean indicating if amplitude correction was applied
+- `paramater_set`: Parameter set identifier used for filling
+
+# Returns
+- `binned_filled_file`: Full filepath to the filled binned data file
+- `figure_suffix`: Suffix string for related figure filenames
+"""
 function binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
 
     if curvature_correct
@@ -1731,12 +1266,48 @@ function binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_m
     return binned_filled_file, figure_suffix 
 end
 
+"""
+    binned_aligned_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
+
+Generate filepath for aligned binned elevation change data.
+
+# Arguments
+- `binned_folder`: Path to the binned folder
+- `surface_mask`: Type of surface mask applied (e.g., "ice", "land")
+- `dem_id`: Identifier for the DEM used
+- `binning_method`: Method used for binning data
+- `project_id`: Project identifier
+- `curvature_correct`: Boolean indicating if curvature correction was applied
+- `amplitude_correct`: Boolean indicating if amplitude correction was applied
+- `paramater_set`: Parameter set identifier used for filling
+
+# Returns
+- `binned_aligned_file`: Full filepath to the aligned binned data file
+"""
 function binned_aligned_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
     binned_filled_file, _ = Altim.binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
     binned_aligned_file = replace(binned_filled_file, ".jld2" => "_aligned.jld2")
     return binned_aligned_file
 end
 
+"""
+    binned_synthesized_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
+
+Generate filepath for synthesized binned elevation change data.
+
+# Arguments
+- `binned_folder`: Path to the binned folder
+- `surface_mask`: Type of surface mask applied (e.g., "ice", "land")
+- `dem_id`: Identifier for the DEM used
+- `binning_method`: Method used for binning data
+- `project_id`: Project identifier
+- `curvature_correct`: Boolean indicating if curvature correction was applied
+- `amplitude_correct`: Boolean indicating if amplitude correction was applied
+- `paramater_set`: Parameter set identifier used for filling
+
+# Returns
+- `binned_synthesized_file`: Full filepath to the synthesized binned data file
+"""
 function binned_synthesized_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
     binned_filled_file, _ = Altim.binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
     binned_synthesized_file = replace(binned_filled_file, ".jld2" => "_synthesized.jld2")
@@ -1744,6 +1315,28 @@ function binned_synthesized_filepath(; binned_folder, surface_mask, dem_id, binn
 end
 
 
+"""
+    binned_filled_fileparts(binned_filled_file) -> NamedTuple
+
+Extract metadata components from a binned filled file path.
+
+# Arguments
+- `binned_filled_file`: Path to a binned filled file
+
+# Returns
+A NamedTuple containing the following components:
+- `surface_mask`: Type of surface mask applied (e.g., "ice", "land")
+- `dem`: Digital elevation model identifier
+- `curvature_correct`: Boolean indicating if curvature correction was applied
+- `binning_method`: Method used for binning data
+- `project_id`: Project identifier
+- `amplitude_correct`: Boolean indicating if amplitude correction was applied
+- `fill_param`: Parameter set identifier used for filling
+
+# Description
+Parses a binned filled filename to extract metadata components based on the standardized
+naming convention used in the project.
+"""
 function binned_filled_fileparts(binned_filled_file)
 
     binned_filled_file = splitpath(binned_filled_file)[end]
@@ -1799,555 +1392,32 @@ function binned_filled_fileparts(binned_filled_file)
     return out
 end
 
-function old_facfit(; gemb, dh, geotiles, geotile_buffer=1, mission_ref_fac = "icesat2")
 
-    # make FAC cube
-    fac = copy(dh[mission_ref_fac])
-    fac[:] .= NaN
-    smb = copy(fac)
-
-    Threads.@threads for geotile in eachrow(geotiles)
-        #for geotile in eachrow(geotiles)
-        # geotile = eachrow(geotiles)[1000]
-        #geotile = eachrow(geotiles)[geotiles.id .== "lat[-68-66]lon[-066-064]"][1]
-
-        # println("$(gemb_surface_mask): $(geotile.id)")
-
-        #geotiles0 = geotiles.id[(geotiles.rgi1 .> 0) .& (geotiles.glacier_frac .> 0.3), :]
-        #geotile = first(geotiles0)
-
-        dh0 = dh[mission_ref_fac][At(geotile.id), :, :]
-        fac0 = fac[At(geotile.id), :, :]
-        smb0 = smb[At(geotile.id), :, :]
-
-        # round to the nearest day
-        tdh = round.(Altim.decimalyear.(lookup(dh0, :date)), digits=3)
-
-        valid = .!isnan.(dh0)
-        if !any(valid)
-            continue
-        end
-
-        trange_dh, hrang_dh = Altim.validrange(.!isnan.(dh0))
-        extrema_dh = extrema(tdh[trange_dh])
-
-        tg = round.(vec(gemb["datetime"]), digits=3)
-
-        _, trange_g = Altim.validrange(.!isnan.(gemb["fac"]))
-        extrema_g = extrema(tg[trange_g])
-
-        ext = (max(extrema_dh[1], extrema_g[1]), min(extrema_dh[2], extrema_g[2]))
-
-        trange_dh, = Altim.validrange((tdh .>= ext[1]) .& (tdh .<= ext[2]))
-        trange_g, = Altim.validrange((tg .>= ext[1]) .& (tg .<= ext[2]))
-        (length(trange_dh) != length(trange_g)) && error("gemb and dh do not have the same length")
-
-        dh_altim = dh0[trange_dh, hrang_dh]
-        dh_altim0 = copy(dh_altim)
-        tdh0 = vec(tdh[trange_dh] .- mean(tdh[trange_dh]))
-
-        # remove 3rd polynomal
-        for h in lookup(dh_altim, :height)
-            fit0 = Altim.curve_fit(model2, tdh0, dh_altim[:, At(h)], p2)
-            dh_altim0[:, At(h)] = fit0.resid
-        end
-
-        #in geotile
-        ext = GeoTiles.extent(geotile.id)
-
-        # buffer by 1 degree all arround
-        ext = Extents.buffer(ext, (X=geotile_buffer, Y=geotile_buffer))
-        in_geotile = findall(vec([Altim.within(ext, x, y) for (x, y) in zip(gemb["longitude"], gemb["latitude"])]))
-
-        dgembts = Dim{:gembts}(1:length(in_geotile))
-        dheight = dims(dh_altim, :height)
-        rmse = fill(NaN, (dgembts, dheight))
-
-        dh_gem = ((gemb["smb"][in_geotile, trange_g] .* (1000 / Altim.δice)) .+ gemb["fac"][in_geotile, trange_g])'
-        dh_gem0 = copy(dh_gem)
-
-        for j in axes(dh_gem, 2)
-            fit0 = Altim.curve_fit(model2, tdh0, dh_gem[:, j], p2)
-            dh_gem0[:, j] = fit0.resid
-        end
-
-        for h in lookup(dh_altim, :height)
-            alt = dh_altim0[:, At(h)]
-            for j in axes(dh_gem0, 2)
-                # println("$r, $j, $h")
-                rmse[At(j), At(h)] = sqrt(mean((alt .- dh_gem0[:, j]) .^ 2))
-            end
-        end
-
-        # loop for each height range and find best run and repective elevation
-        gemb_best_fit = fill(0, (dheight))
-        rmse_best_fit = fill(0.0, (dheight))
-
-        for h in lookup(dh_altim, :height)
-            #h = first(lookup(dh_altim, :height))
-
-            fooX = rmse[:, At(h)]
-            validX = .!isnan.(fooX)
-
-            if !any(validX)
-                continue
-            end
-
-            mrmse = minimum(fooX[validX])
-            gemb_best_fit[At(h)] = in_geotile[findfirst(fooX .== mrmse)]
-            rmse_best_fit[At(h)] = mrmse
-
-            facX = gemb["fac"][gemb_best_fit[At(h)], :]
-            smbX = gemb["smb"][gemb_best_fit[At(h)], :]
-
-            # fac/smb and dh may have different length time dimensions due to using now() in defining the date dimension... this should be fixed but for now just take the overlapping range with both having the same start date.
-            fac0[:, At(h)] = facX[1:length(fac0[:, At(h)])]
-            smb0[:, At(h)] = facX[1:length(smb0[:, At(h)])]
-        end
-
-        fac[At(geotile.id), :, :] = fac0
-        smb[At(geotile.id), :, :] = smb0
-    end
-    return (fac, smb)
-end
-
-# create a large data frame with all regionfiles
-function regionfiles2dataframe(;
-    binned_folders=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"),
-    surface_masks=[:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km],
-    dem_ids=[:best, :cop30_v2],
-    binning_methods = ["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"],
-    curvature_corrects = [true, false],
-    amplitude_corrects = [true, false],
-    paramater_sets = [1, 2],
-    project_id = :v01,
-)
-
-    df = DataFrame()
-    ddate = [];
-
-    params = NamedTuple[]
-    for binned_folder in binned_folders
-        for paramater_set in paramater_sets
-            for surface_mask in surface_masks
-                for dem_id in dem_ids
-                    for binning_method in binning_methods
-                        for curvature_correct in curvature_corrects
-                            for amplitude_correct = amplitude_corrects
-                                push!(params, (; project_id, binned_folder, paramater_set, surface_mask, dem_id, binning_method, curvature_correct, amplitude_correct))
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-   for param in params
-    #for param in params
-
-        # paths to files
-        binned_filled_file, figure_suffix = Altim.binned_filled_filepath(; param...)
-        binned_aligned_file = replace(binned_filled_file, ".jld2" => "_aligned.jld2")
-        dv_reg_file = replace(binned_aligned_file, ".jld2" => "_reg.jld2")
-
-        if !isfile(dv_reg_file)
-            continue
-        end
-
-        println("loading into DataFrame: $(dv_reg_file)")
-
-        dv, nobs, area = FileIO.load(dv_reg_file, "dv", "nobs", "area")
-
-        if isempty(dv)
-            continue
-        end
-
-        ddate = dims(dv, :date)
-        drgi = dims(dv, :rgi)
-        dmission = dims(dv, :mission)
-
-        data_parameters = Altim.binned_filled_fileparts(splitpath(dv_reg_file)[end])
-        
-        filename = last(splitpath(dv_reg_file))
-
-        for rgi in drgi
-        #rgi = first(drgi)
-
-            for mission in dmission
-            #mission = first(dmission)
-                append!(df, 
-                    DataFrame(; rgi, var="dv_km3", mission, data_parameters..., binned_folder = param.binned_folder, filename, surface_mask=string(param.surface_mask), area_km2=area[At(rgi)],val=[vec(dv[At(mission), At(rgi), :])], nobs=[vec(nobs[At(mission), At(rgi), :])])
-                )
-            end
-        end
-    end
-
-    # store date as metadata
-    DataFrames.metadata!(df, "date", collect(ddate); style=:note)
-    return df
-end
-
-
-function unique_col_elements(df; exclude_vector_of_vectors = true)
-    for (name, col) in zip(names(df),eachcol(df))
-
-        u = unique(col);
-        if isa(u[1], Array)
-            println("$name: is an Array{Array{}}, results not shown")
-            continue
-        end
-        n = min(length(u), 10)
-        println("$name: $(unique(col)[1:n])")
-    end
-end
-
-function old_regional_dmass(
-    binned_filled_file, 
-    geotiles, 
-    reg; 
-    surface_mask = :glacier, 
-    landfit=nothing,
-    land_apply_landoffset = false,
-)
-    if !(isfile(binned_filled_file))
-        printstyled("binned file does not exist, skipping: $(binned_filled_file) \n"; color=:yellow)
-        out = nothing
-    else
-
-        dh1 = FileIO.load(binned_filled_file, "dh_hyps")
-        nobs1 = FileIO.load(binned_filled_file, "nobs_hyps")
-
-        # subset to valid geotiles ("$(surface_mask)_area_km2" .> 0)
-        for k in keys(dh1)
-            dh1[k] = dh1[k][At(geotiles.id),:,:]
-            nobs1[k] = nobs1[k][At(geotiles.id),:,:]
-        end
-
-        # apply offset to dh
-        if (surface_mask == :land)
-            apply_landoffset = land_apply_landoffset
-            fac_apply = land_fac_apply
-        else
-            apply_landoffset = true;
-            fac_apply = true
-        end
-
-        if apply_landoffset
-            #!!!!!!!!!!!!!!!!!! THIS IS A HACK !!!!!!!!!!!!!!!!!!!!!
-            # remove only fixed GEDI trend of -.144 as determined from global analysis
-            landfit[At(["icesat", "icesat2", "hugonnet"]),:,:] .= 0
-            landfit[At(["gedi"]), :, :] .= -.144
-            #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-            dh1 = Altim.landoffset!(dh1, geotiles, landfit)
-        end
-
-        # calculate geotile volume change
-        dv, nobs2 = Altim.hyps_volume_change(dh1, nobs1, geotiles; mask=surface_mask)
-
-        dv_reg = Altim.hyps_geotile_aggrigate(dv, geotiles, reg; fun=sum)
-        nobs_reg = Altim.hyps_geotile_aggrigate(nobs2, geotiles, reg; fun=sum)
-
-        out = Dict("dm" => dm_reg, "dv" => dv_reg, "facv" => facv_reg0, "smbv" => smbv_reg0, "nobs" => nobs_reg, "area" => area_reg)
-    end
-    return out
-end
-
-
-function iterative_model2_fit(mid, low, high, decyear; iterations = 1000)
-
-    notnan = .!isnan.(low)
-    d = Normal()
-
-    n = sum(notnan)
-    x = decyear[notnan] .- mean(decyear[notnan])
-
-    sigma = high[notnan] .- low[notnan]
-    mid = mid[notnan]
-
-    foo_fit = zeros(iterations, 5)
-
-    for i = 1:iterations
-        y = (rand(d, n) .* sigma) .+ mid
-        foo_fit[i, :] = Altim.curve_fit(Altim.model3, x, y, Altim.p3).param
-    end
-
-    trend = mean(foo_fit[:, 2])
-    trend_err = std(foo_fit[:, 2])
-    acceleration = mean(foo_fit[:, 3])
-    acceleration_err = std(foo_fit[:, 3])
-    amplitude = mean(abs.(foo_fit[:, 4]))
-    amplitude_err = std(abs.(foo_fit[:, 4]))
-    return (;trend, trend_err, acceleration, acceleration_err , amplitude, amplitude_err)
-end
-
-
-function _sumvecofvec(r)
-    if length(r) == 1
-        out = r;
-    elseif typeof(r[1]) <: Array{}
-        out = [vec(sum(reduce(hcat, r), dims = 2))]
-    else
-        out = sum(r)
-    end
-end
-
-function _rssvecofvec(r)
-    if length(r) == 1
-        out = r
-    elseif typeof(r[1]) <: Array{}
-        out = [sqrt.(vec(sum(reduce(hcat, r).^2, dims=2)))]
-    else
-        out = sqrt((sum(r).^2))
-    end
-end
-
-
-function region_combine!(
-    df; 
-    # combine rgi13, rgi14, rgi15 into a single rgi30 (HMA)  region
-    region_col = "rgi",
-    region_combines = (("rgi13", "rgi14", "rgi15") => "hma", ),
-    combine_vars =  ["dv_km3", "refreeze_km3", "runoff_km3", "fac_km3", "smb_km3", "acc_km3", "gemb_dv_km3"],
-    set2nan = ["Δheight", "pscale", "nobs_km2"], # these variables can not be combined 
-    rss_vars = nothing,
-    missions = nothing,
-    )
-    
-    # run paramters that need to match to combine
-    param_vars = setdiff(names(df), reduce(vcat, (combine_vars, [region_col], rss_vars, set2nan)))
-        
-    df1 = DataFrame()
-    n = nrow(df)
-
-    for region_combine in region_combines
-    #region_combine = first(region_combines)
-
-        region_index = falses(n)
-        for rgi in region_combine[1]
-            region_index = (df.rgi .== rgi) .| region_index
-        end
-        
-        for r in unique(eachrow(df[:,param_vars]))
-        #r = first(unique(eachrow(df[:,param_vars])))
-
-            if !isnothing(missions)
-                if all(r.mission .!== missions)
-                    continue
-                end
-            end
-
-            run_index = isequal.(Ref(r), eachrow(df[:,param_vars]))
-            index = findall(region_index .& run_index)
-
-            new_row = hcat(DataFrame(r), DataFrames.combine(df[index, combine_vars], combine_vars .=> _sumvecofvec .=> combine_vars))
-            if !isnothing(rss_vars)
-                new_row = hcat(new_row, DataFrames.combine(df[index, rss_vars], rss_vars .=> _rssvecofvec .=> rss_vars))
-            end
-
-            if !isnothing(set2nan)
-                new_row = hcat(new_row, DataFrame(df[index[1], set2nan] .= NaN))
-            end
-
-            new_row[!, region_col] .= region_combine[2]
-            df1 = append!(df1, new_row)
-        end
-    end
-    df = append!(df, df1)
-end
-
-
-function dvdm_crop2dates!(df, daterange)
-    dates = DataFrames.metadata(df, "date")
-    decyear = Altim.decimalyear.(dates)
-
-    index_date = (decyear .>= minimum(daterange)) .& (decyear .<= maximum(daterange))
-    vars2crop = ["mid", "low", "high", "nobs"]
-    for r in eachrow(df)
-        for var0 in vars2crop
-            r[var0] = r[var0][index_date]
-        end
-    end
-    dates = dates[index_date]
-    df = DataFrames.metadata!(df, "date", collect(dates); style=:note)
-
-    return df
-end
-
-
-function dvdm_bin(df; bin_edges = 2000:0.25:2024)
-    dates = DataFrames.metadata(df, "date")
-    decyear = Altim.decimalyear.(dates)
-
-    bin_centers = (bin_edges[1:end-1] .+ bin_edges[2:end])./2
-
-    df0 = copy(df)
-    df0[!, :count] = copy(df.mid)
-    for (r0, r) = zip(eachrow(df0), eachrow(df)) 
-        mid = zeros(size( bin_centers))
-        low = zeros(size( bin_centers))
-        high = zeros(size( bin_centers))
-        count = zeros(size( bin_centers))
-        for i in eachindex(bin_centers)
-            index = (decyear .>= bin_edges[i]) .& (decyear .< bin_edges[i+1])
-            mid[i] = Altim.nanmean(r.mid[index])
-            low[i] = Altim.nanmean(r.low[index])
-            high[i] = Altim.nanmean(r.high[index])
-            count[i] = Altim.sum(.!isnan.(r.mid[index]))
-        end
-        
-        r0.mid = mid;
-        r0.low = low
-        r0.high = high
-        r0.count = count
-    end
-
-    dates = Altim.decimalyear2datetime.(bin_centers)
-    DataFrames.metadata!(df0, "date", dates; style=:note)
-
-    return df0
-end
-
-
-function dvdm_stairs(df)
-    dates = DataFrames.metadata(df, "date")
-    decyear = Altim.decimalyear.(dates)
-
-    ddate = (decyear[2] - decyear[1])/2
-    dateout = fill(NaN, length(dates)* 2)
-    tolerance = 0.001;
-    
-    df0 = copy(df)
-    for (r0, r) = zip(eachrow(df0), eachrow(df))
-        mid = zeros(length(dates)* 2)
-        low = zeros(length(dates)*2)
-        high = zeros(length(dates)* 2)
-        count = zeros(length(dates)* 2)
-
-        for i in eachindex(decyear)
-            i1 = (i-1)*2 + 1;
-            i2 = i*2
-            mid[i1:i2] .= r.mid[i]
-            low[i1:i2] .= r.low[i]
-            high[i1:i2] .= r.high[i]
-            count[i1:i2] .= r.count[i]
-
-            dateout[i1] = decyear[i] - ddate
-            dateout[i2] = decyear[i] + ddate
-        end
-
-        r0.mid = mid
-        r0.low = low
-        r0.high = high
-        r0.count = count
-    end
-
-    dates = Altim.decimalyear2datetime.(dateout)
-    DataFrames.metadata!(df0, "date", dates; style=:note)
-
-    return df0
-end
-
-
-function dvdm_delta(df; anomaly = false)
-    dates = DataFrames.metadata(df, "date")
-    decyear = Altim.decimalyear.(dates)
-
-    df0 = copy(df)
-    for (r0, r) = zip(eachrow(df0), eachrow(df))
-        
-        mid = r.mid[2:end] .- r.mid[1:end-1]
-
-        dlow = r.low .- r.mid;
-        low = mid .- sqrt.(dlow[2:end].^2 .+dlow[1:end-1].^2)
-
-        dhigh = r.high .- r.mid
-        high = mid .+ sqrt.(dhigh[2:end] .^ 2 .+dhigh[1:end-1] .^ 2)
-
-        count = r.count[2:end] .+ r.count[1:end-1]
-
-        if anomaly
-            meanmid = Altim.nanmean(mid)
-            mid = mid .- meanmid
-            low = low .- meanmid
-            high = high.- meanmid
-        end
-
-        r0.mid = mid
-        r0.low = low
-        r0.high = high
-        r0.count = count
-    end
-
-    dates = Altim.decimalyear2datetime.(decyear[2:end])
-    DataFrames.metadata!(df0, "date", dates; style=:note)
-
-    return df0
-end
-
-function dvdm_append(df1, df2)
-
-    dates1 = DataFrames.metadata(df1, "date")
-    decyear1 = Altim.decimalyear.(dates1)
-    dates2 = DataFrames.metadata(df2, "date")
-    decyear2 = Altim.decimalyear.(dates2)
-
-    daterange1 = extrema(dates1)
-    daterange2 = extrema(dates2)
-
-    dates = min(daterange1[1], daterange2[1]):(dates1[2]-dates1[1]):max(daterange1[2], daterange2[2])
-    decyear = Altim.decimalyear.(dates)
-
-    df1X = copy(df1)
-    df1X[:, :val] .= [fill(NaN, length(dates))]
-    df1X[:, :nobs] .= [fill(0, length(dates))]
-
-    df2X = copy(df2)
-    df2X[:, :val] .= [fill(NaN, length(dates))]
-    df2X[:, :nobs] .= [fill(0, length(dates))]
-
-    Threads.@threads for i in 1:nrow(df1)
-
-        notnan = .!isnan.(df1[i, :val])
-        ext = extrema(decyear1[notnan])
-        valid = (decyear .>= ext[1]) .& (decyear .<= ext[2])
-        var0 = fill(NaN, length(dates))
-        nobs0 = fill(0, length(dates))
-
-        interp = DataInterpolations.LinearInterpolation(df1[i, :val][notnan], decyear1[notnan]; extrapolate=false)
-        var0[valid] = interp(decyear[valid])
-        df1X[i, :val] = var0
-
-        interp = DataInterpolations.ConstantInterpolation(df1[i, :nobs][notnan], decyear1[notnan]; extrapolate=false)
-        nobs0[valid] = interp(decyear[valid])
-        df1X[i, :nobs] = nobs0
-    end
-
-    Threads.@threads for i in 1:nrow(df2)
-        notnan = .!isnan.(df2[i, :val])
-        ext = extrema(decyear2[notnan])
-        valid = (decyear .>= ext[1]) .& (decyear .<= ext[2])
-        var0 = fill(NaN, length(dates))
-        nobs0 = fill(0, length(dates))
-
-        interp = DataInterpolations.LinearInterpolation(df2[i, :val][notnan], decyear2[notnan]; extrapolate=false)
-        var0[valid] = interp(decyear[valid])
-        df2X[i, :val] = var0
-
-        interp = DataInterpolations.ConstantInterpolation(df2[i, :nobs][notnan], decyear2[notnan]; extrapolate=false)
-        nobs0[valid] = interp(decyear[valid])
-        df2X[i, :nobs] = nobs0
-    end
-
-    df = append!(df1X, df2X; cols=:union)
-
-    DataFrames.metadata!(df, "date", dates; style=:note)
-
-    return df
-end
-
-
+"""
+    geotile_bin2d(
+        df; 
+        var2bin="dh",
+        dims_edges=("decyear" => 1990:(30/365):2026, "height_reference" => 0.:100.:10000.),
+        binfunction::T = Altim.binningfun_define(binning_method)
+    ) where {T <: Function} -> Tuple{Union{Nothing, DimArray}, Union{Nothing, DimArray}}
+
+Bin data in a DataFrame by date and elevation into a 2D grid.
+
+# Arguments
+- `df`: DataFrame containing data to bin
+- `var2bin`: Column name of the variable to bin (default: "dh")
+- `dims_edges`: Tuple of dimension names and bin edges (default: decyear and height_reference)
+- `binfunction`: Function to apply within each bin (default: defined by binning_method)
+
+# Returns
+- `var0`: DimArray of binned values or nothing if no valid data
+- `nobs0`: DimArray of observation counts or nothing if no valid data
+
+# Description
+Creates a 2D grid of binned data based on the specified dimensions (typically time and elevation).
+Filters data to the range of available values, applies the binning function to each cell,
+and returns both the binned values and observation counts as DimArrays.
+"""
 function geotile_bin2d(
     df; 
     var2bin="dh",
@@ -2416,6 +1486,27 @@ end
 
 
 
+"""
+    glacier_discharge(; datadir=Altim.pathlocal[:data_dir]) -> DataFrame
+
+Load and combine glacier discharge data from multiple sources.
+
+# Arguments
+- `datadir`: Base directory containing glacier data files (default: Altim.pathlocal[:data_dir])
+
+# Returns
+- DataFrame containing glacier discharge information with columns:
+  - `latitude`: Glacier center latitude
+  - `longitude`: Glacier center longitude
+  - `discharge_gtyr`: Discharge rate in gigatons per year
+  - `discharge_err_gtyr`: Uncertainty in discharge rate
+  - `frontal_ablation_gtyr`: Frontal ablation rate in gigatons per year
+
+# Description
+Combines discharge data from Kochtitzky (2022) for the Northern Hemisphere and 
+Fuerst (2023) for Patagonia. Matches Patagonian glaciers with RGI database entries
+to obtain coordinates, and standardizes data format across sources.
+"""
 function glacier_discharge(; datadir=Altim.pathlocal[:data_dir])
     # Kochtitzky NH discharge and terminus retreate 
     nh_discharge = joinpath(datadir, "GlacierOutlines/GlacierDischarge/Kochtitzky2022/41467_2022_33231_MOESM4_ESM.csv")
@@ -2461,7 +1552,6 @@ function glacier_discharge(; datadir=Altim.pathlocal[:data_dir])
 end
 
 
-# set dischage to smb
 """
     discharge2smb(glaciers; discharge2smb_max_latitude=-60, discharge2smb_equilibrium_period=(Date(1979), Date(2000)))
 
@@ -2474,6 +1564,11 @@ Calculate discharge from surface mass balance (SMB) trends for glaciers below a 
 
 # Returns
 - `discharge0`: DataFrame with columns :latitude, :longitude, :discharge_gtyr, :discharge_err_gtyr, :frontal_ablation_gtyr
+
+# Description
+This function estimates glacier discharge by calculating SMB trends during an equilibrium period.
+For glaciers below the specified latitude threshold, it fits a linear trend to the SMB data
+and converts this to discharge in gigatons per year based on glacier area.
 """
 function discharge2smb(glaciers; discharge2smb_max_latitude=-60, discharge2smb_equilibrium_period=(Date(1979), Date(2000)))
     index_discharge2smb = glaciers.CenLat .< discharge2smb_max_latitude
@@ -2493,7 +1588,23 @@ function discharge2smb(glaciers; discharge2smb_max_latitude=-60, discharge2smb_e
     return discharge0
 end
 
+"""
+    dh2dv(dh, geotiles) -> dv
 
+Convert elevation change (dh) to volume change (dv) using area information from geotiles.
+
+# Arguments
+- `dh`: DimArray of elevation changes with dimensions (geotile, date, height)
+- `geotiles`: DataFrame containing geotile information with columns :id and :area_km2
+
+# Returns
+- `dv`: DimArray of volume changes with dimensions (geotile, date)
+
+# Description
+This function calculates volume change by multiplying elevation change by the corresponding 
+area for each geotile and height bin, then summing across all height bins. The result is 
+converted from km³ to Gt by dividing by 1000.
+"""
 function dh2dv(dh, geotiles)
     dv = fill(NaN, dims(dh[:, :, 1]))
     index_date = vec(any(.!isnan.(dh[1, :, :]), dims=:height))
@@ -2510,93 +1621,4 @@ function dh2dv(dh, geotiles)
     end
 
     return dv
-end
-
-
-# find optimal fit to gemb data
-function gemb_bestfit(dv_altim, smb, fac, discharge, geotiles)
-
-    ddate = dims(dv_altim, :date)
-
-    dΔheight = dims(smb, :Δheight)
-    dpscale = dims(smb, :pscale)
-    ddate_gemb = dims(smb, :date)
-
-
-    volume2mass = Altim.δice / 1000
-
-    # find common overlap 
-    index = .!isnan.(smb[1, :, 1, 1])
-    ex_gemb = extrema(ddate_gemb[index])
-    index = .!isnan.(dv_altim[1,:])
-    ex_dv = extrema(ddate[vec(index)])
-    ex = (max(ex_gemb[1],ex_dv[1]), min(ex_gemb[2],ex_dv[2]))
-    index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
-    index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
-
-    decyear = Altim.decimalyear.(ddate_gemb[index_gemb])
-    Δdecyear = decyear .- mean(decyear)
-
-    # loop for each geotile
-    geotiles = copy(geotiles)
-    geotiles[!, :pscale] .= 1.;
-    geotiles[!, :Δheight] .= 0.;
-    geotiles[!, :mad] .= 0.;
-    geotiles[!, :discharge_km3yr] .= 0.;
-
-    #Threads.@threads 
-    for geotile in eachrow(geotiles)
-    #geotile = eachrow(geotiles)[findfirst(geotiles.id .== "lat[+82+84]lon[-034-032]")]
-
-        # total discharge D in Gt/yr converted to km3/yr
-        index = Altim.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
-        
-        if any(index)
-            geotile.discharge_km3yr = sum(discharge[index, :discharge_gtyr]) ./ volume2mass
-        else
-            geotile.discharge_km3yr = 0
-        end
-
-        if all(isnan.(dv_altim[At(geotile.id),:]))
-            continue
-        end
-
-        pscale0 = 1;
-        Δheight0 = 0;
-        mad0 = Inf;
-
-        for pscale in dpscale
-        #pscale = first(dpscale)
-
-            for Δheight in dΔheight
-            #Δheight = first(dΔheight)
-                dv_gemb0 = (smb[At(geotile.id), index_gemb, At(pscale), At(Δheight)] ./ volume2mass .+ fac[At(geotile.id), index_gemb, At(pscale), At(Δheight)])
-                res = dv_altim[At(geotile.id), index_dv] .- (dv_gemb0 .- (geotile.discharge_km3yr.* Δdecyear))
-
-                if any(isnan.(res))
-                    display(dv_gemb0)
-                    display(geotile.discharge_km3yr)
-                    display(dv_altim[At(geotile.id), index_dv])
-
-                    println(geotile.id)
-
-                    error()
-                end
-
-                mad1 = Altim.mad(res)
-
-                if mad1 < mad0
-                    mad0 = mad1
-                    pscale0 = pscale
-                    Δheight0 = Δheight
-                end
-            end
-        end
-
-        geotile.pscale = pscale0
-        geotile.Δheight = Δheight0
-        geotile.mad = mad0
-    end
-
-    return geotiles[:, [:id, :extent, :pscale, :Δheight, :mad, :discharge_km3yr]]
 end

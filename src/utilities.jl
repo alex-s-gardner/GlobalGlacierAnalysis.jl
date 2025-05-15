@@ -14,7 +14,16 @@ end
 """
     setpaths(geotile_width, mission, product, version)
 
-populate named tuple of paths
+Constructs file paths for mission data organization.
+
+# Arguments
+- `geotile_width`: Geotile width in degrees
+- `mission`: Mission name (e.g., "GEDI", "ICESat2")
+- `product`: Product identifier
+- `version`: Version number
+
+# Returns
+Named tuple with data paths (raw_data, geotile, granules_remote, granules_local)
 """
 function setpaths(geotile_width, mission, product, version)
     geotile_dir = @sprintf "%.0fdeg" geotile_width
@@ -37,7 +46,15 @@ end
 """
     geotile_extent(lat, lon, width)
 
-Return extents of geotile
+Calculate the bounding box of a geotile centered at given coordinates.
+
+# Arguments
+- `lat`: Center latitude in degrees
+- `lon`: Center longitude in degrees
+- `width`: Width of the geotile in degrees
+
+# Returns
+NamedTuple with min_x, min_y, max_x, max_y defining the geotile boundaries
 """
 function geotile_extent(lat, lon, width)
     (min_x=(lon - width / 2), min_y=(lat - width / 2),
@@ -47,132 +64,45 @@ end
 """
     within(extent, x, y)
 
-Determine if a point falls within extents
+Check if point (x,y) falls within the specified extent.
+
+# Arguments
+- `extent`: Rectangular boundary (NamedTuple or Extent)
+- `x`: X-coordinate (longitude)
+- `y`: Y-coordinate (latitude)
+
+# Returns
+Boolean indicating whether the point is inside the extent
 """
 function within(extent::NamedTuple{(:min_x, :min_y, :max_x, :max_y)}, x, y)
     in = (x >= extent.min_x) .&& (x <= extent.max_x) .&& (y >= extent.min_y) .&& (y <= extent.max_y)
     return in
 end
 
-"""
-    within(extent, x, y)
-
-Determine if a point falls within Extent
-"""
 function within(extent::Extent, x, y)
     in = (x >= extent.X[1]) .&& (x <= extent.X[2]) .&& (y >= extent.Y[1]) .&& (y <= extent.Y[2])
     return in
 end
 
-"""
-    crop!(df::DataFrame, geocell::NamedTuple)
-
-Crop dataframe to only include data that falls within a given geocell
-"""
-function crop!(df::DataFrame, geocell::NamedTuple)
-    for row = eachrow(df)
-        ind = ((row.latitude .>= geocell[2]) .& (row.latitude .< geocell[4])
-               .& (row.longitude .>= geocell[1]) .& (row.longitude .< geocell[3]))
-        for j = eachindex(row)
-            row[j] = row[j][ind]
-            return nothing
-        end
-        return nothing
-    end
-end
-
-function crop!(pt::Vector{NamedTuple}, geocell::NamedTuple)
-    for row = eachrow(pt)
-        ind = ((row.latitude .>= geocell[2]) .& (row.latitude .< geocell[4])
-               .& (row.longitude .>= geocell[1]) .& (row.longitude .< geocell[3]))
-        for j = eachindex(row)
-            row[j] = row[j][ind]
-            return nothing
-        end
-        return nothing
-    end
-end
 
 # seach directory using two keys
 searchdir(path, key1, key2) = filter(x -> (occursin(key1, x) .& occursin(key2, x)), readdir(path))
 searchdir(path, key1) = filter(x -> occursin(key1, x), readdir(path))
 
-"""
-    points_plus(granule::ICESat2_Granule{}; bbox = (min_x = -Inf, min_y = -Inf, max_x = Inf, max_y = Inf))
-
-returns the ICESat2 granual *WITH* granual infomation for each track
-"""
-function points_plus(
-    granule;
-    extent::Extent=world
-)
-    try
-        p = SpaceLiDAR.points(granule, bbox=extent)
-        for i = eachindex(p)
-            p[i] = merge(p[i], (; granule_info=Fill(granule, length(p[i].longitude))))
-        end
-
-        return p
-    catch ex
-        println("-------- error thrown when trying to read: --------")
-        println("$(granule.url)")
-        println("pease delete file and re-run `geotile_download_granules`")
-        println("------------------------------------------------------")
-        throw(error("issue reading $(granule.url)"))
-    end
-end
 
 """
-    points_plus(granule::ICESat_Granule{}; bbox = (min_x = -Inf, min_y = -Inf, max_x = Inf, max_y = Inf))
+    geotile_define(geotile_width::Number)
 
-returns the ICESat granual *WITH* granual infomation for each track
-"""
-function points_plus(
-    granule::ICESat_Granule{};
-    extent::Extent=world
-)
+Create a global grid of geotiles with specified width.
 
-    try
-        p = SpaceLiDAR.points(granule, bbox=extent)
-        p = merge(p, (; granule_info=Fill(granule, length(p.longitude))))
-        return p
-    catch ex
-        println("-------- error thrown when trying to read: --------")
-        println("$(granule.url)")
-        println("pease delete file and re-run `geotile_download_granules`")
-        println("------------------------------------------------------")
-        throw(error("issue reading $(granule.url)"))
-    end
-end
+# Arguments
+- `geotile_width`: Width of each geotile in degrees (must divide evenly into 180)
 
-function rm_corrupt_h5(folder; minsize=Inf)
-    # minsize = 1E7 # file size is in bytes
-    files = filter!(readdir(folder)) do fname
-        fname[end] == '5' .&& filesize(joinpath(folder, fname)) < minsize
-    end
+# Returns
+- `DataFrame`: Table with columns for geotile ID and extent (min_x, min_y, max_x, max_y)
 
-    # this checks each file before deleting
-    for fname in files
-        if fname[end] == '5'
-            try
-                h5open(joinpath(folder, fname), "r")
-            catch e
-                if !any(names(e) .== "msg")
-                    error("check that HDF5 library has been imported (e.g. using HDF5)")
-                else
-                    println(e.msg)
-                    println("!!!! deleting file !!!!")
-                    rm(joinpath(folder, fname))
-                end
-            end
-        end
-    end
-end
-
-"""
-    geotile_define(geotile_width)
-
-Returns a DataFrame with geotile ids and extents
+# Throws
+- `ErrorException`: If the geotile width doesn't divide evenly into 180 degrees
 """
 function geotile_define(geotile_width::Number)
 
@@ -192,9 +122,18 @@ function geotile_define(geotile_width::Number)
 end
 
 """
-    mission2spacelidar(mission)
+    mission2spacelidar(mission::Symbol) -> Symbol
 
-Returns mission symbol with spacelidar capitilization
+Convert mission symbol to standardized SpaceLiDAR capitalization format.
+
+# Arguments
+- `mission::Symbol`: Input mission symbol (e.g., `:icesat`, `:ICESat2`, `:GEDI`)
+
+# Returns
+- `Symbol`: Standardized mission symbol (`:ICESat`, `:ICESat2`, or `:GEDI`)
+
+# Throws
+- `ErrorException`: If the mission is not recognized
 """
 function mission2spacelidar(mission::Symbol)
     if !(mission == :ICESat || mission == :ICESat2 || mission == :GEDI)
@@ -213,9 +152,22 @@ function mission2spacelidar(mission::Symbol)
 end
 
 """
-geotile_search_granules(geotiles, mission, product, version, outgranulefile; rebuild_dataframe = false )
+    geotile_search_granules(geotiles, mission, product, version, outgranulefile; rebuild_dataframe=false, after=nothing, page_size=2000)
 
-Find all granuels that intersect geotile and same as an Arrow table
+Find all granules that intersect with specified geotiles and save results as an Arrow table.
+
+# Arguments
+- `geotiles`: DataFrame containing geotile information
+- `mission`: Mission symbol (e.g., `:icesat`, `:ICESat2`, `:GEDI`)
+- `product`: Product identifier for the mission
+- `version`: Version of the product
+- `outgranulefile`: Path to save the output Arrow file
+- `rebuild_dataframe`: Whether to rebuild the dataframe if it already exists (default: false)
+- `after`: Optional date filter to only include granules after this date
+- `page_size`: Number of results per page for API requests (default: 2000)
+
+# Returns
+- Path to the saved Arrow file
 """
 function geotile_search_granules(
     geotiles,
@@ -284,6 +236,35 @@ function geotile_search_granules(
     return outgranulefile
 end
 
+"""
+    geotile_download_granules!(
+        geotile_granules,
+        mission,
+        savedir,
+        outgranulefile;
+        threads=true,
+        rebuild_dataframe=false,
+        aria2c=false,
+        downloadstreams=16,
+    )
+
+Downloads satellite data granules for each geotile and updates their URLs to local paths.
+
+# Arguments
+- `geotile_granules`: DataFrame containing geotiles and their associated granules
+- `mission`: Satellite mission identifier (e.g., :ICESat2, :ICESat, :GEDI)
+- `savedir`: Directory where downloaded granules will be saved
+- `outgranulefile`: Path to save the updated granule information
+
+# Keywords
+- `threads=true`: Whether to use multithreading for downloads
+- `rebuild_dataframe=false`: Whether to rebuild the dataframe from scratch
+- `aria2c=false`: Whether to use aria2c for downloading
+- `downloadstreams=16`: Number of download streams when using aria2c
+
+# Returns
+- Path to the saved granule file
+"""
 function geotile_download_granules!(
     geotile_granules,
     mission,
@@ -394,6 +375,18 @@ function geotile_download_granules!(
     return outgranulefile
 end
 
+"""
+    write_urls!(fn::String, urls::Vector{String}) -> String
+
+Write a list of URLs to a file, one URL per line.
+
+# Arguments
+- `fn::String`: Path to the output file
+- `urls::Vector{String}`: List of URLs to write
+
+# Returns
+- Absolute path to the created file
+"""
 function write_urls!(fn::String, urls::Vector{String})
     open(fn, "w") do f
         for url in urls
@@ -403,6 +396,20 @@ function write_urls!(fn::String, urls::Vector{String})
     abspath(fn)
 end
 
+"""
+    granules_load(filename, mission; geotiles=nothing, rebuild_dataframe=false)
+
+Load satellite data granules from an Arrow file with proper type reconstruction.
+
+# Arguments
+- `filename`: Path to the Arrow file containing granule data
+- `mission`: Mission symbol (e.g., `:ICESat`, `:ICESat2`, `:GEDI`)
+- `geotiles`: Optional DataFrame of geotiles to filter granules by ID
+- `rebuild_dataframe`: Whether to ignore geotile filtering (default: false)
+
+# Returns
+- DataFrame of granules with proper types restored, or `nothing` if no matching granules found
+"""
 function granules_load(
     filename,
     mission;
@@ -448,9 +455,18 @@ function granules_load(
 end
 
 """
-    intersectindices(a,b; bool = false)
+    intersectindices(a, b; bool=false)
 
-Returns the index mapping between intersecting elements in `a` and `b`
+Find indices of intersecting elements between collections `a` and `b`.
+
+# Arguments
+- `a`: First collection
+- `b`: Second collection
+- `bool`: If true, returns boolean masks instead of indices (default: false)
+
+# Returns
+- If `bool=false`: Tuple of indices `(ia, ib)` where `a[ia]` equals `b[ib]`
+- If `bool=true`: Tuple of boolean masks `(ia0, ib0)` marking intersecting elements
 """
 function intersectindices(a, b; bool=false)
     ia = findall(in(b), a)
@@ -473,10 +489,15 @@ end
 """
     rightmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
 
-Merge DataFrames with identical columns based on id_unique
-- retains df_left rows if not contianed in df_right
-- retains df_right rows if not contianed in df_left
-- df_right rows are retained over df_left if rows have the same id_unique
+Merge two DataFrames based on a unique identifier column, prioritizing values from df_right.
+
+# Arguments
+- `df_left`: First DataFrame
+- `df_right`: Second DataFrame
+- `id_unique`: Symbol representing the column name containing unique identifiers
+
+# Returns
+- DataFrame with merged data where df_right values take precedence for matching rows
 """
 function rightmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
     ileft, iright = intersectindices(df_left[:, id_unique], df_right[:, id_unique], bool=true)
@@ -492,10 +513,16 @@ end
 """
     leftmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
 
-Merge DataFrames with identical columns based on id_unique
-- retains df_left rows if not contianed in df_right
-- retains df_right rows if not contianed in df_left
-- df_left rows are retained over df_rigth if rows have the same id_unique
+Merge two DataFrames based on a unique identifier column, keeping all rows from df_left
+and adding only new rows from df_right.
+
+# Arguments
+- `df_left`: First DataFrame (takes precedence for duplicate IDs)
+- `df_right`: Second DataFrame (only non-duplicate rows are added)
+- `id_unique`: Symbol representing the column name containing unique identifiers
+
+# Returns
+- DataFrame with merged data where all df_left rows are preserved
 """
 function leftmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
     _, iright = intersectindices(df_left[:, id_unique], df_right[:, id_unique], bool=true)
@@ -505,6 +532,23 @@ function leftmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
     return df_left
 end
 
+"""
+    geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow, replace_corrupt_h5=true)
+
+Build geotiles from satellite data granules.
+
+# Arguments
+- `geotile_granules`: DataFrame containing geotiles and their associated granules
+- `geotile_dir`: Directory where geotiles will be saved
+
+# Keywords
+- `warnings=true`: Whether to display warning messages
+- `fmt=:arrow`: Output file format (`:arrow` or other supported format)
+- `replace_corrupt_h5=true`: Whether to attempt recovery of corrupt HDF5 files
+
+# Returns
+Nothing, but creates geotile files in the specified directory
+"""
 function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow, replace_corrupt_h5 = true)
     printstyled("building geotiles\n"; color=:blue, bold=true)
 
@@ -604,41 +648,19 @@ function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow,
     end
 end
 
-function getpoints(granule; extent=nothing, replace_corrupt_h5 = false)
 
-    try
-        pts = SpaceLiDAR.points(granule; bbox=extent)
-        return pts
-    catch e
-        if e isa InterruptException
-            println("function terminated by user")
-            rethrow(e)
-        else
-            printstyled("issue reading: $(granule.url)\n"; color=:red)
-            if replace_corrupt_h5 
-                # if a download was killed mid-stream it can lead to corrupt files
-                printstyled("               deleting old file and re-downloading from source\n"; color=:red)
-                if isfile(granule.url)
-                    rm(granule.url)
-                end
-                (savedir, _) = splitdir(granule.url);
-                try
-                    # this might be breaking with https://github.com/evetion/SpaceLiDAR.jl/pull/79#issuecomment-2406022071
-                    granule = search(SpaceLiDAR.mission(granule), granule.info.type; version=granule.info.version, id=granule.id)[1]
-                    download!(granule, savedir)
-                    pts = SpaceLiDAR.points(granule; bbox=extent)
-                    return pts
-                catch e
-                    throw(e)
-                end
-            else
-                throw(e)
-            end
-        end
-    end
-end
+"""
+    emptyrow(df)
 
+Create an empty row for a DataFrame with appropriate default values for each column type.
 
+# Arguments
+- `df`: DataFrame to create an empty row for
+
+# Returns
+- Vector with default values for each column (empty strings for String columns, 
+  NaN for floating point columns, and 0 for other numeric types)
+"""
 function emptyrow(df)
     tps = eltype.(eachcol(df))
     f = []
@@ -658,7 +680,13 @@ end
 """
     geotile_id(extent)
 
-Returns the geotile id given a geotile `extent`
+Generate a standardized ID string for a geotile based on its geographic extent.
+
+# Arguments
+- `extent`: NamedTuple containing min_x, min_y, max_x, max_y coordinates in degrees
+
+# Returns
+- String in format "lat[+YY+YY]lon[+XXX+XXX]" where YY are latitudes and XXX are longitudes
 """
 function geotile_id(extent)
     id = @sprintf("lat[%+03.0f%+03.0f]lon[%+04.0f%+04.0f]", extent.min_y, extent.max_y, extent.min_x, extent.max_x)
@@ -666,26 +694,39 @@ function geotile_id(extent)
 end
 
 """
-    geotile_extent(geotile_id)
+    geotile_extent(geotile_id::String) -> NamedTuple
 
-Returns the geotile extents given a geotile `id`
+Extract geographic extent from a geotile ID string.
+
+# Arguments
+- `geotile_id`: String in format "lat[+YY+YY]lon[+XXX+XXX]" where YY are latitudes and XXX are longitudes
+
+# Returns
+- NamedTuple with min_x, min_y, max_x, max_y coordinates in degrees
 """
 function geotile_extent(geotile_id)
-
     min_y = parse(Int, geotile_id[5:7])
     max_y = parse(Int, geotile_id[8:10])
 
     min_x = parse(Int, geotile_id[16:19])
     max_x = parse(Int, geotile_id[20:23])
 
-    return nt = (min_x=min_x, min_y=min_y, max_x=max_x, max_y=max_y)
+    return (min_x=min_x, min_y=min_y, max_x=max_x, max_y=max_y)
 end
 
 
 """
-    geotile_utm!(df::DataFrame{}; height = nothing)
+    geotile_utm!(df::DataFrame; height=nothing) -> (DataFrame, String)
 
-add x and y coodinates for local utm or polar stereo zone to an geotile DataFrame
+Convert geographic coordinates (longitude, latitude) to local UTM or polar stereographic 
+coordinates and add them as X and Y columns to the DataFrame.
+
+# Arguments
+- `df`: DataFrame containing longitude and latitude columns
+- `height`: Optional height parameter (not used in current implementation)
+
+# Returns
+- Tuple containing the modified DataFrame and the EPSG code string for the projection
 """
 function geotile_utm!(df::DataFrame; height=nothing)
     # create a regularly spaced grid using a local low distortion projection
@@ -697,11 +738,31 @@ end
 
 
 """
-    pointextract(x::Vector{<:Vector{<:Number}}, latitude::Vector{<:Vector{<:Number}}, 
-        ga::GeoArray; nodatavalue = 0.0, replace_nodatavalue_withnan = false,
-        filter_kernel::Union{OffsetMatrix{Float64, Matrix{Float64}}, Nothing} = nothing, 
-        derivative_kernel::Union{OffsetArray, Nothing, Vector{<:OffsetArray}} = nothing,
-        interp = Constant())
+    pointextract(x, y, point_epsg, ga::GeoArray; kwargs...) -> Union{Vector, Vector{Vector}}
+
+Extract values from a GeoArray at specified coordinates, with optional filtering and derivative calculation.
+
+# Arguments
+- `x`: X-coordinates (longitude or easting) of points to extract
+- `y`: Y-coordinates (latitude or northing) of points to extract
+- `point_epsg`: EPSG code string for the coordinate system of input points
+- `ga`: GeoArray containing the data to extract from
+
+# Keywords
+- `nodatavalue=0.0`: Value to use for points outside the array or at nodata locations
+- `replace_nodatavalue_withnans=false`: Whether to replace nodata values with NaN
+- `convert_to_float=false`: Whether to convert integer arrays to floating point
+- `filter_kernel=nothing`: Optional kernel for filtering the GeoArray before extraction
+- `derivative_kernel=nothing`: Optional kernel(s) for calculating derivatives
+- `interp=Constant()`: Interpolation method (Constant(), Linear(), Cubic(), etc.)
+
+# Returns
+- If no derivatives requested: Vector of extracted values
+- If derivatives requested: Vector of vectors containing [values, derivative1, derivative2, ...]
+
+# Performance Notes
+- Constant() and Linear() interpolation are significantly faster than Cubic()
+- Most computation time is spent in the interpolation step
 """
 function pointextract(
     x,
@@ -912,27 +973,25 @@ function pointextract(
     end
     return val
 end
-
-
 """
-    epsg2epsg_nodata(x, y, height, from_epsg, to_epsg, nodatavalue)
+    epsg2epsg(x, y, height, from_epsg, to_epsg; parse_output=true, threaded=true)
 
-A wrapper for `epsg2epsg` to prevent modification of `height` no data values
-"""
-function epsg2epsg_nodata(x, y, height, from_epsg, to_epsg, nodatavalue)
-    valid = (height .!= nodatavalue) .& (.!isnan.(height))
-    if any(valid)
-        #(x[valid], y[valid], height[valid]) = epsg2epsg(x[valid], y[valid], height[valid], from_epsg, to_epsg; parse_output = false)
-        x[valid], y[valid], height[valid] = epsg2epsg(x[valid], y[valid], height[valid], from_epsg, to_epsg; parse_output=true)
-    end
-    return x, y, height
-end
+Convert coordinates with height between different coordinate reference systems.
 
+# Arguments
+- `x`: X-coordinates (longitude or easting) as vector or scalar
+- `y`: Y-coordinates (latitude or northing) as vector or scalar
+- `height`: Height values as vector or scalar
+- `from_epsg`: Source EPSG code as string
+- `to_epsg`: Target EPSG code as string
 
-"""
-    epsg2epsg(x, y, height, from_epsg, to_epsg)
+# Keywords
+- `parse_output=true`: Whether to return separate x,y,height arrays (true) or tuples (false)
+- `threaded=true`: Whether to use multithreading for coordinate transformation
 
-Returns `x`, `y`,`height` in `to_epsg` projection
+# Returns
+- If `parse_output=true`: Tuple of (x, y, height) in target coordinate system
+- If `parse_output=false`: Vector of coordinate tuples or single tuple
 """
 function epsg2epsg(
     x::Union{AbstractVector{<:Any},Number},
@@ -989,9 +1048,23 @@ end
 
 
 """
-    epsg2epsg(x, y, from_epsg, to_epsg)
+    epsg2epsg(x, y, from_epsg, to_epsg; parse_output=true, threaded=true)
 
-Returns `x`, `y` in `to_epsg` projection
+Convert coordinates between different coordinate reference systems.
+
+# Arguments
+- `x`: X-coordinate(s) (longitude or easting) in source projection
+- `y`: Y-coordinate(s) (latitude or northing) in source projection
+- `from_epsg`: Source EPSG code as string (e.g., "EPSG:4326")
+- `to_epsg`: Target EPSG code as string (e.g., "EPSG:3857")
+
+# Keywords
+- `parse_output=true`: If true, returns separate x,y vectors; if false, returns tuples
+- `threaded=true`: Whether to use multithreading for batch conversions
+
+# Returns
+- If `parse_output=true`: Tuple of (x, y) arrays in target projection
+- If `parse_output=false`: Vector of coordinate tuples or single tuple
 """
 function epsg2epsg(
     x::Union{AbstractVector{<:Any},Number},
@@ -1038,9 +1111,15 @@ function epsg2epsg(
 end
 
 """
-    decimalyear(datetime::DateTime)
+    decimalyear(datetime)
 
-converts DateTime to decimalyear [e.g. decimalyear(DateTime("2018-10-24")) = 2018.813698630137]
+Convert DateTime to decimal year representation.
+
+# Arguments
+- `datetime`: DateTime object to convert
+
+# Returns
+- Float representing year with decimal fraction (e.g., 2018.813698630137 for 2018-10-24)
 """
 function decimalyear(datetime)
     year = Dates.year(datetime)
@@ -1054,10 +1133,15 @@ end
 """
     decimalyear2datetime(decyear)
 
-converts decimalyear to DateTime to  [e.g. decimalyear2datetime(2018.813698630137) = DateTime("2018-10-24")]
+Convert decimal year to DateTime object.
+
+# Arguments
+- `decyear`: Decimal year (e.g., 2018.813698630137)
+
+# Returns
+- DateTime object (e.g., DateTime("2018-10-24"))
 """
 function decimalyear2datetime(decyear)
-
     # check if date is a leapyear
     yr0 = floor(decyear);
     yr = DateTime(yr0)
@@ -1096,10 +1180,25 @@ end
 
 
 """
-    regular_grid(center_extent, node_spacing; node_width = node_spacing; node_shape = "square")
+    regular_grid(center_extent, node_spacing; node_width=node_spacing, node_shape="square")
 
-Returns a named tuple of node centers (`x_node_center`, `y_node_center`) and `mode_half_width`. 
-`node_shape` is also provided
+Create a regular grid of nodes within a specified extent.
+
+# Arguments
+- `center_extent`: Extent object with x_min, x_max, y_min, y_max properties
+- `node_spacing`: Distance between adjacent node centers
+
+# Keywords
+- `node_width`: Width of each node (defaults to node_spacing)
+- `node_shape`: Shape of the nodes ("square" or other shapes)
+
+# Returns
+- NamedTuple containing:
+  - `node_center`: Grid of node centers
+  - `x_node_center`: Vector of x-coordinates for node centers
+  - `y_node_center`: Vector of y-coordinates for node centers
+  - `node_half_width`: Half-width of each node
+  - `node_shape`: Shape of the nodes
 """
 function regular_grid(center_extent, node_spacing; node_width=node_spacing, node_shape="square")
     x_node_center = center_extent.x_min:node_spacing:center_extent.x_max
@@ -1111,147 +1210,21 @@ function regular_grid(center_extent, node_spacing; node_width=node_spacing, node
 end
 
 
-"""
-    regular_grid_extents(x_center, y_center, half_width)
-
-Returns the extents of a box with  width 2 x `half_width` centered at `x_center`, `y_center`. 
-"""
-function regular_grid_extents(x_center, y_center, half_width)
-    (x_min=x_center - half_width, y_min=y_center - half_width,
-        x_max=x_center + half_width, y_max=y_center + half_width)
-end
-
-
-"""
-    bin(x::Vector{<:Number}, y::Array{<:Number}, xbin_edges::Union{Vector{<:Number},StepRangeLen{}}; method::F = mean) where {F<:Function}
-
-Fast binning of `y` as a function of `x`. Returns `x_binned`, `y_binned`, `bin_count`. `method` 
-specifies approached used for aggregating binned values. NOTE: `x_binned` == 0 and 
-`y_binned` == 0 when `bin_count` == 0.
-
-# see https://discourse.julialang.org/t/performance-optimization-of-a-custom-binning-funciton/91616
-"""
-function bin(
-    x::Vector{<:Number},
-    y::Array{<:Number},
-    xbin_edges::Union{Vector{<:Number},StepRangeLen{}};
-    method::F=mean,
-) where {F<:Function}
-
-    # find bin breakpoints
-    p = sortperm(vcat(x, xbin_edges))
-    bins = findall(>(length(x)), p)
-
-    # initialize outputs
-    bin_count = Int.(diff(bins) .- 1)
-    x_binned = zeros(eltype(x), length(bin_count))
-    y_binned = zeros(eltype(y), length(bin_count), size(y, 2))
-
-    # calculate binned metrics
-    for i = findall(bin_count .> 0)
-        x_binned[i] = method(@view(x[p[bins[i]+1:bins[i+1]-1]]))
-        y_binned[i] = method(@view(y[p[bins[i]+1:bins[i+1]-1]]))
-    end
-
-    return x_binned, y_binned, bin_count
-end
-
-"""
-    bin(
-    x::Vector{<:Number}, y::Vector{<:Number}, z::Array{<:Number}, 
-    xbin_edges::Union{Vector{<:Number},StepRangeLen{}}, 
-    ybin_edges::Union{Vector{<:Number},StepRangeLen{}}; 
-    method::F = mean) where {F<:Function}
-    )
-
-Fast binning of `z` as a function of `x` and `y`. Returns `x_binned`, `y_binned`, `z_binned`, 
-`bin_count`. `method` specifies approached used for aggregating binned values. NOTE: 
-`x_binned` == 0, `y_binned` == 0 and z_binned == 0 when `bin_count` == 0.
-
-# see https://discourse.julialang.org/t/performance-optimization-of-a-custom-binning-funciton/91616
-"""
-function bin(
-    x::Vector{<:Number},
-    y::Vector{<:Number},
-    z::Vector{<:Number},
-    xbin_edges::Union{Vector{<:Number},StepRangeLen{}},
-    ybin_edges::Union{Vector{<:Number},StepRangeLen{}};
-    method::F=median
-) where {F<:Function}
-
-    # find bin breakpoints
-    py = sortperm(vcat(y, ybin_edges))
-    binsy = findall(>(length(y)), py)
-    biny_count = Int.(diff(binsy) .- 1)
-
-    x_binned = zeros(eltype(x), length(ybin_edges) - 1, length(xbin_edges) - 1)
-    y_binned = zeros(eltype(y), length(ybin_edges) - 1, length(xbin_edges) - 1)
-    z_binned = zeros(eltype(z), length(ybin_edges) - 1, length(xbin_edges) - 1)
-    bin_count = zeros(Int32, length(ybin_edges) - 1, length(xbin_edges) - 1)
-
-    # loop for each x bin
-    Threads.@threads for i = findall(biny_count .> 0)
-        y0 = @view y[py[binsy[i]+1:binsy[i+1]-1]]
-        x0 = @view x[py[binsy[i]+1:binsy[i+1]-1]]
-        z0 = @view z[py[binsy[i]+1:binsy[i+1]-1]]
-
-        # find bin breakpoints
-        px = sortperm(vcat(x0, xbin_edges))
-        binsx = findall(>(length(x0)), px)
-
-        # initialize outputs
-        bin_count[i, :] .= Int.(diff(binsx) .- 1)
-
-        # calculate binned metrics
-        for j = findall(bin_count[i, :] .> 0)
-            x_binned[i, j] = method(@view x0[px[binsx[j]+1:binsx[j+1]-1]])
-            y_binned[i, j] = method(@view y0[px[binsx[j]+1:binsx[j+1]-1]])
-            z_binned[i, j] = method(@view z0[px[binsx[j]+1:binsx[j+1]-1]])
-        end
-    end
-
-    return x_binned, y_binned, z_binned, bin_count
-end
-
-
-"""
-    binnedfiltering(x::Vector{<:Number}, y::Vector{<:Number}, xbin_edges::Union{Vector{<:Number},StepRangeLen{}}; method:: = :mad)
-
-Fast filtering of data within descrete bins of `y` as a funciton `x`. returns `x_binned`, `y_binned`, `bin_count`. `method` specifies approached used for aggregating binned values. 
-"""
-function binnedfiltering(
-    x::Vector{<:Number},
-    y::Vector{<:Number},
-    xbin_edges::Union{Vector{<:Number},StepRangeLen{}};
-    method::F=madnorm,
-    threshold::Number=10,
-) where {F<:Function}
-
-    # find bin breakpoints
-    p = sortperm(vcat(x, xbin_edges))
-    bins = findall(>(length(x)), p)
-
-    # initialize outputs
-    outlier = falses(size(y))
-    bin_count = Int.(diff(bins) .- 1)
-
-    # identify outliers
-    for i = findall(bin_count .> 0)
-        outlier[p[bins[i]+1:bins[i+1]-1]] = method(@view(y[p[bins[i]+1:bins[i+1]-1]])) .> threshold
-    end
-
-    return outlier
-end
-
 
 """
     madnorm(x)
 
-Returns `x_madnorm` the normalized median absolute deviation of `y` from the global median. 
-Note: consistent_estimator applied
+Calculate the normalized median absolute deviation (MAD) of values in x.
+
+# Arguments
+- `x`: Vector of values to analyze
+
+# Returns
+- Vector of normalized deviations, where each value represents the number of 
+  standard deviations from the median (using MAD scaled by 1.4826)
 """
 function madnorm(x)
-    consistent_estimator = 1.4826 #mad to sigm
+    consistent_estimator = 1.4826 #mad to sigma conversion factor
     x_abs = abs.(x .- median(x))
     x_madnorm = x_abs ./ (median(x_abs) .* consistent_estimator)
     return x_madnorm
@@ -1260,7 +1233,13 @@ end
 """
     mad(x)
 
-Returns the median absolute deviation from the median
+Calculate the median absolute deviation (MAD) of values in x.
+
+# Arguments
+- `x`: Vector of values to analyze
+
+# Returns
+- The median of absolute deviations from the median, or NaN if x is empty
 """
 function mad(x)
     if isempty(x)
@@ -1275,7 +1254,13 @@ end
 """
     range(x)
 
-Return the range (maximum minus minimum) of x
+Calculate the range (maximum minus minimum) of a collection of values.
+
+# Arguments
+- `x`: Collection of values
+
+# Returns
+- The difference between the maximum and minimum values in x
 """
 function range(x)
     x_minmax = extrema(x)
@@ -1285,12 +1270,22 @@ end
 
 
 """
-    utm_epsg(lon::Real, lat::Real, always_xy=true)
+    utm_epsg(lon::Real, lat::Real; always_xy=true) -> String
 
-returns the EPSG code for the intersecting universal transverse Mercator (UTM) zone -OR- 
-the relevant polar stereographic projection if outside of UTM limits.
+Get the EPSG code for the UTM zone containing the coordinates, or polar stereographic projection if outside UTM limits.
 
-modified from: https://github.com/JuliaGeo/Geodesy.jl/blob/master/src/utm.jl    
+# Arguments
+- `lon`: Longitude coordinate
+- `lat`: Latitude coordinate
+- `always_xy`: If true, interpret inputs as (lon, lat); if false, as (lat, lon)
+
+# Returns
+- String containing the EPSG code in the format "EPSG:XXXXX"
+
+# Notes
+- Uses EPSG:3413 (NSIDC Sea Ice Polar Stereographic North) for latitudes above 84°N
+- Uses EPSG:3031 (Antarctic Polar Stereographic) for latitudes below 80°S
+- Handles special cases for Norway and Svalbard
 """
 function utm_epsg(lon::Real, lat::Real; always_xy=true)
 
@@ -1342,12 +1337,20 @@ end
 
 """
     geoid(geoid::String; folder::String = "~/Documents/geoids")
-returns geoid::GeoArray{} height file [relative to WGS 84 (EPSG::4979) ellipsoid]
 
-If geoid file not found in `folder` it will be downloaded from:
-https://www.agisoft.com/downloads/geoids/ 
+Returns a GeoArray containing geoid height data relative to WGS 84 (EPSG:4979) ellipsoid.
 
-Models Converted from USA NGA data by agisoft under Public Domain license.
+Downloads the geoid file from https://www.agisoft.com/downloads/geoids/ if not found locally.
+
+# Arguments
+- `geoid::String`: Geoid model name, one of "egm84", "egm96", or "egm2008"
+- `folder::String`: Directory where geoid files are stored (default: "~/Documents/geoids")
+
+# Returns
+- `GeoArray`: Geoid height data
+
+# Note
+Models are converted from USA NGA data by Agisoft under Public Domain license.
 """
 function geoid(geoid::String; folder::String="~/Documents/geoids")
 
@@ -1384,48 +1387,28 @@ function geoid(geoid::String; folder::String="~/Documents/geoids")
     return GeoArrays.read(path2goid; masked=false)
 end
 
-"""
-    gaussian(σ::Real, [l]) -> g
-
-Construct a 1d gaussian kernel `g` with standard deviation `σ`, optionally
-providing the kernel length `l`. The default is to extend by two `σ`
-in each direction from the center. `l` must be odd. 
-**Stolen from ImageFiltering.jl**
-"""
-function gaussian(σ::Real, l::Int=4 * ceil(Int, σ) + 1)
-    isodd(l) || throw(ArgumentError("length must be odd"))
-    w = l >> 1
-    g = σ == 0 ? [exp(0 / (2 * oftype(σ, 1)^2))] : [exp(-x^2 / (2 * σ^2)) for x = -w:w]
-    g / sum(g)
-end
 
 
 """
-    gaussian((σ1, σ2, ...), [l]) -> (g1, g2, ...)
+    dem_height(lon, lat, dem; filter_halfwidth=nothing, filter_kernel=:gaussian, slope=false, curvature=false)
 
-Construct a multidimensional gaussian filter as a product of single-dimension
-factors, with standard deviation `σd` along dimension `d`. Optionally
-provide the kernel length `l`, which must be a tuple of the same
-length.
-**Stolen from ImageFiltering.jl**
-"""
-gaussian(σs::NTuple{N,Real}, ls::NTuple{N,Integer}) where {N} =
-    map(gaussian, σs, ls)
-gaussian(σs::NTuple{N,Real}) where {N} = map(gaussian, σs)
-gaussian(σs::AbstractVector, ls::AbstractVector) = gaussian((σs...,), (ls...,))
-gaussian(σs::AbstractVector) = gaussian((σs...,))
+Extract elevation values from a digital elevation model (DEM) at specified coordinates.
 
+# Arguments
+- `lon`: Longitude coordinates (degrees)
+- `lat`: Latitude coordinates (degrees)
+- `dem`: Digital elevation model identifier
 
+# Keywords
+- `filter_halfwidth`: Half-width of filter to apply to DEM before sampling (in distance units)
+- `filter_kernel`: Type of filter kernel to use (`:gaussian` or `:average`)
+- `slope`: Whether to calculate surface slope (default: false)
+- `curvature`: Whether to calculate surface curvature (default: false)
 
-_dx(v, gsx) = (-v[1] + v[3] - 2 * v[4] + 2 * v[6] - v[7] + v[9]) / (8 * gsx) # for GeoArrays x is rows
-_dy(v, gsy) = (-v[1] - 2 * v[2] - v[3] + v[7] + 2 * v[8] + v[9]) / (8 * gsy) # for GeoArrays y is columns
-_ddx(v, gsx) = ((v[4] + v[6]) / 2 - v[5]) / (gsx .^ 2) # for GeoArrays x is rows
-_ddy(v, gsy) = ((v[2] + v[8]) / 2 - v[5]) / (gsy .^ 2) # for GeoArrays y is columns
-
-""" 
-    dem_height(lon, lat, dem; filter_halfwidth::Union{Number,Nothing}= nothing)
-Returns dem `height` for `lon`, `lat` locations. If filter_halfwidth is supplied, a 2D Gaussain
-filter with sigma = `filter_halfwidth` is applied to the `dem` prior to sampeling
+# Returns
+- If `slope=false` and `curvature=false`: Vector of elevation values in WGS84 datum
+- Otherwise: Vector of vectors containing [elevation, derivatives] where derivatives depend on 
+  the combination of `slope` and `curvature` parameters
 """
 function dem_height(
     lon,
@@ -1591,14 +1574,74 @@ function dem_height(
                 wgs84_height_slope = geoid_height
             end
         end
-    end
-    
+    end    
     return wgs84_height_slope
-
 end
 
 """
+    gaussian(σ::Real, [l]) -> g
+
+Construct a 1d gaussian kernel `g` with standard deviation `σ`, optionally
+providing the kernel length `l`. The default is to extend by two `σ`
+in each direction from the center. `l` must be odd. 
+**Stolen from ImageFiltering.jl**
+"""
+function gaussian(σ::Real, l::Int=4 * ceil(Int, σ) + 1)
+    isodd(l) || throw(ArgumentError("length must be odd"))
+    w = l >> 1
+    g = σ == 0 ? [exp(0 / (2 * oftype(σ, 1)^2))] : [exp(-x^2 / (2 * σ^2)) for x = -w:w]
+    g / sum(g)
+end
+
+
+"""
+    gaussian((σ1, σ2, ...), [l]) -> (g1, g2, ...)
+
+Construct a multidimensional gaussian filter as a product of single-dimension
+factors, with standard deviation `σd` along dimension `d`. Optionally
+provide the kernel length `l`, which must be a tuple of the same
+length.
+**Stolen from ImageFiltering.jl**
+"""
+gaussian(σs::NTuple{N,Real}, ls::NTuple{N,Integer}) where {N} =
+    map(gaussian, σs, ls)
+gaussian(σs::NTuple{N,Real}) where {N} = map(gaussian, σs)
+gaussian(σs::AbstractVector, ls::AbstractVector) = gaussian((σs...,), (ls...,))
+gaussian(σs::AbstractVector) = gaussian((σs...,))
+
+
+
+_dx(v, gsx) = (-v[1] + v[3] - 2 * v[4] + 2 * v[6] - v[7] + v[9]) / (8 * gsx) # for GeoArrays x is rows
+_dy(v, gsy) = (-v[1] - 2 * v[2] - v[3] + v[7] + 2 * v[8] + v[9]) / (8 * gsy) # for GeoArrays y is columns
+_ddx(v, gsx) = ((v[4] + v[6]) / 2 - v[5]) / (gsx .^ 2) # for GeoArrays x is rows
+_ddy(v, gsy) = ((v[2] + v[8]) / 2 - v[5]) / (gsy .^ 2) # for GeoArrays y is columns
+
+
+"""
     geotile_extract_dem(geotile, geotile_dir, dem; filter_halfwidth, filter_kernel, slope, job_id, force_remake)
+"""
+"""
+    geotile_extract_dem(geotile_id, geotile_dir, dem; kwargs...) -> Nothing
+
+Extract DEM (Digital Elevation Model) data for a specific geotile and save as an Arrow file.
+
+# Arguments
+- `geotile_id::String`: Identifier for the geotile
+- `geotile_dir::String`: Directory containing geotile files
+- `dem::Symbol`: DEM source to extract from (e.g., `:copernicus`, `:arcticdem`)
+
+# Keywords
+- `filter_halfwidth::Union{Number,Nothing}=nothing`: Half-width of filter to apply to DEM
+- `filter_kernel=:gaussian`: Type of filter kernel to use
+- `slope=false`: Whether to calculate surface slope
+- `curvature=false`: Whether to calculate surface curvature
+- `job_id=""`: Identifier for logging purposes
+- `xoffset::Real=0`: Offset to add to x-coordinates in local UTM [m]
+- `yoffset::Real=0`: Offset to add to y-coordinates in local UTM [m]
+- `force_remake=false`: Whether to regenerate existing files
+
+# Returns
+Nothing, but creates a DEM file for the geotile with extracted elevation data
 """
 function geotile_extract_dem(
     geotile_id::String,
@@ -1749,7 +1792,24 @@ function geotile_extract_dem(
 end
 
 """
-    geotile_extract_dem(geotile, geotile_dir, dem; filter_halfwidth, force_remake)
+    geotile_extract_dem(geotiles, geotile_dir, dem; kwargs...)
+
+Extract DEM (Digital Elevation Model) heights for multiple geotiles in parallel.
+
+# Arguments
+- `geotiles::DataFrame`: DataFrame containing geotile information
+- `geotile_dir::String`: Directory where geotiles are stored
+- `dem::Symbol`: Symbol representing the DEM to extract from (e.g., `:MERIT`, `:COP30`)
+
+# Keywords
+- `filter_halfwidth::Union{Number,Nothing}=nothing`: Half-width of filter to apply to DEM
+- `filter_kernel=:gaussian`: Type of filter kernel to use
+- `slope=false`: Whether to calculate slope derivatives
+- `curvature=false`: Whether to calculate curvature derivatives
+- `job_id=""`: Identifier for the job (used in progress messages)
+- `xoffset=0`: Offset to add to X coordinates in local UTM [meters]
+- `yoffset=0`: Offset to add to Y coordinates in local UTM [meters]
+- `force_remake=false`: Whether to force reprocessing of existing files
 """
 function geotile_extract_dem(
     geotiles::DataFrame,
@@ -1775,7 +1835,25 @@ function geotile_extract_dem(
 end
 
 """
-    geotile_extract_dem(products, dems, geotiles, paths; slope, force_remake)
+    geotile_extract_dem(products, dems, geotiles, paths; kwargs...)
+
+Extract DEM data for multiple products and DEM sources across all geotiles.
+
+# Arguments
+- `products::NamedTuple`: Collection of products with mission, filter halfwidth, and kernel properties
+- `dems::Vector{Symbol}`: List of DEM sources to extract from (e.g., [:MERIT, :COP30])
+- `geotiles::DataFrame`: DataFrame containing geotile information
+- `paths::NamedTuple`: Paths organized by mission containing geotile directories
+
+# Keywords
+- `slope::Bool=false`: Whether to calculate slope derivatives
+- `curvature::Bool=false`: Whether to calculate curvature derivatives
+- `xoffset::Real=0`: Offset to add to X coordinates in local UTM [meters]
+- `yoffset::Real=0`: Offset to add to Y coordinates in local UTM [meters]
+- `force_remake::Bool=false`: Whether to force reprocessing of existing files
+
+# Returns
+Nothing, but creates DEM files for each product-DEM combination across all geotiles
 """
 function geotile_extract_dem(
     products::NamedTuple,
@@ -1800,11 +1878,22 @@ end
 
 
 """
-    geotile_aggrigate_reduce(geotiles::DataFrame, geotile_dir::String, 
-        vars::Union{Vector{String}, String}; extension::String = ".arrow")
+    geotile_aggrigate_reduce(geotiles::DataFrame, geotile_dir::String, vars::Vector{String}; 
+                            extension=".arrow", subset_fraction=1.0) -> DataFrame
 
-Aggrigate variables in `vars` for list of `geotiles`` and reduce to `Vectors` of `elements`.
-subset_fraction [0 to 1] allows for random subsampeling of the data  
+Aggregate and combine variables from multiple geotile files into a single DataFrame.
+
+# Arguments
+- `geotiles::DataFrame`: DataFrame containing geotile information
+- `geotile_dir::String`: Directory containing geotile files
+- `vars::Vector{String}`: Variables to extract from geotile files
+
+# Keywords
+- `extension::String=".arrow"`: File extension of geotile files
+- `subset_fraction=1.0`: Fraction of data to randomly sample (between 0 and 1)
+
+# Returns
+- `DataFrame`: Combined data with requested variables and reduced arrays
 """
 function geotile_aggrigate_reduce(
     geotiles::DataFrame,
@@ -1843,11 +1932,21 @@ function geotile_aggrigate_reduce(
 end
 
 """
-    geotile_aggrigate_reduce(geotiles::DataFrame, geotile_dir::String, 
-        vars::Union{Vector{String}, String}; extension::String = ".arrow")
+    geotile_aggrigate_reduce(geotiles::DataFrameRow, geotile_dir::String, vars::Union{Vector{String},Vector{Symbol}}; kwargs...) -> DataFrame
 
-Aggrigate variables in `vars` for list of `geotiles`` and reduce to `Vectors` of `elements`. 
-subset_fraction [0 to 1] allows for random subsampeling of the data 
+Aggregate variables from a single geotile file and reduce array data to vectors of elements.
+
+# Arguments
+- `geotiles::DataFrameRow`: Single row from a DataFrame containing geotile information
+- `geotile_dir::String`: Directory containing geotile files
+- `vars::Union{Vector{String},Vector{Symbol}}`: Variables to extract from geotile file
+
+# Keywords
+- `extension::String=".arrow"`: File extension of geotile files
+- `subset_fraction=1.0`: Fraction of data to randomly sample (between 0 and 1)
+
+# Returns
+- `DataFrame`: Data with requested variables and reduced arrays, or empty DataFrame if file not found
 """
 function geotile_aggrigate_reduce(
     geotiles::DataFrameRow{DataFrame,DataFrames.Index},
@@ -1894,101 +1993,20 @@ function geotile_aggrigate_reduce(
         return df0
     end
 end
-
 """
-    dataframe_reduce(df::DataFrame)
+    itslive_zone(lon, lat; always_xy=true) -> Tuple{Int, Bool}
 
-Reduce all variables in `df` to `Vectors` of `elements`.
-"""
-function dataframe_reduce(df)
-    df0 = DataFrame()
-    isarray = [isa(d, AbstractArray) for d in df[1, :]]
-    refarray = findfirst(isarray)
-    refsize = size.(df[:, refarray])
+Determine the UTM zone and hemisphere for ITS_LIVE projection based on coordinates.
 
-    for var in names(df)
-        # in some cases variables are saved as single values if they are constant 
-        # for all row values while others are saved as vectors
+# Arguments
+- `lon`: Longitude in degrees
+- `lat`: Latitude in degrees
+- `always_xy=true`: If true, inputs are interpreted as (lon, lat); if false, as (lat, lon)
 
-        # check it it's a vector quantitiy
-        if typeof(df[1, var]) <: AbstractVector
-            df0[!, var] = reduce(vcat, df[:, var])
-        else
-            #if not expand to a vector 
-            df0[!, var] = reduce(vcat, [fill(df[k, var], refsize[k]) for k = eachindex(df[:, var])])
-        end
-    end
-    return df0
-end
-
-
-"""
-    itslive_proj!(df::DataFrame{}; height = nothing)
-add x and y coodinates for local itslive projection to the DataFrame `df`
-"""
-function itslive_proj!(df; height=nothing)
-    epsg = itslive_epsg(mean(df.longitude), mean(df.latitude); always_xy=true)
-
-    if isnothing(height)
-        df[!, :X], df[!, :Y] = epsg2epsg(df.longitude, df.latitude, "EPSG:4326", epsg, parse_output=true)
-    else
-        df[!, :X], df[!, :Y], df[!, :H] = epsg2epsg(df.longitude, df.latitude, height, epsg, parse_output=true)
-    end
-
-    return df, epsg
-end
-
-"""
-    itslive_epsg(lon, lat)
-Return epsg code for the ITS_LIVE projection
-"""
-function itslive_epsg(longitude, latitude; always_xy=true)
-
-    if !always_xy
-        latitude, longitude = (longitude, latitude)
-    end
-
-    if latitude > 55
-        # NSIDC Sea Ice Polar Stereographic North
-        return epsg = "EPSG:3413"
-    elseif latitude < -56
-        # Antarctic Polar Stereographic
-        return epsg = "EPSG:3031"
-    end
-
-    # make sure lon is from -180 to 180
-    lon = longitude - floor((longitude + 180) / (360)) * 360
-
-    # int versions
-    ilat = floor(Int64, latitude)
-    ilon = floor(Int64, lon)
-
-    # get the latitude band
-    band = max(-10, min(9, fld((ilat + 80), 8) - 10))
-
-    # and check for weird ones
-    zone = fld((ilon + 186), 6)
-    if ((band == 7) && (zone == 31) && (ilon >= 3)) # Norway
-        zone = 32
-    elseif ((band == 9) && (ilon >= 0) && (ilon < 42)) # Svalbard
-        zone = 2 * fld((ilon + 183), 12) + 1
-    end
-
-    if latitude >= 0
-        epsg = 32600 + zone
-    else
-        epsg = 32700 + zone
-    end
-
-    # convert to proj string
-    epsg = "EPSG:$epsg"
-    return epsg
-end
-
-
-"""
-    itslive_zone(lon, lat; always_xy = true)
-Return the utm `zone` and `isnorth` variables for the ITS_LIVE projection
+# Returns
+- Tuple containing:
+  - UTM zone number (0 for polar stereographic, -1 for invalid coordinates)
+  - Boolean indicating northern hemisphere (true) or southern hemisphere (false)
 """
 function itslive_zone(lon, lat; always_xy=true)
     if !always_xy
@@ -2018,8 +2036,21 @@ function itslive_zone(lon, lat; always_xy=true)
 end
 
 """
-    itslive_paramfiles(lon, lat; gridsize = 240, path2param = "/Users/...", always_xy = true)
-Return paths to its_live parameter files
+    itslive_paramfiles(lon, lat; gridsize=240, path2param=pathlocal.itslive_parameters, always_xy=true) -> NamedTuple
+
+Get paths to ITS_LIVE parameter files for a given location.
+
+# Arguments
+- `lon`: Longitude in degrees
+- `lat`: Latitude in degrees
+
+# Keywords
+- `gridsize=240`: Grid resolution in meters
+- `path2param=pathlocal.itslive_parameters`: Base directory containing parameter files
+- `always_xy=true`: If true, inputs are interpreted as (lon, lat); if false, as (lat, lon)
+
+# Returns
+- NamedTuple containing paths and binary flags for all ITS_LIVE parameter files
 """
 function itslive_paramfiles(
     lon,
@@ -2135,8 +2166,22 @@ function itslive_paramfiles(
 end
 
 """
-    itslive_extract(lon, lat, vars; gridsize = 240, path2param = "/Users/...", always_xy = true)
-Return point values from its_live parameter files
+    itslive_extract(lon, lat, vars; gridsize=240, path2param=pathlocal.itslive_parameters, always_xy=true)
+
+Extract point values from ITS_LIVE parameter files for given coordinates.
+
+# Arguments
+- `lon::AbstractVector`: Vector of longitude coordinates
+- `lat::AbstractVector`: Vector of latitude coordinates
+- `vars::Vector{Symbol}`: Variables to extract (e.g., [:vx, :vy, :thickness])
+
+# Keywords
+- `gridsize=240`: Grid size in meters
+- `path2param=pathlocal.itslive_parameters`: Path to parameter files
+- `always_xy=true`: Whether coordinates are in x,y (longitude,latitude) order
+
+# Returns
+- `DataFrame`: Contains requested variables at the specified coordinates
 """
 function itslive_extract(
     lon::AbstractVector,
@@ -2259,8 +2304,21 @@ function itslive_extract(
 end
 
 """
-    info, goids_folder  = dem_info()
-Return dem information and goids_folder
+    dem_info(dem::Symbol) -> (NamedTuple, String)
+
+Get information about a Digital Elevation Model (DEM).
+
+# Arguments
+- `dem::Symbol`: DEM identifier (`:cop30_v1`, `:cop30_v2`, `:nasadem_v1`, 
+                 `:arcticdem_v3_10m`, `:arcticdem_v4_10m`, or `:rema_v2_10m`)
+
+# Returns
+- `NamedTuple`: Contains DEM metadata (filename, date, nodatavalue, height datum, 
+                EPSG code, resolution, and extent)
+- `String`: Path to the geoid folder
+
+# Throws
+- `ErrorException`: If the DEM identifier is not recognized
 """
 function dem_info(dem::Symbol)
     goids_folder = pathlocal.geoid_dir
@@ -2333,8 +2391,18 @@ function dem_info(dem::Symbol)
 end
 
 """
-    normalize(data)
-Return a nomalized version of data
+    normalize(data) -> NamedTuple
+
+Normalize data by subtracting the mean and dividing by the standard deviation.
+
+# Arguments
+- `data`: Array of values to normalize
+
+# Returns
+- NamedTuple containing:
+  - `std`: Standard deviation of the original data
+  - `mean`: Mean of the original data
+  - `norm`: Normalized data array
 """
 function normalize(data)
     m = mean(data)
@@ -2348,8 +2416,15 @@ end
 
 
 """
-    centroid(ga::GeoArray)
-return cetroid of GeoArray
+    centroid(ga::GeoArray) -> NamedTuple
+
+Calculate the centroid coordinates of a GeoArray.
+
+# Arguments
+- `ga::GeoArray`: The GeoArray to find the centroid of
+
+# Returns
+- NamedTuple with `x` and `y` coordinates of the centroid
 """
 function centroid(ga::GeoArray)
     bbox = extent2nt(GeoArrays.bbox(ga))
@@ -2358,8 +2433,15 @@ end
 
 
 """
-xy_gridsize(ga::GeoArray)
-Return x and y grid size in meters
+    xy_gridsize(ga::GeoArray) -> NamedTuple
+
+Calculate the grid cell size in meters for a GeoArray.
+
+# Arguments
+- `ga::GeoArray`: The GeoArray to calculate grid size for
+
+# Returns
+- NamedTuple with `x` and `y` grid cell dimensions in meters
 """
 function xy_gridsize(ga::GeoArray)
 
@@ -2382,70 +2464,21 @@ function xy_gridsize(ga::GeoArray)
     end
     return gridsize
 end
-
 """
-    dist_ll2xy(longitude, latitude)
-Return local utm x and y distance in meters per degree latitude and longitude
-"""
-function dist_ll2xy(longitude, latitude)
-    delta = 0.0001
-    lla = LLA.(latitude, longitude, Ref(0))
-    lla_dlat = LLA.(latitude .+ delta, longitude, Ref(0))
-    lla_dlon = LLA.(latitude, longitude .+ delta, Ref(0))
+    dh_xy2aa(x, y, dhdx, dhdy, epsg_pts, epsg_dem) -> (along, across)
 
-    zone, north = Geodesy.utm_zone(mean(latitude), mean(longitude))
-    utm_from_lla = UTMfromLLA(zone, north, Geodesy.wgs84)
+Convert slope components from x-y coordinates to along-track and across-track directions.
 
-    lonlat2xy = [Matrix{eltype(latitude[1])}(undef, (2, 2)) for i in latitude]
+# Arguments
+- `x`: Vector of x-coordinates
+- `y`: Vector of y-coordinates
+- `dhdx`: Slope in x-direction
+- `dhdy`: Slope in y-direction
+- `epsg_pts`: EPSG code of input coordinates
+- `epsg_dem`: EPSG code of DEM coordinates
 
-    Threads.@threads for i in eachindex(lla)
-        p = utm_from_lla(lla[i])::UTM{Float64}
-        p_dlat = utm_from_lla(lla_dlat[i])::UTM{Float64}
-        p_dlon = utm_from_lla(lla_dlon[i])::UTM{Float64}
-
-        lonlat2xy[i] = [(p_dlon.x-p.x) (p_dlat.y-p.y);
-            (p_dlat.x-p.x) (p_dlon.y-p.y)] ./ delta
-    end
-    return lonlat2xy
-end
-
-"""
-    dh_ll2xy(lon, lat, dhdlat, dhdlon)
-Return slope in x and y UTM coodinates per meter from WGS84 lat lon slopes per degree
-"""
-function dh_ll2xy(lon, lat, dhdlon, dhdlat)
-    delta = 0.0001
-    lla = LLA.(lat, lon, Ref(0))
-    lla_dlat = LLA.(lat .+ delta, lon, Ref(0))
-    lla_dlon = LLA.(lat, lon .+ delta, Ref(0))
-
-    zone, north = Geodesy.utm_zone(mean(lat), mean(lon))
-    utm_from_lla = UTMfromLLA(zone, north, Geodesy.wgs84)
-
-    dhdx = similar(lat)
-    dhdy = similar(lon)
-
-    Threads.@threads for i in eachindex(lla)
-        p = utm_from_lla(lla[i])::UTM{Float64}
-        p_dlat = utm_from_lla(lla_dlat[i])::UTM{Float64}
-        p_dlon = utm_from_lla(lla_dlon[i])::UTM{Float64}
-
-        a = (p_dlat.x - p.x) / delta
-        b = (p_dlat.y - p.y) / delta
-
-        c = (p_dlon.x - p.x) / delta
-        d = (p_dlon.y - p.y) / delta
-
-        dhdx[i] = ((dhdlon[i] * a) / sqrt(a .^ 2 + b .^ 2) + (dhdlat[i] * c) / (c + d)) / (a + c)
-        dhdy[i] = ((dhdlon[i] * b) / sqrt(a .^ 2 + b .^ 2) + (dhdlat[i] * d) / (c + d)) / (b + d)
-    end
-    return dhdx, dhdy
-end
-
-
-"""
-    dh_ll2aa(x, y, dhdx, dhdy, epsg_pts, epsg_dem)
-Return slope in along-track and across-track in DEM coodinates per meter
+# Returns
+- Tuple of (along-track, across-track) slope components in meters
 """
 function dh_xy2aa(x, y, dhdx, dhdy, epsg_pts, epsg_dem)
 
@@ -2468,11 +2501,19 @@ function dh_xy2aa(x, y, dhdx, dhdy, epsg_pts, epsg_dem)
 
     return along, across
 end
-
-
 """
-    dh_ll2aa(lon, lat, dhdlat, dhdlon)
-Return slope in along-track and across-track in UTM coodinates per meter from WGS84 lat lon slopes per degree
+    dh_ll2aa(lon, lat, dhdlon, dhdlat) -> (along, across)
+
+Convert slope components from longitude-latitude coordinates to along-track and across-track directions.
+
+# Arguments
+- `lon`: Vector of longitude coordinates
+- `lat`: Vector of latitude coordinates
+- `dhdlon`: Slope in longitude direction (per degree)
+- `dhdlat`: Slope in latitude direction (per degree)
+
+# Returns
+- Tuple of (along-track, across-track) slope components in meters
 """
 function dh_ll2aa(lon, lat, dhdlon, dhdlat)
 
@@ -2525,9 +2566,30 @@ function dh_ll2aa(lon, lat, dhdlon, dhdlat)
         return along, across
     end
 end
-
 """
-    geotile_extract_masks(geotile, geotile_dir; vars, force_remake)
+    geotile_extract_mask(
+        geotile_id::String,
+        geotile_dir::String;
+        vars::Vector{Symbol}=[:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean],
+        geotile_ext::String=".arrow",
+        job_id="",
+        force_remake=false
+    ) -> Nothing
+
+Extract mask data for a specific geotile and save as an Arrow file.
+
+# Arguments
+- `geotile_id::String`: Identifier for the geotile
+- `geotile_dir::String`: Directory containing geotile files
+
+# Keywords
+- `vars::Vector{Symbol}`: Mask variables to extract (default: [:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean])
+- `geotile_ext::String`: File extension of geotile files (default: ".arrow")
+- `job_id::String`: Identifier for logging purposes (default: "")
+- `force_remake::Bool`: Whether to regenerate existing files (default: false)
+
+# Returns
+Nothing, but creates a mask file for the geotile with extracted data
 """
 function geotile_extract_mask(
     geotile_id::String,
@@ -2586,7 +2648,21 @@ function geotile_extract_mask(
 end
 
 """
-    geotile_extract_masks(geotile, geotile_dir; vars, force_remake)
+    geotile_extract_mask(geotiles::DataFrame, geotile_dir::String; vars, job_id, force_remake) -> Nothing
+
+Extract mask data for multiple geotiles and save as Arrow files.
+
+# Arguments
+- `geotiles::DataFrame`: DataFrame containing geotile information with 'id' column
+- `geotile_dir::String`: Directory containing geotile files
+
+# Keywords
+- `vars::Vector{Symbol}=[:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean]`: Mask variables to extract
+- `job_id::String=""`: Identifier for logging purposes
+- `force_remake::Bool=false`: Whether to regenerate existing files
+
+# Returns
+Nothing, but creates mask files for each geotile
 """
 function geotile_extract_mask(
     geotiles::DataFrame,
@@ -2610,10 +2686,29 @@ interanl function for building the design matrix to solve for track offset
 _offset_design_matrix(dhdx, dhdy) = hcat(dhdx, dhdy, ones(size(dhdx)))
 
 """
-    track_offset(dhdx, dhdy, dh, p)
-Given slope in x [dhdx], slope in y [dhdy], observed  and hieght anomaly [dh], 
-solve for the  optimal x offset p[1], y offset p[2], height offset p[3]  
-that minmize the distance to dh
+    track_offset(dhdx, dhdy, dh; kwargs...) -> (dx, dy, dz, count, mad_offset, mad_ref)
+
+Calculate optimal track offsets that minimize height anomalies using surface slopes.
+
+# Arguments
+- `dhdx`: Slope in x-direction
+- `dhdy`: Slope in y-direction
+- `dh`: Observed height anomalies (difference between measured and reference heights)
+
+# Keywords
+- `weights=nothing`: Optional weights for regression
+- `regressor=HuberRegression(fit_intercept=false, scale_penalty_with_samples=false)`: Regression method
+- `interations=1`: Number of iterations for robust fitting
+- `iter_thresh=5`: Threshold for outlier removal between iterations (in MAD units)
+- `verbose=true`: Whether to print progress information
+
+# Returns
+- `dx`: Optimal x-offset [m]
+- `dy`: Optimal y-offset [m]
+- `dz`: Optimal height offset [m]
+- `count`: Number of valid points used in final iteration
+- `mad_offset`: Median absolute deviation after correction
+- `mad_ref`: Median absolute deviation of original height anomalies
 """
 function track_offset(
     dhdx,
@@ -2663,20 +2758,42 @@ function track_offset(
     cnt = sum(valid)
     return θ[1], θ[2], θ[3], cnt, mad_offset, mad_ref
 end
-
 """
-    track_offset_dh(dhdx, dhdy, dx, dy, dz,)
-Given slope in x [dhdx], slope in y [dhdy], the x offset [dx], 
-y offset [dy], height offset [dz], calcualte the heigh anomaly [dh]
+    track_offset_dh(dhdx, dhdy, dx, dy, dz) -> dh
+
+Calculate height anomaly based on surface slopes and positional offsets.
+
+# Arguments
+- `dhdx`: Slope in x-direction
+- `dhdy`: Slope in y-direction
+- `dx`: Offset in x-direction
+- `dy`: Offset in y-direction
+- `dz`: Vertical offset
+
+# Returns
+- `dh`: Calculated height anomaly
 """
 function track_offset_dh(dhdx, dhdy, dx, dy, dz)
-    dh =
-        dx .* dhdx .+ dy .* dhdy .+ dz
+    dh = dx .* dhdx .+ dy .* dhdy .+ dz
     return dh
 end
 
 """
-    geotile_track_offset(geotile, geotile_dir, dem; vars, force_remake)
+    geotile_track_offset(geotile_id, geotile_dir, dem; valid_count_thresh=100, force_remake=false)
+
+Calculate positional offsets for a geotile by comparing altimetry data with DEM elevations.
+
+# Arguments
+- `geotile_id::String`: Identifier for the geotile
+- `geotile_dir::String`: Directory containing geotile files
+- `dem::Symbol`: DEM source to use (e.g., `:arcticdem`)
+
+# Keywords
+- `valid_count_thresh=100`: Minimum number of valid points required for offset calculation
+- `force_remake=false`: Whether to regenerate existing offset files
+
+# Returns
+Nothing, but creates an offset file for the geotile with calculated positional corrections
 """
 function geotile_track_offset(
     geotile_id::String,
@@ -2795,9 +2912,26 @@ end
 
 """
     geotile_track_offset(
-        geotile, geotile_dir, dem; valid_count_thresh = 100, 
-        force_remake = force_remake
+        geotiles::DataFrame,
+        geotile_dir::String,
+        dem::Symbol;
+        valid_count_thresh=100,
+        force_remake=false
     )
+
+Calculate track offsets for multiple geotiles using a digital elevation model.
+
+# Arguments
+- `geotiles::DataFrame`: DataFrame containing geotile information with an 'id' column
+- `geotile_dir::String`: Directory containing geotile files
+- `dem::Symbol`: Digital elevation model to use for offset calculation
+
+# Keywords
+- `valid_count_thresh=100`: Minimum number of valid points required for offset calculation
+- `force_remake=false`: Whether to recalculate offsets even if they already exist
+
+# Returns
+Nothing, but creates offset files for each geotile in the specified directory
 """
 function geotile_track_offset(
     geotiles::DataFrame,
@@ -2816,7 +2950,21 @@ function geotile_track_offset(
 end
 
 """
-    pointextract(geotile, geotile_dir; var_name, force_remake)
+    pointextract(df0::DataFrame, ga::GeoArray; nodatavalue=0.0, var_name::Symbol=:var, interp=Constant()) -> DataFrame
+
+Extract values from a GeoArray at geographic coordinates specified in a DataFrame.
+
+# Arguments
+- `df0::DataFrame`: DataFrame containing longitude and latitude columns
+- `ga::GeoArray`: GeoArray containing the data to extract from
+
+# Keywords
+- `nodatavalue=0.0`: Value to use for points outside the array or at nodata locations
+- `var_name::Symbol=:var`: Name of the column to create in the output DataFrame
+- `interp=Constant()`: Interpolation method (Constant(), Linear(), Cubic(), etc.)
+
+# Returns
+- DataFrame containing extracted values in a column named by `var_name`
 """
 function pointextract(
     df0::DataFrame,
@@ -2861,7 +3009,24 @@ function pointextract(
 end
 
 """
-    geotile_pointextract(geotiles, geotile_dir; var_name, force_remake, interp)
+    geotile_pointextract(geotiles, geotile_dirs, ga; kwargs...)
+
+Extract values from a GeoArray at points defined in geotiles and save results to files.
+
+# Arguments
+- `geotiles::DataFrame`: DataFrame containing geotile information
+- `geotile_dirs`: Directory or vector of directories containing geotile files
+- `ga::GeoArray`: GeoArray containing the data to extract from
+
+# Keywords
+- `var_name=:var`: Name of the column to create in the output files
+- `nodatavalue=0.0`: Value to use for points outside the array or at nodata locations
+- `job_ids=""`: Job identifier(s) for logging purposes
+- `force_remake=false`: Whether to overwrite existing output files
+- `interp=Constant()`: Interpolation method (Constant(), Linear(), Cubic(), etc.)
+
+# Returns
+Nothing, but creates files with extracted values in the specified directories
 """
 function geotile_pointextract(
     geotiles::DataFrame,
@@ -2944,47 +3109,32 @@ function geotile_pointextract(
     end
 end
 
-"""
-    geotile_load(geotile_width, filesuffix, data_dir; extent::Extent = world)
-
-Returns a single dataframe containing all geotiles [within extent]
-"""
-function geotile_load(geotile_width, filesuffix, data_dir; extent::Extent=world)
-
-    # define geotiles
-    geotiles = geotile_define(geotile_width)
-
-    # geotiles within extent
-    foo = nt2extent.(geotiles.extent)
-    ind = Extents.intersects.(Ref(extent), foo)
-
-    geotiles = geotiles[ind, :]
-
-    df = DataFrame()
-
-    for geotile in eachrow(geotiles)
-        filename = joinpath(data_dir, "$(geotile.id).$(filesuffix)")
-
-        if isfile(filename)
-            df = append!(df, DataFrame(Arrow.Table(filename)))
-        end
-    end
-    return df
-end
 
 """
-    nt2extent(nt::NamedTuple{(:min_x, :min_y, :max_x, :max_y), NTuple{4, <:Number}})
+    nt2extent(nt::NamedTuple{(:min_x, :min_y, :max_x, :max_y)}) -> Extent
 
-converts a NamedTuple to an Extent
+Convert a NamedTuple with geographic bounds to an Extent object.
+
+# Arguments
+- `nt`: NamedTuple with min_x, min_y, max_x, max_y fields defining a bounding box
+
+# Returns
+- `Extent` object with the same geographic bounds
 """
 function nt2extent(nt::NamedTuple{(:min_x, :min_y, :max_x, :max_y)})
     Extent(X=(nt.min_x, nt.max_x), Y=(nt.min_y, nt.max_y))
 end
 
 """
-    extent2nt(extent::Extent)
+    extent2nt(extent::Extent) -> NamedTuple
 
-converts a Extent to a GeoArrays NamedTuple
+Convert an Extent object to a NamedTuple with geographic bounds.
+
+# Arguments
+- `extent::Extent`: Extent object containing X and Y coordinate ranges
+
+# Returns
+- NamedTuple with min_x, min_y, max_x, max_y fields defining a bounding box
 """
 function extent2nt(extent::Extent)
     (min_x=minimum(extent.X), min_y=minimum(extent.Y), max_x=maximum(extent.X), max_y=maximum(extent.Y))
@@ -2992,21 +3142,16 @@ end
 
 
 """
-    geotile_subset(geotiles, extent::Extent)
+    geotile_subset!(geotiles, extent::Extent) -> DataFrame
 
-returns subset of geotiles that intersect extent
-"""
-function geotile_subset(geotiles, extent::Extent)
-    ind = .!isnothing.(Extents.intersect.(Ref(extent), geotiles.extent))
-    geotiles = geotiles[ind, :]
-    return geotiles
-end
+Filter a DataFrame of geotiles to only those that intersect with the given extent.
 
+# Arguments
+- `geotiles`: DataFrame containing geotiles with an `extent` column
+- `extent::Extent`: Geographic extent to test for intersection
 
-"""
-    geotile_subset!(geotiles, extent::Extent)
-
-returns subset of geotiles that intersect extent
+# Returns
+- Filtered DataFrame containing only geotiles that intersect with the given extent
 """
 function geotile_subset!(geotiles, extent::Extent)
     ind = .!(Extents.intersects.(Ref(extent), geotiles.extent))
@@ -3015,49 +3160,25 @@ function geotile_subset!(geotiles, extent::Extent)
 end
 
 """
-    region_extent(region)
+    allfiles(rootdir; kwargs...) -> Vector{String}
 
-returns extent of region and epsg of coordinates
-"""
-function region_extent(region)
-    if string(region)[1:3] == "RGI"
-        numid = string(region)[4:5]
-        shp = allfiles(pathlocal.RGI_regions; subfolders=true, fn_endswith="o1regions.shp")
-        s = DataFrame(Shapefile.Table(shp[1]))
-        if numid == "98" # HMA
-            ind = (s.o1region .== "13") .| (s.o1region .== "14") .| (s.o1region .== "15")
-            ext = GeoInterface.bbox.(s.geometry[ind])
-            ext = reduce(Extents.union, ext)
-        else
-            ind = s.o1region .== numid
-            ext = GeoInterface.bbox(s.geometry[ind][1])
-        end
-        epsg = 4326
-    elseif region == :World
-        ext = Extent(X=(-180, +180), Y=(-90, 90))
-        epsg = 4326
-    else
-        error("unrecognized region")
-    end
+Return a vector of file paths that meet specified criteria.
 
-    return ext, epsg
-end
-
-
-"""
-    allfiles(rootdir; subfolders=false, fn_startswith=nothing, fn_endswith=nothing, 
-        fn_contains=nothing, and_or=&, topdown=true, follow_symlinks=false, onerror=throw)
-
-Returns a vector list of file paths that meet the user defined criteria.\n 
 # Arguments
-- rootdir: directory from which to begin search
-- subfolders [false]: include or exclude subfolders in file search
-- fn_startswith: include files that startswith
-- fn_endswith: include files that startswith
-- fn_contains: include files that contain
-- and_or [`&`]: only include if all criteria are met (`&`) or include if any criteria 
-  are met (`|`)
-- topdown, follow_symlinks, onerror: see walkdir documentation
+- `rootdir`: Directory from which to begin search
+
+# Keywords
+- `subfolders=false`: Whether to include subfolders in the search
+- `fn_startswith=nothing`: Include files that start with specified string(s)
+- `fn_endswith=nothing`: Include files that end with specified string(s)
+- `fn_contains=nothing`: Include files that contain specified string(s)
+- `and_or=&`: Use `&` to require all criteria or `|` to match any criteria
+- `topdown=true`: Whether to traverse directories top-down
+- `follow_symlinks=false`: Whether to follow symbolic links
+- `onerror=throw`: Function to handle errors during directory traversal
+
+# Returns
+- Vector of file paths matching the specified criteria
 """
 function allfiles(
     rootdir;
@@ -3136,185 +3257,31 @@ function allfiles(
     return filelist
 end
 
-
 """
-    LsqSetup(model, p, p_min, p_max, autodiff)
-Model and parameters to pass to LsqFit
-"""
-struct LsqSetup
-    model::Function         # function used to fit data model(parameters, x)
-    p::Vector{Float64}      # starting parameters
-    p_min::Vector{Float64}  # minimum parameters
-    p_max::Vector{Float64}  # maximum parameters
-    autodiff::Symbol        # Eccentricity 
-end
+    offset_geo(lon, lat, dh, dhdlon, dhdlat; interations=3, iter_thresh=7, verbose=true)
 
-"""
-    geotile_offset(products, dems, geotiles)
-Compute vertical and horizontal offsets between altimetry elevations and DEM
-"""
-function geotile_offset(
-    products,
-    dems,
-    geotile,
-    paths;
-    interations=5,
-    iter_thresh=5,
-    use_href=false
-)
+Calculate geographic offsets in local UTM coordinates based on elevation anomalies and slopes.
 
-    ## check for offset with 
-    for product in products
-        for dem in dems
-            deminfo, _ = dem_info(dem)
+# Arguments
+- `lon`: Longitude coordinates in degrees
+- `lat`: Latitude coordinates in degrees
+- `dh`: Elevation anomalies in meters
+- `dhdlon`: Slope in longitude direction (m per degree)
+- `dhdlat`: Slope in latitude direction (m per degree)
 
-            if !(deminfo.epsg == 4326)
-                error("dem must be in geographic (lat, lon) projections")
-            end
+# Keywords
+- `interations=3`: Number of iterations for offset calculation
+- `iter_thresh=7`: Threshold for iteration convergence
+- `verbose=true`: Whether to print progress information
 
-            fn_h = joinpath(paths[product.mission].geotile, "$(geotile.id).arrow")
-            fn_dem = joinpath(paths[product.mission].geotile, "$(geotile.id).$dem")
-            fn_masks = joinpath(paths[product.mission].geotile, "$(geotile.id).masks")
-
-            if isfile(fn_h) && isfile(fn_dem) && isfile(fn_masks)
-                println("$(dem) $(geotile.id)")
-
-                df_h = DataFrame(Arrow.Table(fn_h))
-                df_dem = DataFrame(Arrow.Table(fn_dem))
-                df_masks = DataFrame(Arrow.Table(fn_masks))
-
-                if use_href
-                    dh = vcat(df_h.height...) .- vcat(df_h.height_reference...)
-                else
-                    dh = vcat(df_h.height...) .- vcat(df_dem.height...)
-                end
-
-                dhdlon = vcat(df_dem.dhdx...)
-                dhdlat = vcat(df_dem.dhdy...)
-                land = vcat(df_masks.land...)
-
-                valid = .!(isnan.(dhdlon) .| isnan.(dhdlat) .| isnan.(dh) .|
-                           (abs.(dh) .> 50) .| (.!land) .| (dhdlon .> 1) .| (dhdlon .> 1))
-
-                if sum(valid) < 1000
-                    return (NaN, NaN, NaN)
-                end
-
-                dhdlon = dhdlon[valid]
-                dhdlat = dhdlat[valid]
-                lat = vcat(df_h.latitude...)[valid]
-                lon = vcat(df_h.longitude...)[valid]
-                dh = dh[valid]
-
-                dx, dy, dz, epsg =
-                    offset_geo_fast(lon, lat, dh, dhdlon, dhdlat;
-                        interations=interations, iter_thresh=iter_thresh)
-
-                return (dx, dy, dz, epsg)
-            else
-                return (NaN, NaN, NaN)
-            end
-        end
-    end
-end
-
-"""
-    offset_geo_fast(lon, lat, dh, dhdlon, dhdlat; interations=3, iter_thresh=7)
-
-ruturn the x, y, z offsets in meters in local UTM coodinates and the epsg for the utm zone. 
-Takes longitude [deg], latitude [deg], dh (elevation anomaly m), slope in lon direction 
-(dhdlon, in m per degree), and slope in lat direction (dhdlat, in m per degree). Same as 
-offset_geo but uses binning to of values to reduce computations
-"""
-function offset_geo_fast(
-    lon,
-    lat,
-    dh,
-    dhdlon, dhdlat; interations=3, iter_thresh=7)
-
-    interp = Linear() # Constant(), Linear(), Cubic(), Quadratic()
-
-    # find local utm epsg and tranform from WGS84
-    epsg = utm_epsg(mean(lon), mean(lat); always_xy=true)
-    epsg = GFT.EPSG(epsg)
-    trans = FastGeoProjections.Transformation(GFT.EPSG("EPSG:4326"), epsg, always_xy=true)
-
-    # estimate on a grid then interpolate, working with the raw point cloud 
-    # can be prohibitive 
-
-    # change in x [m] per degree lon
-    dlat = 0.05
-    lat0 = ((floor(minimum(lat) / dlat))*dlat-2*dlat):dlat:((ceil(maximum(lat) / dlat))*dlat+2*dlat)
-    dlon = 0.05
-    lon0 = ((floor(minimum(lon) / dlon))*dlon-2*dlon):dlon:((ceil(maximum(lon) / dlon))*dlon+2*dlon)
-
-    dx2lon = fill(NaN, length(lat0), length(lon0))
-    dx2lat = fill(NaN, length(lat0), length(lon0))
-
-    dy2lon = fill(NaN, length(lat0), length(lon0))
-    dy2lat = fill(NaN, length(lat0), length(lon0))
-
-    for i in eachindex(lat0)
-        for j in eachindex(lon0)
-            cxy = trans(lon0[j], lat0[i])
-
-            pt = inv(trans).([cxy[1] - 0.5, cxy[1] + 0.5], [cxy[2], cxy[2]])
-            dx2lon[i, j] = pt[2][1] - pt[1][1]
-            dx2lat[i, j] = pt[2][2] - pt[1][2]
-
-            pt = inv(trans).([cxy[1], cxy[1]], [cxy[2] - 0.5, cxy[2] + 0.5])
-            dy2lon[i, j] = pt[2][1] - pt[1][1]
-            dy2lat[i, j] = pt[2][2] - pt[1][2]
-        end
-    end
-
-    itp = scale(interpolate(dx2lon, BSpline(interp)), lat0, lon0)
-    dx2lon = itp.(lat, lon)
-
-    itp = scale(interpolate(dx2lat, BSpline(interp)), lat0, lon0)
-    dx2lat = itp.(lat, lon)
-
-    itp = scale(interpolate(dy2lon, BSpline(interp)), lat0, lon0)
-    dy2lon = itp.(lat, lon)
-
-    itp = scale(interpolate(dy2lat, BSpline(interp)), lat0, lon0)
-    dy2lat = itp.(lat, lon)
-
-    # project dhdx and dhdy into local UTM coordinate system
-
-    dhdx, dhdy = (
-        (dhdlon .* dx2lon) .+ (dhdlat .* dx2lat),
-        (dhdlon .* dy2lon) .+ (dhdlat .* dy2lat)
-    )
-
-    df = DataFrame()
-    df[!, :dhdx] = vec(dhdx)
-    df[!, :dhdy] = vec(dhdy)
-    df[!, :dh] = vec(dh)
-
-    # take the median of dh for a range of dhdx, dhdy bins
-    df = binstats(df, [:dhdx, :dhdy], [-1:0.001:1, -1:0.001:1], [:dh], col_function=[median])
-
-    # compute h offset to h_reference
-    dx, dy, dz, cnt, mad_offset, mad_ref = track_offset(
-        df[:, :dhdx],
-        df[:, :dhdy],
-        df.dh_median;
-        interations=interations,
-        iter_thresh=iter_thresh,
-        weights=df.nrow
-    )
-
-    return dx, dy, dz, cnt, mad_offset, mad_ref, epsg.val
-end
-
-"""
-    offset_geo(lon, lat, dh, dhdlon, dhdlat; interations=3, iter_thresh=7)
-
-ruturn the x, y, z offsets in meters in local UTM coodinates. Also returns the valid data
-count, mad_offset, mad_ref and the epsg for the utm zone and the change in dh (`ddh`). 
-Takes longitude [deg], latitude [deg], dh (elevation anomaly m), slope in lon direction 
-(dhdlon, in m per degree), and slope in lat direction (dhdlat, in m per degree)
+# Returns
+- `dx`: X-offset in meters
+- `dy`: Y-offset in meters
+- `dz`: Z-offset in meters
+- `cnt`: Count of valid data points used
+- `mad_offset`: Median absolute deviation of offset
+- `mad_ref`: Median absolute deviation of reference
+- `epsg`: EPSG code for the UTM zone
 """
 function offset_geo(lon, lat, dh, dhdlon, dhdlat; interations=3, iter_thresh=7, verbose=true)
     # find local utm epsg and tranform from WGS84
@@ -3353,45 +3320,17 @@ end
 
 
 """
-    geotile_addxy_offsets(geotiles, geotile_dir, xoffset, yoffset)
-
-add x and y offsets in m local UTM to geotile longitude and latitude
-"""
-function geotile_addxy_offsets(geotiles, geotile_dir, xoffset, yoffset)
-    printstyled("add x/y offsets Hugonnet geotiles\n"; color=:blue, bold=true)
-    for geotile in eachrow(geotiles)
-        outfile = joinpath(geotile_dir, geotile[:id] * ".arrow")
-        if isfile(outfile)
-            df = DataFrame(Arrow.Table(outfile))
-            df.latitude = copy(df.latitude)
-            df.longitude = copy(df.longitude)
-            epsg = utm_epsg(mean(geotile.extent.X), mean(geotile.extent.Y); always_xy=true)
-            trans = Proj.Transformation("EPSG:4326", epsg, always_xy=true)
-
-            for row in eachrow(df)
-                xy = trans.(row.longitude, row.latitude)
-                x = getindex.(xy, 1) .+ xoffset
-                y = getindex.(xy, 2) .+ yoffset
-                lonlat = inv(trans).(x, y)
-                row.longitude = getindex.(lonlat, 1)
-                row.latitude = getindex.(lonlat, 2)
-            end
-
-            tmp = tempname(dirname(outfile))
-            Arrow.write(tmp, df::DataFrame) # do not use compression... greatly slows read time
-            mv(tmp, outfile; force=true)
-
-            printstyled("    -> $(geotile.id) x/y offsets added\n"; color=:light_black)
-        else
-            printstyled("    -> $(geotile.id) does not exist, skipping\n"; color=:light_red)
-        end
-    end
-end
-
-
-"""
     geotile_coregister(geotile, geotile_dir, dem)
-coregister geotile rows to DEM
+
+Coregister geotile data to a digital elevation model (DEM).
+
+# Arguments
+- `geotile`: Geotile information containing an `id` field
+- `geotile_dir`: Directory containing geotile files
+- `dem`: Symbol or string identifying the DEM to coregister against
+
+# Returns
+Nothing, but creates an offset file with the coregistration parameters
 """
 function geotile_coregister(geotile, geotile_dir, dem)
     t1 = time()
@@ -3445,12 +3384,22 @@ end
 
 
 """
-    offset_geo(lon, lat, dh, dhdlon, dhdlat; interations=3, iter_thresh=7)
+    offset_geo(lon, lat, dhdlon, dhdlat, dx, dy, dz, epsg)
 
-ruturn the x, y, z offsets in meters in local UTM coodinates. Also returns the valid data
-count, mad_offset, mad_ref and the epsg for the utm zone and the change in dh (`ddh`). 
-Takes longitude [deg], latitude [deg], dh (elevation anomaly m), slope in lon direction 
-(dhdlon, in m per degree), and slope in lat direction (dhdlat, in m per degree)
+Calculate elevation change due to horizontal and vertical offsets.
+
+# Arguments
+- `lon`: Longitude coordinates in degrees
+- `lat`: Latitude coordinates in degrees
+- `dhdlon`: Slope in longitude direction (m per degree)
+- `dhdlat`: Slope in latitude direction (m per degree)
+- `dx`: X offset in meters (local UTM coordinates)
+- `dy`: Y offset in meters (local UTM coordinates)
+- `dz`: Z offset in meters
+- `epsg`: EPSG code for local UTM projection
+
+# Returns
+- Vector of elevation changes (in meters) resulting from the specified offsets
 """
 function offset_geo(lon, lat, dhdlon, dhdlat, dx, dy, dz, epsg)
     # find local utm epsg and tranform from WGS84
@@ -3483,97 +3432,16 @@ end
 
 
 """
-    geotile_read(geotile_dir, geotile_id, geotile_ext; buffer = nothing)
+    meters2lonlat_distance(distance_meters, latitude_degrees) -> (latitude_distance, longitude_distance)
 
-load geotile from geotile_dir. If buffer kwarg supplied [in decimal degrees] then all data 
-surrounding geotile_id will also be returned 
-"""
+Convert a distance in meters to equivalent decimal degree distances in latitude and longitude.
 
-function geotile_read(geotile_dir, geotile_id, geotile_ext; buffer=nothing)
-    if isnothing(buffer)
-        fn = joinpath(geotile_dir, "$(geotile_id).$(geotile_ext)")
-        df = copy(DataFrame(Arrow.Table(fn)))
-        return df
-    else
-        # find tiles that are within buffer of center tile
+# Arguments
+- `distance_meters`: Distance in meters
+- `latitude_degrees`: Latitude in decimal degrees where the conversion is needed
 
-        # get geotile extents
-        nt = Altim.geotile_extent(geotile_id)
-
-        # buffer extents 
-        ext = nt2extent(nt)
-        ext_buff = Extents.buffer(ext, buffer)
-
-        geotile_width = nt.max_x - nt.min_x
-        bwidth = ceil(maximum(buffer) / geotile_width) * geotile_width
-
-        df = DataFrame()
-        for min_x = (nt.min_x-bwidth):geotile_width:(nt.min_x+bwidth)
-            for min_y = (nt.min_y-bwidth):geotile_width:(nt.min_y+bwidth)
-                nt0 = (min_x=min_x, min_y=min_y, max_x=min_x + geotile_width, max_y=min_y + geotile_width)
-
-                geotile_id0 = Altim.geotile_id(nt0)
-                fn = joinpath(geotile_dir, "$(geotile_id0).$(geotile_ext)")
-
-                # only read data if there is a file
-                if isfile(fn)
-                    df0 = DataFrame(Arrow.Table(fn))
-                    ind = within.(Ref(ext_buff), df0.longitude, df0.latitude)
-                    df = vcat(df, df0[ind, :])
-                end
-            end
-        end
-        return df
-    end
-end
-
-
-"""
-    points_in_polygons(points::AbstractMultiPoint, polygons::AbstractMultiPolygonTrait)
-
-checks if each point in `points` is within any polygon in `polygons`, returning a Bool of 
-length (points).
-"""
-function points_in_polygons(points, polygons)
-    # initialize Bool array
-    ind = falses(size(points))
-
-    # check if point and polygon bounds overlap 
-    ext0 = Extent(X=extrema(points.is[1]), Y=extrema(points.is[2]))
-    ext = GeoInterface.bbox(polygons)
-
-    if !Extents.intersects(ext0, ext)
-        # no overlap
-        return ind
-    else
-        # overlap 
-
-        # check points in each polygon
-        for p in polygons.shapes
-            ext = GeoInterface.bbox(p)
-            if Extents.intersects(ext0, ext)
-                ind = ind .| LibGEOS.within.(points, Ref(p))
-            end
-        end
-        return ind
-    end
-end
-
-
-"""
-    meters2lonlat_distance(distance_meters, latitude_degrees)
-
-Returns the decimal degree distance along latitude and longitude lines given a distance in 
-meters and a latitude in decimal degrees.
-
-# Example usage:
-```julia-repl
-julia> distance_meters = 1000.0;  
-julia> latitude_degrees = 45.0;  
-
-julia> lat, lon = Altim.meters2lonlat_distance(distance_meters, latitude_degrees)
-(0.008997741566866717, 0.012718328120254203)
-```
+# Returns
+- Tuple containing (latitude_distance, longitude_distance) in decimal degrees
 """
 function meters2lonlat_distance(distance_meters, latitude_degrees)
     # Radius of the Earth in meters
@@ -3589,73 +3457,25 @@ function meters2lonlat_distance(distance_meters, latitude_degrees)
 
     return latitude_distance, longitude_distance
 end
-
 """
+    mask_rasterize(feature, extent::Extent, resolution; target_crs=EPSG(4326), source_crs=EPSG(4326), boundary=:center) -> BitMatrix
 
+Convert vector features to a binary raster mask for a given geographic extent and resolution.
+
+# Arguments
+- `feature`: Vector geometry feature(s) to rasterize
+- `extent::Extent`: Geographic extent of the output raster
+- `resolution`: Tuple or NamedTuple specifying pixel size (e.g., (X=0.001, Y=0.001))
+
+# Keywords
+- `target_crs=EPSG(4326)`: Coordinate reference system for the output raster
+- `source_crs=EPSG(4326)`: Coordinate reference system of the input features
+- `boundary=:center`: Method for determining pixel coverage (`:center`, `:touch`, or `:contains`)
+
+# Returns
+- `BitMatrix`: Binary mask where `true` indicates presence of the feature
 """
-function binstats_tree(z, z0, halfwidth, v, fun::T) where {T<:Function}
-
-    tree = KDTree(z; leafsize=10)
-    idx = inrange(tree, z0, halfwidth)
-
-    (n, ~) = size(v)
-    (~, m) = size(z0)
-
-    v_out = fill(NaN, [n, m])
-
-    for j in eachindex(idx)
-        for i = 1:n
-            v_out[i, j] = fun(@view(v[i, idx[j]]))
-        end
-    end
-
-    return v_out
-end
-
-
-function surface_parameters(z; lx=1, ly=1)
-
-    ## slope
-    dx(v) = ((v[7] + 2 * v[8] + v[9]) - (v[1] + 2 * v[2] + v[3])) / 8
-    dy(v) = ((v[3] + 2 * v[6] + v[9]) - (v[1] + 2 * v[4] + v[7])) / 8
-
-    # slope_x  = dx/lx
-    # slope_y  = dx/ly
-
-    ## planer curvature
-    # https://pro.arcgis.com/en/pro-app/latest/tool-reference/spatial-analyst/how-curvature-works.htm
-    ddx(v) = ((v[2] + v[8]) / 2 - v[5]) # / lx^2
-    ddy(v) = ((v[4] + v[6]) / 2 - v[5]) # / ly^2
-
-    #Profile_Curvature = -2(ddx + ddy) * 100 where lx/y = grid_size in x and y
-
-    stencil = Window(1)
-    A = StencilArray(z, stencil)
-
-    dzdx = mapstencil(dx, A)
-    dzdy = mapstencil(dy, A)
-    dzddx = mapstencil(ddx, A)
-    dzddy = mapstencil(ddy, A)
-
-    if lx != 1
-        dzdx ./= lx
-        dzddx ./= lx .^ 2
-    end
-
-    if ly != 1
-        dzdy ./= ly
-        dzddy ./= ly .^ 2
-    end
-
-    return dzdx, dzdy, dzddx, dzddy
-end;
-
-
-"""
-    mask_rasterize(feature, extent::Extents, resolution; target_crs=EPSG(4326))
-return a rasterized mask for provided features for a given extent and resolution.
-"""
-function mask_rasterize(feature, extent::Extent, resolution; target_crs=EPSG(4326), source_crs=EPSG(4326), boundary = :center)
+function mask_rasterize(feature, extent::Extent, resolution; target_crs=EPSG(4326), source_crs=EPSG(4326), boundary=:center)
 
     if source_crs !== target_crs
         println("reporjecting vector file... this could take awhile")
@@ -3668,13 +3488,25 @@ function mask_rasterize(feature, extent::Extent, resolution; target_crs=EPSG(432
     setcrs(A, target_crs)
 
     # NOTE: count method is fastest
-    mask = Rasters.rasterize!(count, A, feature; threaded=false, shape=:polygon, progress=false, verbos=false, boundary = boundary) .> 0
+    mask = Rasters.rasterize!(count, A, feature; threaded=false, shape=:polygon, progress=false, verbos=false, boundary=boundary) .> 0
 
     return mask
 end
 
 """
-    calculate the fraction of glacier, landice, floating ice, and rgi region in each geogrid
+    geotiles_w_mask(geotile_width; resolution=(X=.001, Y=.001), remake=false) -> DataFrame
+
+Calculate the fraction of glacier, land ice, floating ice, and RGI regions in each geotile.
+
+# Arguments
+- `geotile_width`: Width of geotiles in degrees
+
+# Keywords
+- `resolution=(X=.001, Y=.001)`: Spatial resolution for rasterization
+- `remake=false`: Whether to regenerate the file even if it already exists
+
+# Returns
+- `DataFrame`: Contains geotile information with added columns for coverage fractions
 """
 function geotiles_w_mask(geotile_width; resolution = (X=.001, Y= .001), remake = false)
 
@@ -3737,23 +3569,13 @@ end
 """
     validrange(v)
 
-Finds the enclosing range (start and end indices) of `true` elements along each dimension of a multidimensional boolean array.
+Find the enclosing range of `true` elements along each dimension of a boolean array.
 
-**Arguments:**
+# Arguments
+- `v`: Multidimensional boolean array
 
-* `v`: The input multidimensional boolean array.
-
-**Returns:**
-
-* A tuple of ranges, where each range represents the valid range (start and end indices) for a particular dimension of the input array.
-
-**Examples:**
-
-julia> A = [false true true false; false true false false; false false false false]
-julia> validrange(A)
-```julia
-(1:2, 2:3)
-```
+# Returns
+- Tuple of ranges, one per dimension, containing the first to last indices where `true` values exist
 """
 function validrange(v)
    nd = ndims(v);
@@ -3763,33 +3585,21 @@ end
 
 
 """
-curvature(dhddx, dhddy, epsg)
+    curvature(dhddx, dhddy, epsg; lat) -> Float64
 
-This function calculates the curvature of a surface at a point, 
-accounting for the projection of the geographic coordinates.
+Calculate surface curvature at a point, accounting for coordinate projection.
 
-**Arguments:**
+# Arguments
+- `dhddx`: Second derivative of height in x-direction
+- `dhddy`: Second derivative of height in y-direction
+- `epsg`: EPSG code of coordinate system
+- `lat`: Latitude value(s) for geographic conversion
 
-* `dhddx`: The second derivative of the height field in the x-direction.
-* `dhddy`: The second derivative of the height field in the y-direction.
-* `epsg`: The EPSG code of the geographic coordinate system. Currently supports
-  WGS 84 (EPSG:4326) and non-geographic projections.
+# Returns
+- Surface curvature in cm^-2 (negative = concave, positive = convex)
 
-**Returns:**
-
-* `curvature`: The curvature of the surface at the point, in units of cm^-2. 
-  A negative value indicates a concave surface, while a positive value indicates 
-  a convex surface.
-
-**Notes:**
-
-* For geographic projections (EPSG:4326), the function calculates the distance 
-  represented by one degree of latitude and longitude in meters at the 
-  mean latitude of the geospatial tile. This distance is then used to convert 
-  the curvature from units per meter squared to units per centimeter squared.
-* For non-geographic projections, the function assumes a constant distance of 
-  one meter for both latitude and longitude. This may not be accurate for all 
-  projections, and the results should be interpreted with caution.
+For EPSG:4326, converts degrees to meters based on latitude.
+For other projections, assumes units are already in meters.
 """
 function curvature(dhddx, dhddy, epsg; lat)
 
@@ -3805,6 +3615,23 @@ function curvature(dhddx, dhddy, epsg; lat)
 end
 
 
+"""
+    slope(dhdx, dhdy, epsg; lat) -> (dhdx_scaled, dhdy_scaled)
+
+Calculate surface slope components, accounting for coordinate projection.
+
+# Arguments
+- `dhdx`: Height derivative in x-direction
+- `dhdy`: Height derivative in y-direction
+- `epsg`: EPSG code of coordinate system
+- `lat`: Latitude value(s) for geographic conversion
+
+# Returns
+- Tuple of scaled slope components (dhdx_scaled, dhdy_scaled)
+
+For EPSG:4326, converts degrees to meters based on latitude.
+For other projections, assumes units are already in meters.
+"""
 function slope(dhdx, dhdy, epsg; lat)
 
     if epsg == 4326
@@ -3817,27 +3644,23 @@ function slope(dhdx, dhdy, epsg; lat)
     dhdx = dhdx * xdist
     dhdy = dhdy * ydist
    
-    return dhdx,  dhdy
+    return dhdx, dhdy
 end
 
 
 """
-vector_overlap(a, b)
+    vector_overlap(a, b) -> Bool
 
-This function checks for overlap between two one-dimensional arrays `a` and `b`. 
-Overlap is defined as a condition where the minimum value of `a` is less than 
-or equal to the maximum value of `b`, and the maximum value of `a` is greater than or equal 
-to the minimum value of `b`. In other words, `a` completely encompasses the range of values in `b`.
+Check if two vectors have overlapping ranges.
 
-Inputs:
-  - a: The first one-dimensional array.
-  - b: The second one-dimensional array.
+# Arguments
+- `a`: First vector
+- `b`: Second vector
 
-Output:
-  - tf (Bool): True if there is vectors overlap, False otherwise.
+# Returns
+- `Bool`: True if the ranges overlap, false otherwise
 """
 function vector_overlap(a, b)
-
     ea = extrema(a)
     eb = extrema(b)
 
@@ -3846,10 +3669,32 @@ function vector_overlap(a, b)
 end
 
 
+"""
+    nanmean(x) -> Number
+
+Calculate the mean of non-NaN values in a collection.
+
+# Arguments
+- `x`: Collection of values that may contain NaN elements
+
+# Returns
+- Mean of all non-NaN values, or NaN if all values are NaN
+"""
 function nanmean(x)
     mean(x[.!isnan.(x)])
 end
 
+"""
+    nanmedian(x) -> Number
+
+Calculate the median of non-NaN values in a collection.
+
+# Arguments
+- `x`: Collection of values that may contain NaN elements
+
+# Returns
+- Median of all non-NaN values, or NaN if all values are NaN
+"""
 function nanmedian(x)
     valid = .!isnan.(x)
     if any(valid)
@@ -3862,17 +3707,41 @@ end
 
 
 const MATLAB_EPOCH = Dates.DateTime(-1, 12, 31)
+
+"""
+    datenum2date(n) -> DateTime
+
+Convert MATLAB datenum format to Julia DateTime.
+
+# Arguments
+- `n`: MATLAB datenum value (days since 0000-01-00)
+
+# Returns
+- `DateTime`: Equivalent Julia DateTime object
+"""
 function datenum2date(n) 
     d = MATLAB_EPOCH + Dates.Millisecond(round(Int64, n * 1000 * 60 * 60 * 24))
     return d
 end
 
-
-
 """
-    add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder)
+    add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder) -> DataFrame
 
-    Add dem info to altim dataframe
+Add digital elevation model (DEM) reference information to an altimetry DataFrame.
+
+# Arguments
+- `altim::DataFrame`: Altimetry data to which DEM information will be added
+- `dem_id::Symbol`: DEM identifier (`:best`, `:cop30_v2`, `:arcticdem_v4_10m`, or `:rema_v2_10m`)
+- `geotile`: Geotile object containing extent information
+- `mission_geotile_folder::String`: Path to folder containing geotile DEM files
+
+# Returns
+- `DataFrame`: The modified altimetry DataFrame with added columns:
+  - `height_ref`: Reference height from DEM
+  - `curvature`: Surface curvature
+  - `dh`: Height difference (altim.height - height_ref)
+
+When `dem_id` is `:best`, tries multiple DEMs in order of preference.
 """
 function add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder)
 
@@ -3915,6 +3784,21 @@ function add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder)
 end
 
 
+"""
+    highres_mask(geotile, feature, invert, excludefeature) -> (mask, area_m2)
+
+Create a high-resolution binary mask from vector features for a geotile.
+
+# Arguments
+- `geotile`: Geotile object with extent information
+- `feature`: Vector feature to rasterize into a mask
+- `invert`: Boolean indicating whether to invert the mask
+- `excludefeature`: Optional feature to exclude from the mask (can be nothing)
+
+# Returns
+- `mask`: Binary raster mask at ~30m resolution
+- `area_m2`: Matrix of cell areas in square meters
+"""
 function highres_mask(geotile, feature, invert, excludefeature)
     # update mask with high-resolution vector files
     grid_resolution = 0.00027 # ~30m
@@ -3952,9 +3836,24 @@ function highres_mask(geotile, feature, invert, excludefeature)
 end
 
 
+"""
+    highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, surface_mask) -> DataFrame
+
+Apply a high-resolution binary mask to points within a geotile and update a DataFrame column.
+
+# Arguments
+- `masks0::DataFrame`: DataFrame to update with mask values
+- `altim`: Object containing longitude and latitude coordinates
+- `geotile`: Geotile object with extent information
+- `feature`: Vector feature to rasterize into a mask
+- `invert::Bool`: Whether to invert the mask
+- `excludefeature`: Optional feature to exclude from the mask (can be nothing)
+- `surface_mask::Symbol`: Column name in masks0 to update with mask values
+
+# Returns
+- Updated DataFrame with the surface_mask column populated
+"""
 function highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, surface_mask)
-    
-    
     mask1, _ = highres_mask(geotile, feature, invert, excludefeature)
     
     grid_resolution = 0.00027 # ~30m
@@ -3986,10 +3885,24 @@ function highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, 
 end
 
 
+"""
+    binningfun_define(binning_method) -> Function
+
+Create a binning function based on the specified method.
+
+# Arguments
+- `binning_method::String`: Method to use for binning data. Options:
+  - "meanmadnorm3": Mean of values with MAD normalization < 3
+  - "meanmadnorm5": Mean of values with MAD normalization < 5
+  - "meanmadnorm10": Mean of values with MAD normalization < 10
+  - "median": Median of all values
+
+# Returns
+- Function that implements the specified binning method
+"""
 function binningfun_define(binning_method)
-    
     if binning_method == "meanmadnorm3"
-      x -> mean(x[Altim.madnorm(x).<3])
+        x -> mean(x[Altim.madnorm(x).<3])
     elseif binning_method == "meanmadnorm5"
         x -> mean(x[Altim.madnorm(x).<5])
     elseif binning_method == "meanmadnorm10"
@@ -3999,12 +3912,23 @@ function binningfun_define(binning_method)
     else
         error("unrecognized binning method")
     end
-
-
 end
+"""
+    highres_mask(latitude, longitude, feature; grid_resolution=0.00027) -> Vector{Bool}
 
+Create a binary mask for points based on their intersection with a high-resolution vector feature.
 
+# Arguments
+- `latitude::Vector{<:Real}`: Vector of latitude coordinates
+- `longitude::Vector{<:Real}`: Vector of longitude coordinates
+- `feature`: Vector feature (polygon) used to create the mask
 
+# Keywords
+- `grid_resolution=0.00027`: Resolution of the rasterized grid in degrees
+
+# Returns
+- Vector of boolean values indicating whether each point intersects with the feature
+"""
 function highres_mask(latitude, longitude, feature; grid_resolution=0.00027)
     # update mask with high-resolution vector files
 
@@ -4039,35 +3963,6 @@ function highres_mask(latitude, longitude, feature; grid_resolution=0.00027)
 end
 
 
-# remove all rows that contian only nans
-function remove_allnan(df, column)
-    allnan = falses(nrow(df))
-    for (i, r) in enumerate(eachrow(df))
-        allnan[i] = all(isnan.(r[column])) || isempty(r[column])
-    end
-    df = df[.!allnan,:]
-end
-
-
-function nanquantile(itr, p;)
-    valid = .!isnan.(itr)
-    if any(valid)
-        q = quantile(itr[valid], p)
-    else
-        q = fill(NaN, size(p))
-    end
-end
-
-
-mission2label = Dict( 
-    "hugonnet" => "ASTER",
-    "icesat" => "ICESat",
-    "icesat2" => "ICESat-2",
-    "gedi" => "GEDI",
-    "grace" => "GRACE/-FO",
-    "synthesis" => "Synthesis",
-    "gemb" => "GEMB Model",
-)
 
 rgi2label = Dict(
     "rgi1" => "Alaska",
@@ -4161,58 +4056,32 @@ rginum2enclosed_alphanumerics = Dict(
 )
 
 
-
-
-
-
-unit2areaavg = Dict(
-    "km⁻³"=>"m", 
-    "Gt"=>"m w.e."
-)
-
-units2label = Dict(
-    "m w.e." => "water equivlent height anomaly", 
-    "Gt" => "mass anomaly", 
-    "km⁻³" => "volume anomaly",  
-    "m" => "height anomaly"
-)
-
-
-var2label = Dict(
-    "dm" => "Mass Anomaly",
-    "dv" => "Volume Anomaly",
-    "fac" => "Firn Air Content Anomaly",
-    "smb" => "Total Surface Mass Balance",
-    "acc" => "Total Accumulation",
-    "runoff" => "Total Runoff",
-    "refreeze" => "Total Refreeze",
-)
-
 """
-ntpermutations(nt)
+    ntpermutations(nt_in) -> Vector{NamedTuple}
 
-given a named tuple [nt] return all a vector of named tuples of all permutiations of nt values, retaining original names
+Generate all possible permutations of values from a named tuple of iterables.
 
-Inputs:
-  - nt: a named tuple of iterables
-Output:
-  - vector of named tuples with all permutations of input named tuple of iterables
+# Arguments
+- `nt_in`: A named tuple where each field contains an iterable
 
-  **Examples:**
-
-julia> nt_in = (; category = [1, 3, 4], letter = ["a", "b", "c"], score = [1.1, 4.0], thing = ["hat", "cat"])
-julia> nt = ntpermutations(nt_in)
-```julia
-36-element Vector{NamedTuple}:
- (catagory = 1, letter = "a", score = 1.1, thing = "hat")
- ⋮
- (catagory = 4, letter = "c", score = 4.0, thing = "cat")
-```
+# Returns
+- Vector of named tuples containing all possible combinations of the input values,
+  preserving the original field names
 """
 ntpermutations(nt_in) = [NamedTuple{keys(nt_in)}(reverse(t)) for t in Iterators.product(reverse(nt_in)...)] |> vec
 
 
+"""
+    extent2rectangle(extent) -> GeoInterface.Wrappers.Polygon
 
+Convert an extent tuple to a rectangular polygon.
+
+# Arguments
+- `extent`: Tuple containing x-bounds and y-bounds as ((xmin, xmax), (ymin, ymax))
+
+# Returns
+- A GeoInterface Polygon representing the rectangular boundary of the extent
+"""
 function extent2rectangle(extent)
     xbounds = extent[1]
     ybounds = extent[2]
@@ -4221,29 +4090,23 @@ function extent2rectangle(extent)
 end
 
 
+
+
 """
-    df_tsfit!(df, tsvars)
+    df_tsfit!(df, tsvars; progress=true, datelimits=nothing) -> DataFrame
 
-Fits a seasonal trend model to time series variables in a DataFrame and adds the fitted parameters as new columns.
-
-For each time series variable in `tsvars`, fits a model of the form:
-    y = offset + trend*t + amplitude*cos(2π*t + phase)
-
-The fitted parameters are added as new columns with suffixes:
-- `_offset`: Mean offset
-- `_trend`: Linear trend
-- `_amplitude`: Seasonal amplitude 
-- `_phase`: Seasonal phase
+Fit a least squares model to time series variables in a DataFrame, calculating offset, trend, amplitude, and phase.
 
 # Arguments
-- `df`: DataFrame containing time series variables to fit
-- `tsvars`: Vector of column names (Symbols or Strings) containing the time series data
+- `df`: DataFrame containing time series data
+- `tsvars`: Column names of time series variables to fit
 
-# Notes
-- Requires date metadata for each time series variable stored via `colmetadata`
-- Uses parallel processing with `Threads.@threads`
-- Fits are performed using `curve_fit` from LsqFit
-- NaN values are handled by filtering to valid data points before fitting
+# Keywords
+- `progress=true`: Whether to display a progress bar
+- `datelimits=nothing`: Optional tuple of (start_date, end_date) to limit the date range for fitting
+
+# Returns
+- Modified DataFrame with added columns for offset, trend, amplitude, and phase for each time series variable
 """
 function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
     prog = progress ? ProgressMeter.Progress(length(tsvars); desc="Fitting LSQ model to timeseries...") : nothing
@@ -4294,15 +4157,19 @@ end
 
 
 """
-    validgaps(valid)
+    validgaps(valid) -> BitVector
 
-Find gaps in a boolean array between first and last valid points.
+Identify gaps within a valid data range.
 
 # Arguments
-- `valid::AbstractVector{Bool}`: Boolean array indicating valid/invalid points
+- `valid`: BitVector or Boolean array indicating valid data points
 
 # Returns
-- `validgap::AbstractVector{Bool}`: Boolean array with true values indicating gaps between first and last valid points
+- BitVector marking gaps (false values) that occur between the first and last valid points
+
+# Details
+Returns a BitVector where `true` indicates invalid points (gaps) that occur between the first 
+and last valid points in the input array. Points outside this range are always marked as `false`.
 """
 function validgaps(valid)
     validgap = falses(length(valid))
@@ -4314,23 +4181,20 @@ function validgaps(valid)
     return validgap
 end
 
-
 """
-    connected_groups(connectivity)
+    connected_groups(connectivity) -> Vector{Int64}
 
-Groups connected indicies into distinct groups based on their connectivity.
+Group elements into connected components based on their connectivity relationships.
 
 # Arguments
-- `connectivity`: Vector of vectors containing indices of connected items
+- `connectivity`: Vector of vectors where each element contains indices of connected elements
 
 # Returns
-- Vector of group IDs, where each element corresponds to the group assignment for that grouping
+- Vector of integers assigning each element to a group ID
 
 # Details
-This function takes a connectivity list where each element contains indices of tiles that are 
-connected to the tile at that index. It then assigns each tile to a group such that all 
-connected tiles belong to the same group. Tiles with no connections are assigned their own 
-unique group.
+Identifies connected components in a graph represented by the connectivity list.
+Elements with empty connectivity lists are assigned to their own individual groups.
 """
 function connected_groups(connectivity)
 
@@ -4384,49 +4248,6 @@ end
 
 
 
-"""
-    mie2cubicms!(glaciers; tsvars=["dh", "smb", "fac", "runoff"])
-
-Convert glacier variables from meters ice equivalent (mie) to cubic meters per second (m³/s).
-
-# Arguments
-- `glaciers`: DataFrame containing glacier data with time series variables
-- `tsvars`: Vector of String column names for variables to convert (default: ["dh", "smb", "fac", "runoff"])
-
-# Returns
-- Modified glaciers DataFrame with converted values
-
-# Notes
-- Converts from meters ice equivalent (mie) to volume using glacier area
-- Converts volume to mass using ice density
-- Takes temporal derivative and converts to m³/s flow rate
-- Operates in-place on the input DataFrame
-- Requires uniform time steps between measurements
-"""
-function mie2cubicms!(glaciers; tsvars=["dh", "smb", "fac", "runoff"])
-    volume2mass = Altim.δice / 1000
-
-    # date interval in seconds
-    Threads.@threads for tsvar in tsvars
-        ddate = colmetadata(glaciers, tsvar, "date")
-        Δdate = Second.(unique(Day.(ddate[2:end] .- ddate[1:end-1])))
-
-        if length(Δdate) > 1
-            error("Time steps are not uniform")
-        else
-            Δt = Δdate[1]
-        end
-
-        for g in eachrow(glaciers)
-            #g = first(eachrow(glaciers))
-            # divide by 1000 to convert to m w.e. to km w.e. ... then convert to m^3 s-1 [1E3^3/Δt.value] ..
-            ro = g[tsvar] .* g[:area_km2] .* volume2mass # convert from mie -> volume -> mass
-            g[tsvar][2:end] = diff(ro) / 1000 * (1E3^3 / Δt.value)
-        end
-    end
-    return glaciers
-end
-
 
 """
     nc2dd(ds, varname)
@@ -4461,33 +4282,6 @@ function nc2dd(cfv)
     da = DimArray(collect(cfv[:,:]) * units, tuple([Dim{Symbol(dname)}(cfv[dname]) for dname in dnames]...))
     return da
 end
-
-
-function gt2cubicms!()
-    volume2mass = Altim.δice / 1000
-
-    # date interval in seconds
-    Threads.@threads for tsvar in tsvars
-        ddate = colmetadata(glaciers, tsvar, "date")
-        Δdate = Second.(unique(Day.(ddate[2:end] .- ddate[1:end-1])))
-
-        if length(Δdate) > 1
-            error("Time steps are not uniform")
-        else
-            Δt = Δdate[1]
-        end
-
-        for g in eachrow(glaciers)
-            #g = first(eachrow(glaciers))
-            # divide by 1000 to convert to m w.e. to km w.e. ... then convert to m^3 s-1 [1E3^3/Δt.value] ..
-            ro = g[tsvar] .* g[:area_km2] .* volume2mass # convert from mie -> volume -> mass
-            g[tsvar][2:end] = diff(ro) / 1000 * (1E3^3 / Δt.value)
-        end
-    end
-    return glaciers
-end
-
-
 
 
 """
@@ -4566,25 +4360,6 @@ function wimberly2024(; filename=setpaths().wimberly_2024)
     end
 
     return da
-end
-
-
-"""
-    propagate_relative_diff_error(A, B, σA, σB, cov_AB=0)
-
-Calculate error propagation for (A-B)/B with given uncertainties σA and σB.
-Optional covariance term cov_AB can be provided if A and B are correlated.
-
-Returns the standard error of the relative difference.
-"""
-
-function propagate_relative_diff_error(A, B, σ_A, σ_B)
-
-    if B == 0
-        error("Division by zero: B cannot be zero.")
-    end
-    σ = sqrt((σ_A / B)^2 + ((A * σ_B) / B^2)^2)
-    return σ
 end
 
 
@@ -4688,6 +4463,20 @@ function grace_masschange(; path2file=setpaths()[:grace_rgi])
 end
 
 
+"""
+    check_for_all_nans(d) -> Nothing
+
+Check if any key in a dictionary contains only NaN values.
+
+# Arguments
+- `d`: Dictionary to check
+
+# Returns
+- Nothing
+
+# Throws
+- Error if any key in the dictionary contains only NaN values
+"""
 function check_for_all_nans(d)
     for k in keys(d)
         if all(isnan.(d[k]))
@@ -4697,6 +4486,18 @@ function check_for_all_nans(d)
 end
 
 
+"""
+    resample(colorscheme::Symbol, n) -> ColorSchemes.ColorScheme
+
+Create a new color scheme by resampling an existing one to a specified number of colors.
+
+# Arguments
+- `colorscheme::Symbol`: Name of the source color scheme
+- `n`: Number of colors in the new scheme
+
+# Returns
+- A new ColorScheme with n evenly spaced colors from the original scheme
+"""
 function resample(colorscheme::Symbol, n)
     newscheme = ColorSchemes.ColorScheme(
         get(ColorSchemes.colorschemes[colorscheme], (0:n-1) / (n-1))
@@ -4705,10 +4506,23 @@ function resample(colorscheme::Symbol, n)
 end
 
 
-function stringofvectors2string(strings, delim="")
-    return join(strings; delim="_")
-end
+"""
+    glambie2024(; path2glambie=paths = setpaths()[:glambie_2024]) -> DimArray
 
+Load and process the GlaMBIE 2024 glacier mass balance dataset.
+
+# Keywords
+- `path2glambie`: Path to the GlaMBIE 2024 CSV file (default: from setpaths())
+
+# Returns
+- A DimensionalData.DimArray containing cumulative glacier mass balance in Gt
+  with dimensions for RGI region (1-19, 98, 99), date (2000-2024), and error flag
+
+# Notes
+- Dates are shifted by up to 6 months from original data to align across hemispheres
+- Missing values are linearly interpolated
+- Region 98 (HMA) is calculated as the sum of regions 13-15
+"""
 function glambie2024(; path2glambie=paths = setpaths()[:glambie_2024])
     df = CSV.read(path2glambie, DataFrame)
 
@@ -4759,54 +4573,22 @@ end
  
 
 """
-    gt_per_yr_to_m3_per_s(gt_per_yr::Real)
+    dimarray2netcdf(da, filename; name="var", units=nothing, global_attributes=nothing) -> String
 
-Convert water flow rate from Gigatonnes per year (Gt/yr) to cubic meters per second (m³/s).
-
-# Arguments
-- `gt_per_yr`: Flow rate in Gigatonnes per year
-
-# Returns
-- Flow rate in cubic meters per second
-
-# Example
-```julia
-flow = gt_per_yr_to_m3_per_s(31.536) # ≈ 1000 m³/s
-```
-"""
-function gt_per_yr_to_m3_per_s(gt_per_yr::Real)
-    # 1 Gt = 1e9 tonnes = 1e12 kg
-    # 1 m³ of water = 1000 kg
-    # 1 year = 365.25 * 24 * 60 * 60 seconds
-    return gt_per_yr * 1e9 / (365.25 * 24 * 60 * 60)
-end
-
-"""
-    m3_per_s_to_gt_per_yr(m3_per_s::Real)
-
-Convert water flow rate from cubic meters per second (m³/s) to Gigatonnes per year (Gt/yr).
+Convert a DimensionalData.DimArray to a NetCDF file.
 
 # Arguments
-- `m3_per_s`: Flow rate in cubic meters per second
+- `da`: DimensionalData.DimArray to convert
+- `filename`: Path where the NetCDF file will be saved
+
+# Keywords
+- `name="var"`: Name for the main variable in the NetCDF file
+- `units=nothing`: Units for the main variable (uses DimArray units if not specified)
+- `global_attributes=nothing`: Dictionary of global attributes to add to the NetCDF file
 
 # Returns
-- Flow rate in Gigatonnes per year
-
-# Example
-```julia
-flow = m3_per_s_to_gt_per_yr(1000) # ≈ 31.536 Gt/yr
-```
+- Path to the created NetCDF file
 """
-function m3_per_s_to_gt_per_yr(m3_per_s::Real)
-    # 1 m³ of water = 1000 kg
-    # 1 Gt = 1e12 kg
-    # 1 year = 365.25 * 24 * 60 * 60 seconds
-    return m3_per_s * (365.25 * 24 * 60 * 60) / 1E9
-end 
-
-
-
-
 function dimarray2netcdf(da, filename; name = "var", units = nothing, global_attributes = nothing)
     
     NCDataset(filename, "c") do ds
@@ -4862,8 +4644,25 @@ function dimarray2netcdf(da, filename; name = "var", units = nothing, global_att
 end
 
 
-function netcdf2dimarray(filename; varname=nothing)
+"""
+    netcdf2dimarray(filename; varname=nothing) -> DimensionalData.DimArray
 
+Convert a NetCDF file to a DimensionalData.DimArray.
+
+# Arguments
+- `filename`: Path to the NetCDF file
+
+# Keywords
+- `varname=nothing`: Name of the variable to convert. If not specified, attempts to
+  automatically detect the single non-dimension variable in the file.
+
+# Returns
+- DimArray with dimensions and data from the NetCDF variable, preserving units and metadata
+
+# Throws
+- Error if varname is not specified and there isn't exactly one variable in the file
+"""
+function netcdf2dimarray(filename; varname=nothing)
     # read the netcdf file
     ds = NCDatasets.Dataset(filename) 
 
@@ -4871,12 +4670,12 @@ function netcdf2dimarray(filename; varname=nothing)
     dnames = NCDatasets.dimnames(ds)
 
     # get the variable name
-    if  varname === nothing
+    if varname === nothing
         varname = setdiff(keys(ds), dnames)
-        if length( varname) != 1
-            error(" varname must be specified if there is not exactly one variable in the netcdf file")
+        if length(varname) != 1
+            error("varname must be specified if there is not exactly one variable in the netcdf file")
         end
-        varname = first( varname)
+        varname = first(varname)
     end
 
     # get the units of variable
@@ -4886,6 +4685,19 @@ function netcdf2dimarray(filename; varname=nothing)
 end
 
 
+"""
+    _var_from_netcdf(ds, varname, dnames) -> DimensionalData.DimArray
+
+Create a DimArray from a NetCDF variable.
+
+# Arguments
+- `ds`: NCDataset containing the variable
+- `varname`: Name of the variable to convert
+- `dnames`: Names of dimensions in the dataset
+
+# Returns
+- DimArray with appropriate dimensions and units (if available)
+"""
 function _var_from_netcdf(ds, varname, dnames)
     units = _units_from_netcdf(ds, varname)
     if !isnothing(units)
@@ -4896,6 +4708,18 @@ function _var_from_netcdf(ds, varname, dnames)
     return da
 end
 
+"""
+    _dim_from_netcdf(ds, dname) -> DimensionalData.Dimension
+
+Create a dimension from a NetCDF dimension variable.
+
+# Arguments
+- `ds`: NCDataset containing the dimension
+- `dname`: Name of the dimension to convert
+
+# Returns
+- Dimension with values and units (if available) and original metadata
+"""
 function _dim_from_netcdf(ds, dname)
     units = _units_from_netcdf(ds, dname)
     if !isnothing(units)
@@ -4906,6 +4730,20 @@ function _dim_from_netcdf(ds, dname)
     return dim
 end
 
+"""
+    _units_from_netcdf(ds, varname) -> Union{Unitful.Units, Nothing}
+
+Extract and parse units from a NetCDF variable.
+
+# Arguments
+- `ds`: NCDataset containing the variable
+- `varname`: Name of the variable to extract units from
+
+# Returns
+- Parsed Unitful units if available and parsable
+- `NoUnits` if units attribute exists but is empty
+- `nothing` if units are not available or cannot be parsed
+"""
 function _units_from_netcdf(ds, varname)
 
     # units can not be applied to non-numeric data
@@ -4934,8 +4772,6 @@ function _units_from_netcdf(ds, varname)
     end
     return units
 end
-
-
 
 unit_convert = Dict()
 unit_convert["m3 s^-1"] = u"m^3/s"

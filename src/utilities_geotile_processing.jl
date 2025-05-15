@@ -59,6 +59,32 @@ end
 model_curvature::Function = model_curvature(c, p) = p[1] .+ p[2] .* c .+ p[3] .* c .^ 2 .+ p[4] .* c .^ 3 .+ p[5] .* c .^ 4
 p_curvature = zeros(5)
 
+"""
+    geotile_binning(; project_id=:v01, geotile_width=2, kwargs...)
+
+Bin altimetry data into geotiles by elevation and time.
+
+# Arguments
+- `project_id`: Project identifier (default: :v01)
+- `geotile_width`: Width of geotiles in degrees (default: 2)
+- `warnings`: Whether to show warnings (default: false)
+- `showplots`: Whether to show plots (default: false)
+- `force_remake_before`: Only remake files created before this date (default: nothing)
+- `update_geotile`: Whether to update existing geotiles (default: false)
+- `update_geotile_missions`: Missions to update if updating geotiles (default: ["icesat2"])
+- `all_permutations_for_glacier_only`: Whether to run all permutations only for glacier mask (default: true)
+- `surface_masks`: Surface masks to use (default: [:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km])
+- `binned_folders`: Folders to store binned data (default: ("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"))
+- `dem_ids`: DEM identifiers to use (default: [:best, :cop30_v2])
+- `binning_methods`: Methods for binning (default: ["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"])
+- `curvature_corrects`: Whether to apply curvature correction (default: [true, false])
+- `max_canopy_height`: Maximum canopy height to consider (default: 1)
+- `dh_max`: Maximum height difference to consider (default: 200)
+
+# Description
+Bins altimetry data from various missions into geotiles, applying filtering and corrections.
+The function processes data for each combination of parameters, binning by elevation and time.
+"""
 function geotile_binning(; 
     project_id = :v01,
     geotile_width = 2,
@@ -489,6 +515,54 @@ function geotile_binning(;
 end
 
 
+"""
+    geotile_binned_fill(;
+        project_id=:v01,
+        geotile_width=2,
+        force_remake_before=nothing,
+        update_geotile=false,
+        update_geotile_missions=["icesat2"],
+        plot_dh_as_function_of_time_and_elevation=true,
+        mission_reference_for_amplitude_normalization="icesat2",
+        all_permutations_for_glacier_only=true,
+        surface_masks=[:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km],
+        binned_folders=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"),
+        dem_ids=[:best, :cop30_v2],
+        binning_methods=["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"],
+        curvature_corrects=[true, false],
+        paramater_sets=[1, 2],
+        amplitude_corrects=[true, false],
+        showplots=false,
+        show_times=false,
+    )
+
+Processes and fills binned geotile elevation change data using various models and corrections.
+
+# Arguments
+- `project_id`: Identifier for the project version
+- `geotile_width`: Width of geotiles in degrees
+- `force_remake_before`: Skip files created after this datetime
+- `update_geotile`: Whether to update specific geotiles rather than recomputing all
+- `update_geotile_missions`: List of missions to update when `update_geotile` is true
+- `plot_dh_as_function_of_time_and_elevation`: Generate diagnostic plots of elevation change
+- `mission_reference_for_amplitude_normalization`: Reference mission for amplitude normalization
+- `all_permutations_for_glacier_only`: Only process all parameter permutations for glacier mask
+- `surface_masks`: List of surface masks to process
+- `binned_folders`: Folders containing binned data
+- `dem_ids`: Digital elevation models to use
+- `binning_methods`: Statistical methods for binning data
+- `curvature_corrects`: Whether to apply curvature correction
+- `paramater_sets`: Parameter sets for model filling
+- `amplitude_corrects`: Whether to apply amplitude correction
+- `showplots`: Display plots during processing
+- `show_times`: Print timing information
+
+# Description
+This function processes binned geotile data by applying various corrections and filling 
+missing data using models. It can update specific geotiles/missions or process all data.
+The function handles land adjustments, model fitting, amplitude normalization, and filling
+of empty or incomplete data.
+"""
 function geotile_binned_fill(;
     project_id=:v01,
     geotile_width=2,
@@ -792,6 +866,42 @@ function geotile_binned_fill(;
     end
 end
 
+"""
+    geotile_filled_landfit(;
+        project_id="v01",
+        showplots=false,
+        binned_folders=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"),
+        geotile_width=2,
+        paramater_sets=[1, 2],
+        surface_masks=[:land],
+        binning_methods=["meanmadnorm3"],
+        dem_ids=[:best],
+        curvature_corrects=[true],
+        amplitude_corrects=[true],
+        force_remake_landoffset=true
+    )
+
+Calculates and fits land surface elevation change models for geotiles.
+
+# Arguments
+- `project_id`: Identifier for the project version
+- `showplots`: Whether to display plots during processing
+- `binned_folders`: Folders containing binned data
+- `geotile_width`: Width of geotiles in degrees
+- `paramater_sets`: Parameter sets for model fitting
+- `surface_masks`: Surface masks to process (typically land)
+- `binning_methods`: Statistical methods for binning data
+- `dem_ids`: Digital elevation models to use
+- `curvature_corrects`: Whether to apply curvature correction
+- `amplitude_corrects`: Whether to apply amplitude correction
+- `force_remake_landoffset`: Force recalculation of land offset parameters
+
+# Description
+This function processes binned geotile data for land surfaces, calculating regional 
+elevation changes and fitting temporal models to the data. It generates diagnostic plots
+showing elevation trends and saves the fitted parameters for later use in glacier
+elevation change corrections.
+"""
 function geotile_filled_landfit(; 
     project_id = "v01",
     showplots=false,
@@ -1003,1024 +1113,29 @@ function geotile_filled_landfit(;
     end
 end
 
-# bin and calibrate firn data
-function old_geotile_bin_fit_fac(;
-    gemb_file_binned="/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2023_820_40_racmo_grid_lwt_e97_0.jld2",
-    firn_mission_ref = "icesat2",
-    project_id=:v01,
-    geotile_width=2,
-    surface_masks=[:glacier, :glacier_rgi7, :glacier_b1km, :glacier_b10km],
-    binned_folders=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"),
-    dem_ids=[:best, :cop30_v2],
-    binning_methods=["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"],
-    curvature_corrects=[true, false],
-    paramater_sets=[1, 2],
-    amplitude_corrects=[true, false],
-    force_remake_fac = false,
-)
-    # compute regional volume change, firn correction and mass change
-    df_param = DataFrame()
-    for binned_folder in binned_folders
-        for paramater_set in paramater_sets
-            for surface_mask in surface_masks
-                for dem_id in dem_ids
-                    for binning_method in binning_methods
-                        for curvature_correct in curvature_corrects
-                            for amplitude_correct = amplitude_corrects
-                                append!(df_param, DataFrame(; binned_folder, paramater_set, surface_mask, dem_id, binning_method, curvature_correct, amplitude_correct))
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
 
-    gemb = copy(FileIO.load(gemb_file_binned, "gemb"))
-    geotile_buffer = 1
-
-    Threads.@threads for r in eachrow(df_param)
-        #r = first(eachrow(df_param))
-
-        binned_folder = r.binned_folder
-        paramater_set = r.paramater_set
-        surface_mask = r.surface_mask
-        dem_id = r.dem_id
-        curvature_correct = r.curvature_correct
-        amplitude_correct = r.amplitude_correct
-        binning_method = r.binning_method
-
-        # paths to files
-        binned_filled_file, figure_suffix = Altim.binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
-        gemb_fit_file = splitpath(binned_filled_file)
-        gemb_fit_file = joinpath(gemb_fit_file[1:end-1]..., "gemb_" * gemb_fit_file[end])
-
-        if (!isfile(gemb_fit_file) || force_remake_fac)
-            geotiles = copy(Altim.geotiles_mask_hyps(surface_mask, geotile_width))
-
-            # make geotile rgi regions mutually exexclusive 
-            geotiles, reg = Altim.geotiles_mutually_exclusive_rgi!(geotiles)
-
-            # --------------------------------------------------------------------------------------
-            if !(isfile(binned_filled_file))
-                printstyled("binned file does not exist, skipping: $(binned_filled_file) \n"; color=:yellow)
-                continue
-            end
-
-            t1 = time()
-
-            dh = copy(FileIO.load(binned_filled_file, "dh_hyps"))
-
-            # find the best matched GEMB data within geotile
-            fac, smb = Altim.facfit(; gemb=deepcopy(gemb), dh, geotiles, geotile_buffer, mission_ref_fac=firn_mission_ref)
-
-            save(gemb_fit_file, Dict("fac" => fac, "smb" => smb,))
-
-            t1 = round((time() - t1) / 60, digits=2)
-            println("firn model calibrated [$(t1) min]: $(splitpath(gemb_fit_file)[end])")
-        end
-    end
-end
-
-
-function geotile_regional_dv(;
-    project_id = :v01,
-    geotile_width = 2,
-    surface_masks = [:glacier, :glacier_rgi7, :glacier_b1km, :glacier_b10km],
-    binned_folders = ("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"),
-    dem_ids = [:best, :cop30_v2],
-    binning_methods = ["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"],
-    curvature_corrects = [true, false],
-    paramater_sets = [1, 2],
-    amplitude_corrects = [true, false],
-    force_remake = true,
-    )
-
-    # compute regional volume change, firn correction and mass change
-    params = NamedTuple[]
-    for binned_folder in binned_folders
-        for paramater_set in paramater_sets
-            for surface_mask in surface_masks
-                for dem_id in dem_ids
-                    for binning_method in binning_methods
-                        for curvature_correct in curvature_corrects
-                            for amplitude_correct = amplitude_corrects
-                                push!(params, (; project_id, binned_folder, paramater_set, surface_mask, dem_id, binning_method, curvature_correct, amplitude_correct))
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    Threads.@threads for param in params
-    #param = first(params)
-
-        # paths to files
-        binned_filled_file, figure_suffix = Altim.binned_filled_filepath(; param...)
-        binned_aligned_file = replace(binned_filled_file, ".jld2" => "_aligned.jld2")
-        dv_reg_file = replace(binned_aligned_file, ".jld2" => "_reg.jld2")
-
-
-        if (!isfile(dv_reg_file) || force_remake) && (isfile(binned_aligned_file))
-        
-            dh = FileIO.load(binned_aligned_file, "dh_hyps")
-            nobs0 = FileIO.load(binned_aligned_file, "nobs_hyps")
-
-            geotiles = copy(Altim.geotiles_mask_hyps(param.surface_mask, geotile_width))
-
-            # make geotile rgi regions mutually exexclusive 
-            geotiles, reg = Altim.geotiles_mutually_exclusive_rgi!(geotiles)
-
-            if !any(Base.contains.("area_km2", names(geotiles)))
-                original_area_name = string(param.surface_mask) * "_area_km2"
-                generic_area_name = "area_km2"
-                rename!(geotiles, original_area_name => generic_area_name)
-            end
-
-            # align geotile dataframe with DimArrays [this is overly cautious]
-            gt = collect(dims(dh[first(keys(dh))], :geotile))
-            gt_ind = [findfirst(geotiles.id .== g0) for g0 in gt]
-            geotiles0 =geotiles[gt_ind, :]
-
-            dv_reg, nobs_reg, area_reg = Altim.geotile_filled_dv_reg(dh, nobs0, geotiles0, reg)
-
-            dv = Dict("dv" => dv_reg, "nobs" => nobs_reg, "area" => area_reg)
-
-            save(dv_reg_file, dv)
-            println("regional volume change complete: $(param)")
-        end
-    end
-end
-
-function geotile_dvdm_synthesize_old(;
-    # best estimate ,
-    project_id = :v01,
-    surface_mask_best="glacier",
-    dem_best="best",
-    curvature_correct_best=true,
-    amplitude_correct_best=true,
-    binning_method_best="meanmadnorm3",
-    fill_param_best=1,
-    binned_folder_best="/mnt/bylot-r3/data/binned_unfiltered/2deg",
-
-    # to include in uncertainty
-    surface_masks=["glacier" "glacier_rgi7" "glacier_b1km"],
-    dems=["best" "cop30_v2"],
-    curvature_corrects=[false true],
-    amplitude_corrects=[true],
-    binning_methods=["median" "meanmadnorm5" "meanmadnorm3" "meanmadnorm10"],# ["median" "meanmadnorm10" "meanmadnorm5" "meanmadnorm3"]
-    fill_params=[1 2],
-    binned_folders=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"),
-
-    # manual adjustments
-    regions_to_overwrite_hugonnet_data_with_model_fit=["rgi19"],
-
-    ## combine regions at the per-sensor level
-    # this gets a bit complicated a only regions with consistnet mission inclusion can be grouped for proper 
-    region_col="rgi",
-    region_combines_before_fac=(
-        ("rgi13", "rgi14", "rgi15") => "hma", ), 
-    
-    region_combines_after_fac=(
-    ("rgi1", "rgi3", "rgi4", "rgi5", "rgi6", "rgi7", "rgi8", "rgi9", "rgi19") => "hll",
-    ("rgi2", "rgi10", "rgi11", "rgi12", "hma", "rgi17", "rgi18") => "ghll",
-    ("rgi1", "rgi3", "rgi4", "rgi6", "rgi7", "rgi8", "rgi9") => "hll_ep",),
-
-    combine_vars=["area_km2", "val", "nobs"],
-
-    missions_to_filter_on_nobs_km2=["icesat", "gedi"],
-
-    path2gemb = "/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2023_820_40_racmo_grid_lwt_e97_0_geotile_filled_d_reg.jld2",
-    )
-
-    pscale_range = nothing #(0.75, 1.25)
-    #pscale_range_rgi_exclude = ["rgi12", "rgi16"]
-
-    mission_firn = "gemb"
-
-    df = Altim.regionfiles2dataframe(;
-    binned_folders,
-    surface_masks,
-    dem_ids=dems,
-    binning_methods,
-    curvature_corrects,
-    amplitude_corrects,
-    paramater_sets=fill_params,
-    project_id,
-    )
-
-    # this is a sanity check to make sure that the "best" estimate exists
-    # compute binary indecies into best estimate
-    param_valid_best = (df.surface_mask .== surface_mask_best) .&
-                       (df.binning_method .== binning_method_best) .&
-                       (df.dem .== dem_best) .&
-                       (df.curvature_correct .== curvature_correct_best) .&
-                       (df.amplitude_correct .== amplitude_correct_best) .&
-                       (df.fill_param .== fill_param_best) .&
-                       (df.binned_folder .== binned_folder_best)
-
-    if !any(param_valid_best)
-        error("no `best` estimate found for any rgi, any mission or any variable, are you sure that the `best` estimate that you provided exists? Maybe you have an incorrectly spelled parameter.")
-    end
-
-    # load all regional gemb data
-    df_gemb = Altim.gemb2dataframe(; path2file=path2gemb)
-    
-    # densify between gemb classes
-    df_gemb = Altim.gemb_classes_densify!(df_gemb; n_densify=4)
-
-    # exclude some pscale values... this is done as an increase in melt can be offset by an 
-    # equal increase in prcipitation, creating non-unique solutions that can lead to large 
-    # scalings in both precipitation on melt. 
-    if .!isnothing(pscale_range)
-        index = (df_gemb.pscale .>= minimum(pscale_range)) .& (df_gemb.pscale .<= maximum(pscale_range))
-        df_gemb = df_gemb[index, :]
-    end
-
-    # load all regional gemb data
-    df_gemb = Altim.gemb2dataframe(; path2file=path2gemb)
-
-    # add fac + smb - dischage to get gemb elevation change
-    df_gemb = Altim.gem_Δvolume!(df_gemb)
-
-    # df_gemb and df have may have different date ranges... therefore they need some special attention to append. 
-    df = Altim.dvdm_append(df, df_gemb)
-
-    missions = unique(df.mission)
-    dates = DataFrames.metadata(df, "date")
-    decyear = Altim.decimalyear.(dates)
-    dems = unique(df.dem)
-
-    rgis = unique(df.rgi)
-    n = nrow(df)
-
-    # compute data density
-    df[!, "nobs_km2"] .= 0.0
-    for r in eachrow(df)
-        hasobs = r.nobs .> 0
-        r.nobs_km2 = mean(r.nobs[hasobs] ./ r.area_km2)
-    end
-    df[isnan.(df.nobs_km2), "nobs_km2"] .= 0.0
-
-    # create an rgi surface_mask area data frame
-    # round area to the nearest 1/100 km2 to avoid issues with numeric precision
-    df.area_km2 = round.(df.area_km2, digits = 2)
-    x = df[((df.mission.=="icesat").&(df.surface_mask.==surface_mask_best)), :]
-    idx = unique(z -> x.area_km2[z], 1:length(x.area_km2))
-    df_area = DataFrame(rgi=x[idx, :rgi], area_km2=x[idx, :area_km2])
-
-    # find index where each mission has valid data... choose rgi2 since all missions are valid there
-    mission_ts_valid = Dict()
-    for mission in missions
-        valid = .!isnan.(df.val[findfirst((df.mission .== mission) .& (df.rgi .== "rgi2"))])
-        mission_ts_valid[mission] = valid
-    end
-
-    # exclude data that does not meet nobs per area criteria [check across rgi and mission]
-    nobs_km2_threshold = 0.01
-
-    for rgi in rgis
-        #rgi = "rgi1"
-        rgi_index = (df.rgi .== rgi)
-
-        for mission in missions_to_filter_on_nobs_km2
-            index = rgi_index .& (df.mission .== mission)
-            if mean(df.nobs_km2[index]) < nobs_km2_threshold
-                for r in eachrow(@view df[index, :])
-                    for col in ["val"]
-                        r[col] .= NaN
-                    end
-                    
-                    r["nobs"] .= 0.0
-                end
-            end
-        end
-    end
-
-    # print excluded regions
-    printstyled("--------------------------------------------------------------------------------------------\n"; color=:blue)
-    printstyled("                REGIONS WITH POOR MISSION COVERAGE EXCLUDED FROM ANALYSIS\n"; color=:blue)
-    printstyled("--------------------------------------------------------------------------------------------\n"; color=:blue)
-
-    for mission in missions
-        b = falses(size(rgis))
-        for (i, rgi) in enumerate(rgis)
-            rgi_index = (df.rgi .== rgi)
-
-            if mean(df.nobs_km2[(df.mission.==mission).&rgi_index]) >= nobs_km2_threshold
-                b[i] = true
-            end
-        end
-
-        if !any(.!b)
-            printstyled("   $(mission): "; color=:blue)
-            printstyled("None\n"; color=:green)
-        else
-            printstyled("   $(mission): "; color=:blue)
-            printstyled("$(rgis[.!b])\n"; color=:red)
-        end
-    end
-
-    printstyled("--------------------------------------------------------------------------------------------\n\n"; color=:blue)
-
-    # [1] Set the mean over the icesat2 period to zero by removing the mean offset to the 
-    # reference surface and remove that same offset from icesat.
-    # [2] Align GEDI and ASTER to the median icesat + icesat2 offset
-    mission_ref1 = "icesat2"
-    mission_ref2 = "icesat"
-    mission_index = Dict()
-
-    mission_df = Dict()
-    for mission in missions
-        mission_index[mission] = df.mission .== mission
-        mission_df[mission] = @view df[mission_index[mission], :]
-    end
-
-    n = nrow(mission_df[mission_ref1])
-    
-    #=
-    for rref1 in eachrow(mission_df[mission_ref1])
-        #rref1 = first(eachrow(mission_df[mission_ref1]))
-
-        # find matching icesat2 row
-        match_index = Dict()
-        for mission in setdiff(missions, [mission_ref1])
-            match_index[mission] = trues(n)
-            for col in ["var", "rgi", "surface_mask", "dem", "curvature_correct", "binning_method", "project_id", "amplitude_correct", "fill_param", "binned_folder"]
-                match_index[mission] = match_index[mission] .& (rref1[col] .== mission_df[mission_ref2][:, col])
-            end
-
-            if sum(match_index[mission]) !== 1
-                error("non unique match: $mission")
-            end
-
-            match_index[mission] = findfirst(match_index[mission])
-        end
-
-        rref2 = @view mission_df[mission_ref2][match_index[mission_ref2], :]
-
-        # [1] Set the mean over the icesat2 period to zero by removing the mean offset to the 
-        # reference surface and remove that same offset from icesat.
-        for col in ["val"]
-            offset = Altim.nanmean(rref1[col])
-
-            # remove offset from ICESat2
-            rref1[col] = rref1[col] .- offset
-
-            #remove same offset from ICESat
-            rref2[col] = rref2[col] .- offset
-        end
-
-        # [2] Align other missions to median icesat + icesat2 offset        
-        for mission in setdiff(missions, [mission_ref2, mission_ref1])
-            dfX = @view mission_df[mission][match_index[mission], :]
-
-            for col in ["val"]
-                offset = Altim.nanmedian(hcat(dfX[col] .- rref1[col], dfX[col] .- rref2[col]))
-                dfX[col] = dfX[col] .- offset
-            end
-        end
-    end
-    =#
-
-    # align firn variables to a common time stamp [alignment to icesat and icesat2 is only done for the common variable "dv_km3"]
-    # set mean over the icesat and icesat2 period to zero
-    vars = unique(df[df.mission.==mission_firn, :var])
-
-    for r in eachrow(mission_df[mission_firn])
-
-        if !any(vars .== r.var)
-            continue
-        end
-
-        valid = (mission_ts_valid[mission_ref1] .| mission_ts_valid[mission_ref2])
-        r.val = r.val .- mean(r.val[valid])
-    end
-
-    # replace poor observational records with model fit to better observations
-    fit_missions = ["icesat", "icesat2", "gedi"]
-    n = nrow(mission_df["hugonnet"])
-
-    if .!isnothing(regions_to_overwrite_hugonnet_data_with_model_fit)
-        for rgi in regions_to_overwrite_hugonnet_data_with_model_fit
-            #rgi = first(regions_to_overwrite_hugonnet_data_with_model_fit)
-
-            for (k, r) in enumerate(eachrow(mission_df["hugonnet"]))
-                #k = 1; r = first(eachrow(mission_df["hugonnet"]))
-                if r.rgi !== rgi
-                    continue
-                end
-
-                match_index = Dict()
-                for mission in fit_missions
-                    match_index[mission] = trues(n)
-                    for col in ["rgi", "surface_mask", "dem", "curvature_correct", "binning_method", "project_id", "amplitude_correct", "fill_param", "binned_folder"]
-                        match_index[mission] = match_index[mission] .& (mission_df[mission][:, col] .== r[col])
-                    end
-                end
-
-                for col = ["val"]
-
-                    y = fill(NaN, (length(r[col]), length(fit_missions)))
-                    for (i, mission) in enumerate(fit_missions)
-                        y[:, i] = mission_df[mission][match_index[mission], col][1]
-                    end
-
-                    y = [Altim.nanmean(foo) for foo in eachrow(y)]
-
-                    notnan = .!isnan.(y)
-                    x = decyear .- mean(decyear)
-                    foo_fit = Altim.curve_fit(Altim.model3, x[notnan], y[notnan], Altim.p3)
-
-                    notnan = mission_ts_valid["hugonnet"]
-                    y .= NaN
-
-                    y[notnan] = Altim.model3(x[notnan], foo_fit.param)
-
-                    mission_df["hugonnet"][k, col] = y
-                end
-            end
-        end
-    end
-
-    # individual HMA regions (rgi13, rgi14, rgi15) do not provide good callibration to smb...
-    # to help with this combine hma region before fac callibration ... other regions after
-    set2nan = ["nobs_km2"] # need"Δheight", "pscale" to combine gemb variables
-
-    df = Altim.region_combine!(df; region_col, region_combines=region_combines_before_fac, combine_vars, set2nan)
-
-    # recompute mission index
-    missions = unique(df.mission)
-    mission_index = Dict()
-    mission_df = Dict()
-    for mission in missions
-        mission_index[mission] = df.mission .== mission
-        mission_df[mission] = @view df[mission_index[mission], :]
-    end
-
-    # calibrate firn model
-    mission_df["gemb_calibrate"] = DataFrame()
-    mission_df["dm_gt"] = DataFrame()
-
-    match_parameters = ["rgi", "surface_mask", "dem", "curvature_correct", "binning_method", "project_id", "amplitude_correct", "fill_param", "binned_folder"]
-
-    rgis = unique(df.rgi)
-    vars = unique(mission_df[mission_firn].var)
-    n = nrow(mission_df["icesat2"])
-    # iterate through unique model runs (multiple missions)
-
-    df_tmp_plot = DataFrame()
-    for r in eachrow(mission_df["icesat2"])
-        #r = eachrow(mission_df["icesat2"])[mission_df["icesat2"].rgi .== "rgi2"][10]
-
-        gemb_dv_km3 = mission_df[mission_firn][(mission_df[mission_firn].var.=="dv_km3").&(mission_df[mission_firn].rgi.==r.rgi), :]
-
-        # find matching icesat2 row
-        dv = r.val
-        match_index = Dict()
-        for mission in setdiff(missions, [mission_firn])
-            #mission = first(setdiff(missions, [mission_firn]))
-
-            match_index[mission] = trues(n)
-            for col in match_parameters
-                match_index[mission] = match_index[mission] .& (r[col] .== mission_df["icesat"][:, col])
-            end
-
-            if sum(match_index[mission]) !== 1
-                error("non unique match: $mission")
-            end
-
-            match_index[mission] = findfirst(match_index[mission])
-            dv = Altim.nanmean.(eachrow(hcat(dv, mission_df[mission].val[match_index[mission]])))
-
-        end
-
-        se = fill(Inf, nrow(gemb_dv_km3))
-        notnan = (.!isnan.(dv)) .& (.!isnan.(gemb_dv_km3.val[1]))
-        dv = dv .- mean(dv[notnan])
-
-        for (i, r0) in enumerate(eachrow(gemb_dv_km3))
-            #(i, r)  = first(enumerate(eachrow(gemb_dv_km3)))
-            gemb_dv0 = (r0.val .- mean(r0.val[notnan]))
-            se[i] = std(dv[notnan] .- gemb_dv0[notnan])
-        end
-
-        # record best precipitation and delta elevation
-        index = findfirst(se .== minimum(se))
-
-
-        df_tmp_plot = append!(df_tmp_plot, DataFrame(rgi=r.rgi, dv=[dv], gemb=[gemb_dv_km3.val[index]], Δheight=gemb_dv_km3[index, :Δheight][1], pscale=gemb_dv_km3[index, :pscale][1]))
-
-
-        for mission in setdiff(missions, [mission_firn])
-            mission_df[mission][match_index[mission], :Δheight] = gemb_dv_km3[index, :Δheight]
-            mission_df[mission][match_index[mission], :pscale] = gemb_dv_km3[index, :pscale]
-        end
-
-        for mission in setdiff(missions, [mission_firn])
-            #mission = first(setdiff(missions, [mission_firn]))
-
-            foo = DataFrame(mission_df[mission][match_index[mission], :]) #wrapped in DataFrame() to copy row
-            fac = mission_df[mission_firn][(mission_df[mission_firn].var.=="fac_km3").&(mission_df[mission_firn].rgi.==r.rgi), :][index, :]
-            foo.val[1] = foo.val[1] .- fac.val
-            foo.var[1] = "dm_gt"
-            mission_df["dm_gt"] = append!(mission_df["dm_gt"], DataFrame(foo))
-        end
-
-        # add metadata from altim runs to best fit gemb
-
-        # append other variables 
-        for var0 in vars
-            #var0 = first(vars)
-
-            foo = DataFrame(mission_df[mission_firn][(mission_df[mission_firn].var.==var0).&(mission_df[mission_firn].rgi.==r.rgi), :][index, :])
-            for col in names(foo)
-                #col = "dem"
-
-                if (ismissing(foo[1, col]) .| (col == "surface_mask")) #surface_mask need to be overwritten to make smb unique
-                    foo[1, col] = r[col]
-                end
-            end
-            mission_df["gemb_calibrate"] = append!(mission_df["gemb_calibrate"], foo)
-        end
-    end
-
-    # check that everthing is working as expected
-    if false
-        for rgi in rgis
-            index = df_tmp_plot.rgi .== rgi
-            foo = df_tmp_plot[index, :]
-            for r = eachrow(foo)
-                tmp = mission_df[mission_firn][(mission_df[mission_firn].rgi.==rgi).&(mission_df[mission_firn].var.=="dv_km3"), :]
-                title = "$rgi: Δheight: $(r.Δheight), pscale: $(r.pscale)"
-
-                p = plot(decyear, tmp.val; size=(1600, 800), legend=false, title)
-                plot!(decyear, r.gemb, linewidth=3, color=:black)
-                plot!(decyear, r.dv .- Altim.nanmean(r.dv .- r.gemb), linewidth=3, color=:red)
-
-                display(p)
-            end
-        end
-    end
-
-    # only keep best fac estimate for each altim model run (same for each sensor)
-    missions = setdiff(keys(mission_df), [mission_firn])
-    df0 = DataFrame()
-    for mission in missions
-        df0 = append!(df0, copy(mission_df[mission]))
-    end
-
-    df = df0
-    set2nan = ["Δheight", "pscale", "nobs_km2"] # "Δheight", "pscale" must be excluded after best gemb simulations selected
-    df = Altim.region_combine!(df; region_col, region_combines=region_combines_after_fac, combine_vars, set2nan)
-
-    # after combining regions, a number of helper variables need to be recomputed
-    begin
-        # recompute mission index
-        missions = unique(df.mission)
-        mission_index = Dict()
-        mission_df = Dict()
-        for mission in missions
-            mission_index[mission] = df.mission .== mission
-            mission_df[mission] = @view df[mission_index[mission], :]
-        end
-
-        # compute binary indecies into best estimate
-        param_valid_best = (df.surface_mask .== surface_mask_best) .&
-                            (df.binning_method .== binning_method_best) .&
-                            (df.dem .== dem_best) .&
-                            (df.curvature_correct .== curvature_correct_best) .&
-                            (df.amplitude_correct .== amplitude_correct_best) .&
-                            (df.fill_param .== fill_param_best) .&
-                            (df.binned_folder .== binned_folder_best)
-
-        if !any(param_valid_best)
-            error("no `best` estimate found for any rgi, any mission or any variable, are you sure that the `best` estimate that you provided exists?")
-        end
-
-        # create an rgi surface_mask area data frame
-        x = df[((df.mission.=="icesat").&(df.surface_mask.==surface_mask_best)), :]
-        idx = unique(z -> x.area_km2[z], 1:length(x.area_km2))
-        df_area = DataFrame(rgi=x[idx, :rgi], area_km2=x[idx, :area_km2])
-
-        # compute data density
-        df[!, "nobs_km2"] .= 0.0
-        for r in eachrow(df)
-            hasobs = r.nobs .> 0
-            r.nobs_km2 = mean(r.nobs[hasobs] ./ r.area_km2)
-        end
-
-        df[isnan.(df.nobs_km2), "nobs_km2"] .= 0.0
-    end
-
-    # compute central estimate and lower and upper bounds for each mission
-    vars = unique(df.var)
-    rgis = unique(df.rgi)
-    quantiles = [0.95]
-
-    df_mission = DataFrame()
-    DataFrames.metadata!(df_mission, "date", collect(dates); style=:note)
-
-    for rgi in rgis
-    #rgi = "rgi1"
-
-        for mission in missions
-            #mission = "hugonnet"
-            for var0 in vars
-                #var0 = "dm_gt"
-
-                df1 = DataFrame()
-                DataFrames.metadata!(df1, "date", collect(dates); style=:note)
-
-                valid = findall((df.rgi .== rgi) .& (mission_index[mission]) .& (df.var .== var0))
-                valid_best = (df.rgi .== rgi) .& mission_index[mission] .& param_valid_best .& (df.var .== var0)
-
-                if sum(valid_best) == 0
-                    continue
-                elseif sum(valid_best) != 1
-                    error("non unique best estimate")
-                end
-
-                valid_best = findfirst(valid_best)
-
-                # central estimate is user selected best estimate
-                df1[!, :mid] = [df[valid_best, :val]] # this selects the best estimate as the median
-
-                # all estimates
-                f = reduce(hcat, df[valid, :val])
-                f[f.==0] .= NaN
-
-                # remove central estimate to get anomaly
-                f = f .- repeat(df1[!, :mid][1], 1, size(f, 2))
-
-                # take absolute as I want a "fair" symmetric error
-                f = abs.(f)
-
-                q = reduce(hcat, Altim.nanquantile.(eachrow(f), Ref(quantiles)))
-                sigma = q[1, :]
-
-                # make error symetric
-                df1[!, :low] = [df1[!, :mid][1] .- sigma]
-                df1[!, :high] = [df1[!, :mid][1] .+ sigma]
-
-                df1[!, "nobs"] .= [df[valid_best, "nobs"]]
-                df1[!, "mission"] .= mission
-                df1[!, "rgi"] .= rgi
-                df1[!, "var"] .= var0
-                df1[!, "area_km2"] .= df_area[df_area.rgi.==rgi, :area_km2]
-                append!(df_mission, df1)
-            end
-        end 
-    end
-
-    ## synthesize observations (error weighted average)
-    df_synth = DataFrame()
-    DataFrames.metadata!(df_synth, "date", collect(dates); style=:note)
-    missions_synthesize = setdiff(unique(df_mission.mission), [mission_firn])
-    vars_synthesize = ["dv_km3", "dm_gt"]
-
-    for var0 in vars_synthesize
-    #var0 = "dm_gt"
-
-        var_index = (df_mission.var .== var0)
-
-        for rgi in rgis
-            #rgi = "rgi19"
-
-            rgi_index = (df_mission.rgi .== rgi)
-
-            foo_sum = zeros(size(decyear))
-            foo_weight = zeros(size(decyear))
-            foo_err = zeros(size(decyear))
-            foo_n = zeros(size(decyear))
-
-            for mission in missions_synthesize
-                mission_index0 = (df_mission.mission .== mission)
-
-                index = var_index .& rgi_index .& mission_index0
-
-                if !any(index)
-                    continue
-                end
-
-                low = replace(df_mission[index, "low"][1], NaN => 0)
-                mid = replace(df_mission[index, "mid"][1], NaN => 0)
-                high = replace(df_mission[index, "high"][1], NaN => 0)
-
-                err = (high .- low) ./ 4
-                foo_err[err.>0] .+= err[err.>0] .^ 2
-                foo_n[err.>0] .+= 1
-
-                w = replace(1 ./ (err) .^ 2, Inf => 0)
-                foo_sum .+= (mid .* w)
-                foo_weight .+= w
-            end
-
-            mid = foo_sum ./ foo_weight
-            error0 = sqrt.(foo_err) ./ foo_n .* 2
-
-            low = mid .- error0
-            high = mid .+ error0
-
-            index = var_index .& rgi_index
-            nobs0 = vec(sum(hcat(df_mission[index, "nobs"]...), dims=2))
-
-            foo = DataFrame(df_mission[findfirst(index), :]) # copy a row
-
-            foo.low[1] = low
-            foo.high[1] = high
-            foo.mid[1] = mid
-            foo.nobs[1] = nobs0
-            foo.mission[1] = "synthesis"
-            foo[!, :area_km2] .= df_area[df_area.rgi.==rgi, :area_km2]
-
-            append!(df_synth, foo)
-        end
-    end
-
-    # combine mission and synthesis results
-    df_dmass = vcat(df_mission, df_synth)
-    DataFrames.metadata!(df_dmass, "date", collect(dates); style=:note)
-
-    # add units as column and remove from var name
-    df_dmass[!, "unit"] .= ""
-    for (i, r) in enumerate(eachrow(df_dmass))
-        if split(r.var, "_")[2] == "gt"
-            df_dmass[i, "unit"] = "Gt"
-        elseif split(r.var, "_")[2] == "km3"
-            df_dmass[i, "unit"] = "km⁻³"
-        end
-
-        df_dmass[i, "var"] = split(r.var, "_")[1]
-    end
-
-    # align gemb records: subtract the median offset to synthesis over the icesat and icesat-2 period
-    valid = (mission_ts_valid[mission_ref1] .| mission_ts_valid[mission_ref2])
-    for r in eachrow(df_dmass)
-
-        if r.mission != mission_firn
-            continue
-        end
-
-        if r.unit == "km⁻³"
-            var0 = "dv"
-        elseif r.unit == "Gt"
-            var0 = "dm"
-        end
-
-        index_ref = (df_dmass.mission .== "synthesis") .& (df_dmass.var .== var0) .& (df_dmass.rgi .== r.rgi)
-        
-        ref0 = df_dmass[index_ref, :mid][1]
-
-        index = .!isnan.(ref0) .& .!isnan.(r.mid) .& valid
-        offset = median((r.mid[index] .- ref0[index]))
-        r.mid = r.mid .- offset
-        r.low = r.low .- offset
-        r.high = r.high .- offset
-    end
-
-    return df_dmass
-end
-
-# add grace results to dataframe
-function geotile_dvdm_addgrace!(df_dmass)
-
-    grace = Altim.read_grace_rgi(; datadir=setpaths()[:grace_rgi])
-    rgis = reduce(vcat, (["rgi$i" for i in 1:19], ["HMA"]))
-    var0 = "dm"
-    mission = "grace"
-    unit = "Gt"
-    mask_icesheets = true
-
-    dates = DataFrames.metadata(df_dmass, "date")
-    decyear = Altim.decimalyear.(dates)
-
-    missions = unique(df_dmass[df_dmass.var.=="dm", :mission])
-    # find index where each mission has valid data... choose rgi2 since all missions are valid there
-    mission_ts_valid = Dict()
-    for mission in missions
-        valid = .!isnan.(df_dmass.mid[findfirst((df_dmass.mission .== mission) .& (df_dmass.var .== "dm") .& (df_dmass.rgi .== "rgi2"))])
-        mission_ts_valid[mission] = valid
-    end
-
-    x = df_dmass[(df_dmass.mission.=="icesat2"), :]
-    idx = unique(z -> x.area_km2[z], 1:length(x.area_km2))
-    df_area = DataFrame(rgi=x[idx, :rgi], area_km2=x[idx, :area_km2])
-
-    # find valid range for ALL grace data (needed when substituting in missing reigons with Synthesis data)
-    datenum = grace[first(keys(grace))]["dM_gt_mdl_fill_date"]
-    decyear0 = vec(Altim.decimalyear.(Altim.datenum2date.(datenum)))
-
-    dm_gt = vec(grace[first(keys(grace))]["dM_gt_mdl_fill"])
-    dm_sigma = vec(grace[first(keys(grace))]["dM_sigma_gt_mdl_fill"])
-    notnan = .!isnan.(dm_gt)
-
-    # introplate to df time
-    valid = (decyear .<= maximum(decyear0[notnan])) .& (decyear .>= minimum(decyear0[notnan]))
-
-    for rgi in rgis
-       
-
-        if any(keys(grace) .== rgi)
-            
-            dm_gt = vec(grace[rgi]["dM_gt_mdl_fill"])
-            dm_sigma = vec(grace[rgi]["dM_sigma_gt_mdl_fill"])
-            
-            mid = fill(NaN, length(valid))
-            low = fill(NaN, length(valid))
-            high = fill(NaN, length(valid))
-
-            # quadratic spline results in some high osilations in some regions (e.g. Svalbard)
-            #interp = QuadraticSpline(dm_gt[notnan], decyear0[notnan])
-            interp = DataInterpolations.LinearInterpolation(dm_gt[notnan], decyear0[notnan])
-            mid[valid] = interp(decyear[valid])
-
-            interp = QuadraticSpline(dm_sigma[notnan], decyear0[notnan])
-            dm_sigma = interp(decyear[valid])
-
-            low[valid] = mid[valid] .- dm_sigma
-            high[valid] = mid[valid] .+ dm_sigma
-
-            # check that interpoalted results are consistent with orginal data
-            if false
-                p = lines(decyear0, dm_gt)
-                lines!(decyear, mid)
-            end
-
-            if rgi == "HMA"
-                rgi = "hma"
-            end
-        else
-            if rgi == "HMA"
-                rgi = "hma"
-            end
-
-            printstyled("--------------------------------------------------------------------------------------------\n"; color=:blue)
-            printstyled(" no GRACE solution found for $(rgi): substituting in synthesis record \n"; color=:red)
-            printstyled("--------------------------------------------------------------------------------------------\n"; color=:blue)
-
-
-            index = (df_dmass.var .== "dm") .& (df_dmass.mission .== "synthesis") .& (df_dmass.rgi .== rgi)
-
-            # if region does not exist, substitute with synthesis data
-            mid = fill(NaN, length(valid))
-            low = fill(NaN, length(valid))
-            high = fill(NaN, length(valid))
-
-            mid[valid] = df_dmass.mid[index][1][valid]
-            low[valid] = df_dmass.low[index][1][valid]
-            high[valid] = df_dmass.high[index][1][valid]
-
-            # extend record for missing years
-            ind1 = findfirst(isnan.(mid[valid])) + findfirst(valid) -1
-            ind2 = findlast(valid)
-            if ind1 < ind2
-                mid[ind1:ind2] .= mid[ind1-1]
-                low[ind1:ind2] .= low[ind1-1]
-                high[ind1:ind2] .= high[ind1-1]
-            end
-        end
-
-        index = (df_dmass.var .== "dm") .& (df_dmass.mission .== "synthesis") .& (df_dmass.rgi .== rgi)
-
-        # align records: subtract the median offset to synthesis over the icesat and icesat-2 period 
-        valid_ref = (mission_ts_valid["icesat"] .| mission_ts_valid["icesat2"]) .& .!isnan.(mid)
-        mid_synth = df_dmass.mid[index][1]
-        offset = Altim.nanmean(mid[valid_ref] .- mid_synth[valid_ref])
-
-        area_km2 = df_area[df_area.rgi.==rgi, :area_km2]
-        nobs0 = ones(length(decyear))
-
-        # mask out greenland and antarctic 
-        if mask_icesheets && ((rgi == "rgi5") || (rgi == "rgi19"))
-            mid .= NaN
-            low .= NaN
-            high .= NaN
-            nobs0 .= 0.0
-        end
-
-        mid = [mid .- offset]
-        low = [low .- offset]
-        high = [high .- offset]
-        nobs0 = [nobs0]
-
-        append!(df_dmass, DataFrame(; var=var0, rgi, mission, area_km2, mid, low, high, nobs=nobs0, unit))
-    end
-
-    return df_dmass
-end
-
-## combine synthisized regions [can now combine regions covered by different sensors]
-function geotile_dvdm_global!(df_dmass)
-    region_col = "rgi"
-    combine_vars = ["area_km2", "mid", "nobs"]
-    rss_vars = ["low", "high"]
-    set2nan = nothing
-
-
-    # to RSS variables you need to frist subtract :mid from :low and high
-    for r in eachrow(df_dmass)
-        r.low = r.mid .- r.low
-        r.high = r.high .- r.mid
-    end
-
-    # combine synthesis data for global mass change
-    begin
-        missions = setdiff(unique(df_dmass.mission), ["grace"])
-        combined_regs = ["rgi16", "hll", "ghll"]
-        region_combines = (
-            tuple(combined_regs...) => "global",
-        )
-
-        df_dmass = Altim.region_combine!(df_dmass; region_col, region_combines, combine_vars, rss_vars, missions, set2nan)
-    end
-
-    # combine synthesis data for global mass change excluding periphery
-    begin
-        missions = setdiff(unique(df_dmass.mission), ["grace"])
-        combined_regs = ["rgi16", "hll_ep", "ghll"]
-        region_combines = (
-            tuple(combined_regs...) => "global_ep",
-        )
-
-        df_dmass = Altim.region_combine!(df_dmass; region_col, region_combines, combine_vars, rss_vars, missions, set2nan)
-    end
-
-    # combine grace data for global mass change excluding periphery
-    begin
-        missions = ["grace"]
-        rgis = reduce(vcat, (["rgi$i" for i in 1:4], ["rgi$i" for i in 6:18]))
-        region_combines = (
-            tuple(rgis...) => "global_ep",
-        )
-        df_dmass = Altim.region_combine!(df_dmass; region_col, region_combines, combine_vars, rss_vars, missions, set2nan)
-    end
-
-    # add back :mid to :low and :high
-    for r in eachrow(df_dmass)
-        r.low = r.mid .- r.low
-        r.high = r.mid .+ r.high
-    end
-
-    #Altim.nanmean(df_dmass[457, :mid] .- df_dmass[457, :low])
-    # global mean error = 180 Gt if RSS all rgi region errors together (assumes not correlation between regions)
-    # global mean error = 267 Gt if RSS all 3 mission combined region errors (assumes no correlation between mission combined regions)
-    # global mean error = 526 Gt if ADD all rgi region errors (assumes 100% correlation between regions)
-    # global mean error = 352 Gt if ADD all 3 mission combined region errors (assumes 100% correlation between mission combined regions)
-
-
-    df_dmass = Altim.remove_allnan(df_dmass, :mid)
-
-    return df_dmass
-end
-
-
-## add estimate of trend, acceleration and uncertainty
-function geotile_dvdm_add_trend!(df_dmass; iterations=1000)
-
-    dates = DataFrames.metadata(df_dmass, "date")
-    decyear = Altim.decimalyear.(dates)
-
-    vars = ["trend", "trend_err", "acceleration", "acceleration_err", "amplitude", "amplitude_err"]
-    for var0 in vars
-        df_dmass[!, var0] .= 0.0
-    end
-
-    # this takes 80s 
-    Threads.@threads for r in eachrow(df_dmass)
-
-        fit0 = Altim.iterative_model2_fit(r.mid, r.low, r.high, decyear; iterations)
-
-        r.trend = fit0.trend
-        r.trend_err = fit0.trend_err
-        r.acceleration = fit0.acceleration
-        r.acceleration_err = fit0.acceleration_err
-        r.amplitude = fit0.amplitude
-        r.amplitude_err = fit0.amplitude_err
-    end
-    return df_dmass
-end
-
-
-# convert from Gt/km3 to m.w.e/m
-function geotile_dvdm_areaaverage(df_dmass)
-
-    df_dheight = deepcopy(df_dmass)
-    for (i, r) in enumerate(eachrow(df_dheight))
-        for v in ["mid", "low", "high", "trend", "trend_err", "acceleration", "acceleration_err", "amplitude", "amplitude_err"]
-            df_dheight[i, v] = r[v] / r.area_km2 * 1000
-        end
-        df_dheight[i, "unit"] = Altim.unit2areaavg[r.unit]
-    end
-
-    return df_dheight
-
-end
-
-
-# adjust dh estimates according to anomalies measured over land and seasonality from a referecne mission. 
+"""
+    geotile_adjust!(dh, dh_land, nobs_land, dh_land_ref; kwargs...)
+
+Adjust elevation change estimates based on land anomalies and reference mission seasonality.
+
+# Arguments
+- `dh`: Elevation change DimArray to adjust
+- `dh_land`: Land elevation change DimArray for the same mission
+- `nobs_land`: Number of observations in land measurements
+- `dh_land_ref`: Reference mission land elevation change DimArray (typically icesat2)
+- `minnobs`: Minimum number of observations required for valid adjustment (default: 45)
+- `ref_minvalid`: Minimum number of valid reference points required (default: 12)
+- `ref_madnorm_max`: Maximum MAD normalization threshold for reference data (default: 10)
+
+# Returns
+- Adjusted elevation change DimArray with land anomalies and seasonality corrections applied
+
+# Description
+This function corrects elevation change estimates by removing anomalies measured over land
+and applying seasonality patterns from a reference mission. It fits a seasonal cycle to the
+reference data and applies corrections to each geotile independently.
+"""
 function geotile_adjust!(
     dh,
     dh_land,
@@ -2030,14 +1145,6 @@ function geotile_adjust!(
     ref_minvalid=12,
     ref_madnorm_max=10,
 )
-
-    #dh_land0 = FileIO.load(binned_file_land, "dh_hyps")
-    #nobs_land = FileIO.load(binned_file_land, "nobs_hyps")
-    #dh = FileIO.load(binned_file, "dh_hyps")
-    #dh = dh["hugonnet"],
-    #dh_land = dh_land0["hugonnet"],
-    #nobs_land = nobs_land["hugonnet"],
-    #dh_land_ref = dh_land0["icesat2"]
 
     dh = copy(dh)
 
@@ -2094,28 +1201,40 @@ function geotile_adjust!(
     end
 
     return dh
-
-    if false
-        # number of tiles adjusted 
-        p = Plots.histogram(Δstd; title="Δstd")
-        display(p)
-        Plots.histogram(abs.(amplitude); title="icesat2 amplitude over land")
-        display(p)
-
-        println("numer of tiles adjusted = $(sum(.!isnan.(Δstd))): $((;minnobs, minvalid))")
-        println("median Δstd = $(round(Altim.nanmedian(Δstd), digits = 2))")
-        println("median amplitude = $(round(Altim.nanmedian(amplitude), digits = 2))")
-        println("mean Δstd = $(round(Altim.nanmean(Δstd), digits = 2))")
-        println("mean amplitude = $(round(Altim.nanmean(amplitude), digits = 2))")
-        println()
-        println()
-    end
-
 end
 
 offset_trend::Function = offset_trend(t, p) = p[1] .+ p[2] .* t;
 offset_trend_p = zeros(2);
 
+"""
+    geotile_align!(
+        dh;
+        mission_ref1="icesat2",
+        mission_ref2="icesat",
+        min_trend_count=5,
+        remove_land_surface_trend=Altim.mission_land_trend(),
+        showplots=false,
+    )
+
+Aligns elevation change data from multiple missions to reference missions.
+
+# Arguments
+- `dh`: Dictionary of elevation change DimArrays by mission
+- `mission_ref1`: Primary reference mission (default: "icesat2")
+- `mission_ref2`: Secondary reference mission (default: "icesat")
+- `min_trend_count`: Minimum number of valid points required for trend fitting (default: 5)
+- `remove_land_surface_trend`: Dictionary of land surface trends by mission to remove (default: from Altim.mission_land_trend())
+- `showplots`: Whether to display diagnostic plots (default: false)
+
+# Description
+This function aligns elevation change data from multiple missions by:
+1. Setting a common reference level using the primary and secondary reference missions
+2. Removing offsets between missions
+3. Correcting for trend differences between missions
+4. Applying land surface trend corrections if specified
+
+Returns the aligned elevation change dictionary.
+"""
 function geotile_align!(
     dh;
     mission_ref1="icesat2",
@@ -2214,6 +1333,54 @@ function geotile_align!(
     return dh
 end
 
+"""
+    geotile_align_replace(;
+        mission_ref1="icesat2",
+        mission_ref2="icesat",
+        min_trend_count=5,
+        remove_land_surface_trend=Altim.mission_land_trend(),
+        project_id=:v01,
+        surface_masks=[:glacier, :glacier_rgi7, :glacier_b1km, :glacier_b10km],
+        binned_folders=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"),
+        dem_ids=[:best, :cop30_v2],
+        binning_methods=["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"],
+        curvature_corrects=[true, false],
+        paramater_sets=[1, 2],
+        amplitude_corrects=[true, false],
+        geotile_width = 2,
+        regions2replace_with_model = ["rgi19"],
+        mission_replace_with_model = "hugonnet",
+        showplots=false,
+        force_remake_before=nothing,
+    )
+
+Aligns elevation change data across missions and replaces specific regional data with model-derived values.
+
+# Arguments
+- `mission_ref1`: Primary reference mission for alignment (default: "icesat2")
+- `mission_ref2`: Secondary reference mission for alignment (default: "icesat")
+- `min_trend_count`: Minimum number of points required for trend calculation (default: 5)
+- `remove_land_surface_trend`: Land surface trends to remove from data (default: from Altim.mission_land_trend())
+- `project_id`: Project identifier (default: :v01)
+- `surface_masks`: Surface masks to process (default: [:glacier, :glacier_rgi7, :glacier_b1km, :glacier_b10km])
+- `binned_folders`: Folders containing binned data (default: ("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"))
+- `dem_ids`: Digital elevation models to use (default: [:best, :cop30_v2])
+- `binning_methods`: Statistical methods for binning data (default: ["meanmadnorm3", "meanmadnorm5", "median", "meanmadnorm10"])
+- `curvature_corrects`: Whether to apply curvature correction (default: [true, false])
+- `paramater_sets`: Parameter sets for model filling (default: [1, 2])
+- `amplitude_corrects`: Whether to apply amplitude correction (default: [true, false])
+- `geotile_width`: Width of geotiles in degrees (default: 2)
+- `regions2replace_with_model`: RGI regions to replace with model-derived data (default: ["rgi19"])
+- `mission_replace_with_model`: Mission whose data will be replaced with model (default: "hugonnet")
+- `showplots`: Whether to display plots during processing (default: false)
+- `force_remake_before`: Only remake files created before this date (default: nothing)
+
+# Description
+This function processes binned geotile data by first aligning elevation change measurements 
+across different missions using reference missions, then replacing specific regional data 
+with model-derived values. It handles trend corrections, offset adjustments, and saves the 
+aligned and replaced data to new files.
+"""
 function geotile_align_replace(;
     mission_ref1="icesat2",
     mission_ref2="icesat",
@@ -2307,6 +1474,27 @@ function geotile_align_replace(;
 end
 
 
+"""
+    replace_with_model!(dh, nobs, geotiles2replace::AbstractArray; mission_replace="hugonnet", mission_ref1="icesat2", mission_ref2="icesat")
+
+Replace elevation change data for specified geotiles with model-fitted values.
+
+# Arguments
+- `dh`: Dictionary of DimensionalArrays containing elevation change data by mission
+- `nobs`: Dictionary of DimensionalArrays containing observation counts by mission
+- `geotiles2replace`: Array of geotile IDs to replace with model-fitted values
+- `mission_replace`: Mission whose data will be replaced (default: "hugonnet")
+- `mission_ref1`: Primary reference mission for model fitting (default: "icesat2")
+- `mission_ref2`: Secondary reference mission for model fitting (default: "icesat")
+
+# Returns
+- Modified `dh` dictionary with replaced values for specified geotiles
+
+# Description
+Fits elevation change models to reference mission data and uses these models to replace
+values in the target mission for specified geotiles. Uses a combination of reference
+missions to ensure data coverage, with the primary reference taking precedence.
+"""
 function replace_with_model!(dh, nobs, geotiles2replace::AbstractArray; mission_replace="hugonnet", mission_ref1="icesat2", mission_ref2="icesat")
 
     dgeotile = dims(dh[first(keys(dh))], :geotile)
@@ -2369,19 +1557,23 @@ function replace_with_model!(dh, nobs, geotiles2replace::AbstractArray; mission_
 end
 
 
-
 """
     geotile2glacier!(glaciers, var0; varname)
 
-Convert geotile-based data to glacier-based data using area-weighted averaging.
+Transfer geotile-based data to glacier-level data using area-weighted averaging.
 
 # Arguments
-- `glaciers`: DataFrame containing glacier data with geotile and area_km2 columns
-- `var0`: DimensionalArray containing variable data by geotile
-- `varname`: Name of the new column to store results in glaciers DataFrame
+- `glaciers`: DataFrame containing glacier information with columns for geotile and area_km2
+- `var0`: DimArray containing geotile-based data with dimensions for geotile, date, and height
+- `varname`: Symbol or String specifying the column name to store results in the glaciers DataFrame
+
+# Description
+This function calculates area-weighted averages of geotile data for each glacier and stores
+the results in the glaciers DataFrame. It processes geotiles in parallel for efficiency and
+handles missing data appropriately.
 
 # Returns
-Modified glaciers DataFrame with new varname column containing area-weighted values
+- Modified `glaciers` DataFrame with added `varname` column containing time series data
 """
 function geotile2glacier!(glaciers, var0; varname)
     # Pre-allocate output arrays
@@ -2430,64 +1622,5 @@ function geotile2glacier!(glaciers, var0; varname)
         end
     end
     
-    return glaciers
-end
-
-
-
-"""
-    perglacier_geotile2glacier_OLD(geotile_perglacier; tsvars=["dh", "smb", "fac", "runoff"])
-
-Convert per-glacier-geotile data to per-glacier data by consolidating values across geotiles.
-
-# Arguments
-- `geotile_perglacier`: DataFrame containing per-glacier-geotile data with columns for RGIId and time series variables
-- `tsvars`: Vector of String column names for the time series variables to consolidate (default: ["dh", "smb", "fac", "runoff"])
-
-# Returns
-- DataFrame with one row per unique glacier (RGIId) and consolidated time series columns
-
-# Notes
-- Creates a new DataFrame with unique RGIIds from input data
-- For each time series variable:
-  - Initializes arrays of zeros with same length as input time series
-  - Copies date metadata from input
-  - For each glacier, sums valid values across all geotiles containing that glacier
-  - If only one geotile contains the glacier, uses those values directly
-  - If multiple geotiles contain valid data, sums the values
-- Uses multi-threading for performance
-"""
-function perglacier_geotile2glacier_OLD(geotile_perglacier;  tsvars = ["dh", "smb", "fac", "runoff"])
-        
-    glaciers = DataFrame(RGIId=sort!(unique(geotile_perglacier.RGIId)))
-    glaciers[!, :area_km2] = zeros(nrow(glaciers))
-    # loop for each glacier
-    for tsvar in tsvars
-        glaciers[!, tsvar] = [zeros(length(geotile_perglacier[1, tsvar])) for r in 1:nrow(glaciers)]
-        colmetadata!(glaciers, tsvar, "date", collect(dims(geotile_perglacier[1, tsvar], :date)), style=:note)
-    end
-
-    Threads.@threads :greedy for g in eachrow(glaciers)
-        #g = first(eachrow(glaciers))
-        index = g.RGIId .== geotile_perglacier.RGIId
-        if any(index)
-            for tsvar in tsvars
-                g0 = collect.(geotile_perglacier[index, tsvar])
-                area0 = sum.(geotile_perglacier[index, :area_km2])
-                
-                if length(g0) == 1
-                    g[tsvar] = g0[1]
-                    g[:area_km2] = area0[1]
-                else
-                    valid = [.!all(isnan.(g1)) for g1 in g0]
-                    if any(valid)
-                        # area weighted average
-                        g[tsvar] = sum(g0[valid] .* area0[valid]) ./ sum(area0[valid])
-                        g[:area_km2] = sum(area0[valid])
-                    end
-                end
-            end
-        end
-    end
     return glaciers
 end

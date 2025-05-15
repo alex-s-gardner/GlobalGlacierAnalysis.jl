@@ -1,3 +1,36 @@
+"""
+    plot_multiregion_dvdm(regions; kwargs...) -> Figure, Vector, Vector
+
+Create a multi-region plot of glacier mass change time series with stacked regions.
+
+This function visualizes mass change time series for multiple glacier regions, stacking them
+vertically with appropriate offsets to avoid overlap. It supports plotting multiple variables
+with error bounds and customizable styling.
+
+# Arguments
+- `regions`: Dictionary containing mass change data for different regions and variables
+
+# Keyword Arguments
+- `variables=["dm", "dm_altim"]`: Variables to plot (last variable is plotted on top)
+- `units="Gt"`: Units for mass change (e.g., "Gt", "m", "m w.e.")
+- `rgi_regions=setdiff(collect(dims(runs_rgi["dm_altim"], :rgi)), [13, 14, 15, 99])`: RGI regions to include
+- `showlines=false`: Whether to show grid lines
+- `fontsize=15`: Font size for plot text
+- `cmap=:Dark2_4`: Color map for regions
+- `region_order=nothing`: Custom ordering of regions (default: sorted by total mass change)
+- `ylims=nothing`: Custom y-axis limits
+- `title=nothing`: Plot title
+- `palette=nothing`: Custom color palette
+- `delta_offset=nothing`: Vertical offset between regions (default depends on units)
+- `all_error_bounds=false`: Whether to show error bounds for all variables
+- `daterange=DateTime(2000,1,1):Month(1):DateTime(2025,1,1)`: Date range to plot
+- `numbersinylabel=false`: Whether to include numeric values in y-axis labels
+
+# Returns
+- `f`: The Makie Figure object
+- `region_order`: Vector of region IDs in the order they were plotted
+- `ylims`: The y-axis limits used in the plot
+"""
 function plot_multiregion_dvdm(
     regions = regions;
     variables = ["dm", "dm_altim"], # last variable is plotted last
@@ -244,6 +277,20 @@ function plot_multiregion_dvdm(
 end
 
 
+"""
+    show_error_bar_table(regional_results; cols2display = 3)
+
+Display a formatted table of regional results in the console, organized in sections.
+
+Prints the regional results DataFrame in multiple sections, with each section showing a subset
+of columns. The first two columns (typically region identifiers) are always displayed, followed
+by `cols2display` data columns in each section. Section headers are printed in yellow and
+contain the name of the first column in that section.
+
+# Arguments
+- `regional_results`: DataFrame containing regional data to be displayed
+- `cols2display`: Number of data columns to show in each section (default: 3)
+"""
 function show_error_bar_table(regional_results; cols2display = 3)
     # dump table to console
     colnames = names(regional_results)

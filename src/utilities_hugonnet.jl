@@ -1,3 +1,22 @@
+"""
+    hstack_catalogue(hstack_parent_dir; update_catalogue = false)
+
+Create or load a geospatial catalogue of Hugonnet elevation change data stacks.
+
+# Arguments
+- `hstack_parent_dir`: Directory containing Hugonnet data stack files (.nc)
+- `update_catalogue`: Whether to force rebuilding the catalogue even if it exists (default: false)
+
+# Returns
+- DataFrame containing metadata for each stack file, including spatial extents, 
+  projection information, time ranges, and file paths
+
+# Description
+This function scans the provided directory for Hugonnet elevation change data files,
+extracts their metadata (projection, spatial extent, time range, etc.), and compiles
+it into a searchable catalogue. The catalogue is saved as an Arrow file for faster
+future access. For version 1 data, it applies a half-pixel offset correction.
+"""
 function hstack_catalogue(hstack_parent_dir; update_catalogue = false)
     outfile = joinpath(hstack_parent_dir,"hstack_catalogue.arrow")
 
@@ -82,6 +101,26 @@ function hstack_catalogue(hstack_parent_dir; update_catalogue = false)
     return hstacks
 end
 
+"""
+    hstacks2geotile(geotile, hstacks; old_format=false)
+
+Extract Hugonnet elevation change data for a specific geotile from a collection of data stacks.
+
+# Arguments
+- `geotile`: The geotile object containing spatial extent information
+- `hstacks`: DataFrame of Hugonnet data stacks with metadata
+- `old_format`: Whether to use the old data format (pre-v1) (default: false)
+
+# Returns
+- DataFrame containing extracted elevation data points within the geotile, with columns for
+  latitude, longitude, datetime, height, quality, height_error, id, and height_reference
+
+# Description
+This function identifies which Hugonnet data stacks intersect with the provided geotile,
+extracts the relevant data points, and transforms them into a standardized DataFrame format.
+The function handles coordinate transformations, filters points to those within the geotile
+boundary, and restructures the data from a row-of-vectors format to a standard tabular format.
+"""
 function hstacks2geotile(geotile, hstacks; old_format=false)
     # find intersecting tiles
     stacksind = findall(Extents.intersects.(hstacks.GeoExtent, Ref(geotile.extent)))
@@ -180,6 +219,22 @@ function hstacks2geotile(geotile, hstacks; old_format=false)
 end
 
 
+"""
+    geotile_build_hugonnet(geotile, geotile_dir, hstacks; force_remake=false, old_format=false)
+
+Process and save Hugonnet elevation data for a specific geotile.
+
+# Arguments
+- `geotile`: Geotile information containing ID and boundaries
+- `geotile_dir`: Directory where the processed geotile data will be saved
+- `hstacks`: Hugonnet data stacks to process
+- `force_remake`: Whether to recreate the file even if it already exists (default: false)
+- `old_format`: Whether to use the old data format (default: false)
+
+# Description
+Converts Hugonnet elevation data stacks to geotile format and saves as an Arrow file.
+The function tracks processing time and reports completion statistics.
+"""
 function geotile_build_hugonnet(geotile, geotile_dir, hstacks; force_remake=false, old_format=false)
 
     t1 = time()

@@ -1,30 +1,21 @@
 """
+    cop30_vrt_build.jl
+
 Build virtual raster (VRT) files for Copernicus DEM 30m data.
 
-This script creates VRT files that combine multiple Copernicus DEM tiles into single virtual datasets.
-It processes all available DEM files and their associated mask files.
+This script creates consolidated VRT files for each type of Copernicus DEM 30m data product.
+It recursively searches through the specified directory for all TIF files and groups them
+by suffix (DEM, WBM, EDM, FLM, HEM) to create a single VRT file for each product type.
 
-The script:
-1. Recursively finds all Copernicus DEM tiles in the input folder
-2. Groups files by type (DEM, water mask, error mask etc)
-3. Creates a VRT file for each data type that virtually merges all tiles
+The Copernicus DEM uses WGS84-G1150 (EPSG:4326) horizontal coordinate system and 
+EGM2008 (EPSG:3855) vertical datum.
 
-Input data:
-- Copernicus DEM 30m tiles (2021 AWS release or 2019 release)
-- Files include DEM and various mask layers (.tif format)
-
-Output:
-- One VRT file per data type in the input folder:
-  - DEM.vrt: Digital elevation model
-  - WBM.vrt: Water body mask  
-  - EDM.vrt: Editing mask
-  - FLM.vrt: Filling mask
-  - HEM.vrt: Height error mask
-
-Notes:
-- Uses GDAL's buildvrt functionality through ArchGDAL.jl
-- Input data is in WGS84 (EPSG:4326) horizontal and EGM2008 (EPSG:3855) vertical datums
-- Processing large numbers of files can be time intensive
+Available product types:
+- DEM.tif: Digital Elevation Model
+- WBM.tif: Water Body Mask (8-bit unsigned integer)
+- EDM.tif: Editing Mask (8-bit unsigned integer)
+- FLM.tif: Filling Mask (8-bit unsigned integer)
+- HEM.tif: Height Error Mask (32-bit floating point)
 """
 
 using ArchGDAL, Altim

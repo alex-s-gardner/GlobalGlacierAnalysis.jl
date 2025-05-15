@@ -1,4 +1,25 @@
-# output plots and gis files for reference synthesis run
+"""
+    synthesis_plots_gis.jl
+
+Generate plots and GIS files from glacier mass change synthesis data.
+
+This script processes the reference synthesis run to extract trends and amplitudes
+of glacier elevation and volume changes. It creates visualization outputs and
+exports the data to GIS formats for further analysis.
+
+The workflow:
+1. Loads the reference synthesis run data
+2. Calculates temporal trends for all variables
+3. Exports results to Arrow and GeoPackage formats
+4. Creates histograms comparing GEMB and altimetry-derived trends and amplitudes
+5. Visualizes parameter distributions (pscale and Δheight)
+
+Key outputs:
+- GIS files with geotile-level rates in km³/yr
+- Histograms comparing different measurement approaches
+- Visualizations of model parameter distributions
+"""
+
 begin
     using Altim
     using FileIO

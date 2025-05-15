@@ -1,48 +1,27 @@
-## MODIFY LOCAL PATHS FOR EACH MACHINE
-# TODO:  maybe use "Preferences.jl" @set_preferences!(pref_name => key) and @load_preference(pref_name) macros in future
-
 """
     setpaths()
 
-Returns local paths
-"""
+Returns a named tuple containing local file paths for data, DEMs, masks, and other resources
+based on the current machine's hostname. Currently configured for JPL servers (bylot, devon, baffin).
 
+The paths include:
+- Data directories for altimetry and project data
+- Figure output directories
+- Global DEM VRTs (Copernicus, NASADEM, ArcticDEM, REMA)
+- Vector files (glacier outlines, ice masks, etc.)
+- Validation datasets (GRACE, glacier mass balance studies)
+- River network data
+
+Throws an error if run on an unrecognized machine.
+"""
 function setpaths() 
     hostname = gethostname()
-    if hostname == "MT-502549"
-
-        data_dir = "$(userdir)/data/"
-        pathlocal = (
-
-            # all altimetry and geotile data will be stored in a stucture within data_dir
-            data_dir=data_dir,
-
-            # location of global DEM vrts
-            cop30_v1="$(data_dir)/COP-DEM_GLO-30-DGED_PUBLIC/GLO30_DGED_hgt.vrt",
-            cop30_v2="$(data_dir)/copernicus-dem-30m/DEM.vrt",
-            nasadem_v1="$(data_dir)/NASADEM/mosaic/NASADEM_hgt.vrt",
-            arcticdem_v3_10m="$(data_dir)/arcticdem/mosaics/v3.0/10m/arcticdem_v3.0_10m.vrt",
-            rema_v2_10m="$(data_dir)/rema/mosaics/v2.0/10m/rema_v2.0_10m.vrt",
-            hugonnet_v1_stacks="$(data_dir)/hugonnet/",
-            canopyheight_10m_v1="$(data_dir)/canopy_height/ETH_GlobalCanopyHeight_10m_2020_version1/ETH_GlobalCanopyHeight_10m_2020_mosaic_Map.vrt",
-            
-            # location of goid files
-            geoid_dir="$(data_dir)/geoids",
-
-            # locaiton of its_live parameter files
-            itslive_parameters="$(data_dir)/its-live-data/autorift_parameters/v001/",
-
-            # masks
-            icemask = "/Users/gardnera/data/GlacierOutlines/WorldMask_20190513/land_ice_0.0083_cog.tif"
-        )
-
-        return pathlocal
-
-    elseif (hostname == "bylot.jpl.nasa.gov") || (hostname == "devon.jpl.nasa.gov") || (hostname == "baffin.jpl.nasa.gov")
+    if (hostname == "bylot.jpl.nasa.gov") || (hostname == "devon.jpl.nasa.gov") || (hostname == "baffin.jpl.nasa.gov")
 
         pathlocal = (
             # all altimetry and geotile data will be stored in a stucture within data_dir
             data_dir = "/mnt/bylot-r3/data/",
+            project_dir = "/mnt/bylot-r3/data/project_data/",
 
             # figure output directory
             figures = "/mnt/bylot-r3/altim_figs/",

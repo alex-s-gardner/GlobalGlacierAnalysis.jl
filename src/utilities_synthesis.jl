@@ -4,35 +4,20 @@
         outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
         minimum_error=0.05,
         force_remake_before=nothing,
-        update_geotile_missions = nothing
+        update_geotile_missions=nothing
     )
 
-Calculate synthesis error metrics across multiple model runs for different satellite missions.
+Calculate standard deviation across model runs as an error metric for each satellite mission.
 
 # Arguments
 - `path2runs`: Vector of paths to input data files
-- `outfile`: Path where the error metrics will be saved (default: "/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2")
-- `minimum_error`: Minimum allowable error value (default: 0.05)
-- `force_remake_before`: Recompute synthesis error if output file exists and was created before this date (default: nothing)
-
-# Processing Steps
-1. Loads elevation change data from all input files
-2. Combines data across runs while preserving mission, geotile, date, and height dimensions
-3. Calculates standard deviation across runs for each mission
-4. Applies minimum error threshold
-
-# Outputs
-Creates a JLD2 file containing:
-- `dh_hyps_error`: Dictionary of error estimates for each mission
-- `files_included`: List of input files used in calculation
+- `outfile`: Path for saving error metrics
+- `minimum_error`: Floor value for error estimates
+- `force_remake_before`: Date threshold for forcing recalculation
+- `update_geotile_missions`: Optional list of specific missions to update
 
 # Returns
-Path to the output file
-
-# Notes
-- Uses parallel processing for file loading and geotile processing
-- NaN values are properly handled in standard deviation calculations
-- Error estimates are bounded by the minimum_error parameter
+Path to the output file containing error estimates
 """
 function geotile_synthesis_error(;
     path2runs,
@@ -135,8 +120,6 @@ function geotile_synthesis_error(;
     end
     return outfile
 end
-
-
 """
     geotile_synthesize_runs(;
         path2runs,
@@ -149,31 +132,14 @@ end
 Synthesize elevation change data from multiple satellite missions into a single dataset.
 
 # Arguments
-- `path2runs`: Vector of paths to input data files
-- `path2geotile_synthesis_error`: Path to file containing error estimates for each mission
-- `missions2include`: Vector of mission names to include in synthesis (default: ["hugonnet", "gedi", "icesat", "icesat2"])
-- `showplots`: Boolean to control plotting of intermediate results (default: false)
-- `force_remake_before`: Recompute synthesis if output file exists and was created before this date (default: nothing)
+- `path2runs`: Paths to input data files
+- `path2geotile_synthesis_error`: Path to file with mission error estimates
+- `missions2include`: Mission names to include in synthesis
+- `showplots`: Whether to generate diagnostic plots
+- `force_remake_before`: Recompute if output file exists but was created before this date
 
-# Processing Steps
-1. Loads error estimates and converts them to weights (1/error²)
-2. Applies GEDI latitude limits (±51.6°)
-3. For each input file:
-   - Loads elevation change data
-   - Computes weighted average across missions
-   - Calculates synthesis uncertainty
-   - Saves results to new file with '_synthesized' suffix
-
-# Outputs
-For each input file, creates a JLD2 file containing:
-- `dh_hyps`: Synthesized elevation change data
-- `dh_hyps_err`: Associated uncertainty estimates
-
-# Notes
-- Uses inverse variance weighting
-- Handles NaN values appropriately
-- Includes special handling for GEDI's latitude limits
-- Can optionally generate diagnostic plots
+# Returns
+Path to synthesized output file with weighted average elevation change data and uncertainty estimates
 """
 function geotile_synthesize_runs(;
     path2runs,
@@ -336,26 +302,18 @@ function geotile_zonal_area_hyps(ras, ras_range, zone_geom, geotile_ids; persist
     end
     return df
 end
-
-
-
 """
     geotile_zonal_area_hyps(x, y, bins::StepRange)
 
-Bin values into elevation bins and accumulate the values within each bin.
+Accumulate values into elevation bins.
 
 # Arguments
-- `x`: Vector of elevation values to bin
-- `y`: Vector of values to accumulate in each bin (e.g. areas)
-- `bins`: StepRange defining the bin edges
+- `x`: Elevation values
+- `y`: Values to accumulate (typically areas)
+- `bins`: Elevation bin edges
 
 # Returns
-- Vector containing accumulated values for each elevation bin
-
-# Notes
-- Values outside the bin range are excluded
-- Each value in `y` is added to its corresponding elevation bin based on `x`
-- Output length is number of bins minus 1 (n-1 bins from n edges)
+Vector of accumulated values per elevation bin
 """
 function geotile_zonal_area_hyps(x, y, bins::StepRange)
     n = length(bins) - 1
@@ -371,57 +329,35 @@ function geotile_zonal_area_hyps(x, y, bins::StepRange)
     return binned
 end
 
-
 """
     geotile_zonal_area_hyps(nt, x_bin_edges)
 
-Dispatch of `geotile_zonal_area_hyps` that accepts a NamedTuple input.
+Accumulate values into elevation bins from a NamedTuple input.
 
 # Arguments
-- `nt`: NamedTuple containing elevation values in first field and values to accumulate in second field
-- `x_bin_edges`: StepRange defining the bin edges
+- `nt`: NamedTuple with elevation values in first field and values to accumulate in second field
+- `x_bin_edges`: Elevation bin edges as a StepRange
 
 # Returns
-- Vector containing accumulated values for each elevation bin
-
-# Notes
-- Extracts values from NamedTuple fields using getindex and passes to main implementation
-- See main `geotile_zonal_area_hyps` function for full details
+Vector of accumulated values per elevation bin
 """
 function geotile_zonal_area_hyps(nt, x_bin_edges)
     binned = geotile_zonal_area_hyps(getindex.(nt, 1), getindex.(nt, 2), x_bin_edges)
     return binned
 end
-
-
 """
     geotile_grouping!(geotiles0, glaciers, min_area_km2; geotile_groups_manual=nothing)
 
-Group geotiles based on their glacier intersections and manual overrides.
+Group geotiles that share large glaciers and apply manual grouping overrides.
 
 # Arguments
-- `geotiles0`: DataFrame containing geotile information with columns for id, extent, and area
-- `glaciers`: DataFrame containing glacier information with geometry and Area columns
-- `min_area_km2`: Minimum glacier area in km² to consider for grouping
-- `geotile_groups_manual`: Optional vector of vectors containing geotile IDs to manually group together
-
-# Processing Steps
-1. Identifies glaciers larger than min_area_km2
-2. Uses spatial indexing to efficiently find glacier-geotile intersections
-3. Groups geotiles that share glaciers
-4. Applies manual grouping overrides if provided
-5. Converts geotile extents to rectangles
+- `geotiles0`: DataFrame with geotile information
+- `glaciers`: DataFrame with glacier geometries and areas
+- `min_area_km2`: Minimum glacier area threshold for grouping
+- `geotile_groups_manual`: Optional manual grouping specifications
 
 # Returns
-Modified copy of input geotiles DataFrame with:
-- Added :group column indicating connected components
-- Geometry column containing rectangular representations
-- Removed intermediate columns used in processing
-
-# Notes
-- Uses parallel processing for intersection testing
-- Handles both automated grouping based on glacier overlap and manual grouping overrides
-- Preserves original geotile IDs while adding grouping information
+Modified DataFrame with group assignments and rectangular geometries
 """
 function geotile_grouping!(geotiles0, glaciers, min_area_km2; geotile_groups_manual=nothing)
 

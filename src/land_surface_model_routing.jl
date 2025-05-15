@@ -1,11 +1,19 @@
-# Route runoff from the average of 3 Land Surface Models through river reaches.
-# 1. download GLDAS LSMs
-# 2. load basins and river reaches
-# 3. load and average runoff from all LSMs
-# 4. route runoff through river network
-# 5. subset to glacier river reaches
-# 6. save river flux 
-# 7. [optional] compare with discharge from Collins et al. 2024
+"""
+    land_surface_model_routing.jl
+
+Process and route land surface model runoff through river networks.
+
+This script:
+1. Loads GLDAS land surface model data (CLSM, VIC, NOAH)
+2. Processes surface runoff, subsurface runoff, and snowmelt
+3. Routes water through river networks using a linear reservoir model
+4. Calculates river discharge for glacier-connected river reaches
+5. Validates results against independent river discharge estimates
+6. Saves processed data as NetCDF files for downstream analysis
+
+The routing accounts for time delays in subsurface runoff using a 45-day 
+concentration time parameter following Getirana et al. (2012).
+"""
 
 begin
     using Altim
@@ -52,7 +60,7 @@ begin
     river_Q_path_ens = joinpath(paths[:data_dir], "rivers/Collins2024/Qout_pfaf_ii_GLDAS_ENS_M_1980-01_2009-12_utc/")
     river_Q_files = readdir(river_Q_path_ens; join=true)
 
-    # Total runoff is the sum of subsurface runoff “Qsb_tavg” and surface runoff “Qs_tavg”.
+    # Total runoff is the sum of subsurface runoff "Qsb_tavg" and surface runoff "Qs_tavg".
     runoff_vars = [[:Qs_acc, :Qsb_acc],  [:Qsm_acc]]
     glacier_rivers_land_flux_paths = [
         joinpath(rivers_path, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_Qs_acc_Qsb_acc.nc"), 

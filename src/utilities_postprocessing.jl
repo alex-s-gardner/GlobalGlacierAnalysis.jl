@@ -1,21 +1,16 @@
-
 """
-    discharge_rgi(path2discharge, path2rgi_regions)
+    discharge_rgi(path2discharge, path2rgi_regions; fractional_error = 0.15)
 
-Calculate glacier discharge for each RGI (Randolph Glacier Inventory) region.
+Aggregate glacier discharge data by RGI regions and calculate uncertainty.
 
 # Arguments
-- `path2discharge`: Path to the glacier discharge data file (.jld2)
-- `path2rgi_regions`: Path to the RGI regions shapefile
+- `path2discharge`: Path to file containing discharge data
+- `path2rgi_regions`: Path to file containing RGI region geometries
+- `fractional_error`: Fractional error to apply to discharge values (default: 0.15)
 
 # Returns
-- A DimensionalArray containing discharge values (in Gt/yr) for each RGI region,
-  including aggregated values for High Mountain Asia (RGI ID 98) and global (RGI ID 99)
-
-This function loads glacier discharge data, assigns each discharge point to its 
-corresponding RGI region using spatial operations, and sums the discharge values
-for each region. It also calculates aggregated values for High Mountain Asia 
-(regions 13-15) and global (regions 1-19).
+- Array with dimensions [region, error] containing discharge values and uncertainties
+  for each RGI region, including special aggregations for HMA (98) and global (99)
 """
 function discharge_rgi(path2discharge, path2rgi_regions; fractional_error = 0.15)
 
@@ -54,23 +49,20 @@ function discharge_rgi(path2discharge, path2rgi_regions; fractional_error = 0.15
     discharge_rgi[:, At(true)] = discharge_rgi[:, At(false)] * fractional_error
     return discharge_rgi
 end
-
-
-
 """
     runs2rgi(path2runs, vars2sum=["dv_altim", "runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze", "dv", "dm", "dm_altim"])
 
-Read in individual model runs, sum to regional level, and add HMA and global aggregations.
+Aggregate glacier model run data by RGI (Randolph Glacier Inventory) regions.
+
+This function loads data from multiple model runs, aggregates variables by RGI regions,
+and creates special aggregations for HMA (regions 13-15) and global (regions 1-19).
 
 # Arguments
-- `path2runs`: Array of paths to model run files (.jld2)
-- `vars2sum`: Array of variable names to sum across regions (default includes common glaciological variables)
+- `path2runs`: Vector of paths to model run files
+- `vars2sum`: List of variable names to aggregate (default includes common glacier variables)
 
 # Returns
-- Dictionary where keys are variable names and values are arrays with dimensions [run, region, date]
-
-This function processes multiple model run files, aggregates data by RGI (Randolph Glacier Inventory) 
-regions, and adds special aggregations for High Mountain Asia (RGI ID 98) and global (RGI ID 99).
+- Dictionary containing aggregated data for each variable, with dimensions [run, rgi, date]
 """
 function runs2rgi(path2runs, vars2sum=["dv_altim", "runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze", "dv", "dm", "dm_altim"])
 
@@ -121,31 +113,26 @@ function runs2rgi(path2runs, vars2sum=["dv_altim", "runoff", "fac", "smb", "rain
 
     return regional_sum
 end
-
-
-
 """
-    rgi_trends(regional_sum, discharge_rgi, daterange)
+    rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
 
-Calculate trends, accelerations, amplitudes, and phases for regional glacier mass change variables.
+Calculate trends, accelerations, amplitudes, and phases for regional glacier variables.
 
-This function fits time series models to regional glacier data and computes various parameters
-including linear trends, accelerations, seasonal amplitudes, and phases. It also calculates
-derived variables like equivalent runoff and runoff excess percentage.
+This function fits time series models to various glacier variables across different regions
+and model runs, computing key parameters that characterize their temporal evolution.
 
 # Arguments
-- `regional_sum`: Dictionary containing regional time series data for different variables
-- `discharge_rgi`: Discharge data by RGI (Randolph Glacier Inventory) region
-- `daterange`: Date range to use for trend fitting
+- `regional_sum`: Dictionary containing time series data for different glacier variables
+- `discharge_rgi`: Discharge values by RGI region, used for GSI calculations
+- `daterange`: Time period over which to calculate trends
 
 # Returns
-- A DimensionalData array with dimensions for variable names, model runs, RGI regions, and fit parameters
+- A DimensionalArray with dimensions for variable name, model run, RGI region, and parameter
   (trend, acceleration, amplitude, phase)
 
-# Notes
-- First fits a linear trend with seasonal cycle, then fits a model with acceleration included
-- Calculates equivalent runoff as accumulation minus evaporation/condensation minus discharge
-- Runoff excess percentage is calculated as ((runoff - runoff_eq) / runoff_eq) * 100
+The function handles special calculations for derived variables:
+- `net_acc`: Calculated as accumulation minus evaporation/condensation
+- `gsi`: Glacier sustainability index, calculated as (runoff + discharge) / net_acc
 """
 function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
     varnames = vcat(collect(keys(regional_sum)), ["net_acc", "gsi"])
@@ -205,8 +192,26 @@ function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
 
     return region_fit
 end
+"""
+    rgi_trends(da::AbstractDimArray, daterange)
 
+Calculate trend, acceleration, amplitude, and phase parameters for each RGI region in a time series.
 
+This function fits temporal models to glacier data for each RGI region within the specified date range.
+It performs two curve fits: first a linear trend with seasonal component, then a model with
+linear trend, acceleration, and seasonal components.
+
+# Arguments
+- `da`: A DimensionalData array with dimensions for RGI region and date
+- `daterange`: Date range to analyze (can be specified as a range of DateTime objects)
+
+# Returns
+- A DimensionalData array with dimensions for RGI region and parameter, where parameters include
+  trend, acceleration, amplitude, and phase of the fitted curves.
+
+# Note
+The function first centers the decimal years around their mean to improve numerical stability.
+"""
 function rgi_trends(da::AbstractDimArray, daterange)
 
     dparameter = Dim{:parameter}(["trend", "acceleration", "amplitude", "phase"])
@@ -235,28 +240,27 @@ function rgi_trends(da::AbstractDimArray, daterange)
     return region_fit
 end
 
-
-
 """
-    region_fit_ref_and_err(region_fit, path2reference; p = 0.95)
+    region_fit_ref_and_err(region_fit, path2reference; p = 0.95, discharge = nothing)
 
-Extract reference run values and calculate error estimates for regional fit parameters.
+Calculate reference values and error estimates for regional fit parameters.
 
-This function takes a multi-dimensional array of regional fit parameters from multiple model runs
-and extracts the values from a reference run while calculating error estimates based on the
-spread across all runs.
+This function extracts reference values from a specified path and computes error estimates
+based on the quantile of absolute differences between all values and the reference value.
 
 # Arguments
-- `region_fit`: A DimensionalData array with dimensions for variable name, model run, RGI region, and parameter.
-- `path2reference`: The identifier for the reference model run to extract values from.
-- `p`: Probability level for quantile-based error estimation (default: 0.95 for 95% confidence).
+- `region_fit`: A DimensionalData array with dimensions for variable name, path, RGI region, and parameter
+- `path2reference`: The reference path to use for extracting reference values
+- `p`: Quantile level for error estimation (default: 0.95)
+- `discharge`: Discharge values with error estimates, required when "net_acc" is present in variables
 
 # Returns
 - A DimensionalData array with dimensions for variable name, RGI region, parameter, and error,
-  where the error dimension contains the reference value (false) and the error estimate (true).
+  where the error dimension contains the reference values (false) and error estimates (true)
 
 # Note
-Error estimates are calculated as the p-th quantile of the absolute deviations from the reference value.
+When "net_acc" is present, the function also calculates error propagation for the glacier state index (gsi)
+using standard error propagation formulas.
 """
 function region_fit_ref_and_err(region_fit, path2reference; p = 0.95, discharge = nothing)
     derror = Dim{:error}([false, true])
@@ -293,10 +297,24 @@ function region_fit_ref_and_err(region_fit, path2reference; p = 0.95, discharge 
 end
 
 
+"""
+    runs_center!(runs_rgi::Dict, daterange)
+
+Center glacier model run data by subtracting the temporal mean for each variable.
+
+# Arguments
+- `runs_rgi`: Dictionary containing time series data for different glacier variables
+- `daterange`: Time period over which to calculate the mean
+
+# Returns
+- The modified `runs_rgi` dictionary with centered data
+
+This function modifies the input dictionary in-place, subtracting the temporal mean
+of each variable over the specified date range from all values of that variable.
+"""
 function runs_center!(runs_rgi::Dict, daterange)
  
     for k in keys(runs_rgi)
-    #k = "dm_altim"
         mean_rgi = dropdims(mean(runs_rgi[k][:,:,minimum(daterange)..maximum(daterange)], dims = :date), dims = :date)
         runs_rgi[k] .-= mean_rgi
     end
@@ -304,9 +322,22 @@ function runs_center!(runs_rgi::Dict, daterange)
     return runs_rgi
 end
 
-function regions_center!(runs_rgi, daterange)
+"""
+    regions_center!(runs_rgi, daterange)
 
-    #k = "dm_altim"
+Center regional glacier data by subtracting the temporal mean.
+
+# Arguments
+- `runs_rgi`: DimensionalArray containing regional glacier data
+- `daterange`: Time period over which to calculate the mean
+
+# Returns
+- The modified `runs_rgi` array with centered data
+
+This function modifies the input array in-place, subtracting the temporal mean
+over the specified date range from all values in the array.
+"""
+function regions_center!(runs_rgi, daterange)
     mean_rgi = dropdims(mean(runs_rgi[:, minimum(daterange)..maximum(daterange), At(false)], dims=:date), dims=:date)
     runs_rgi .-= mean_rgi
 
@@ -314,14 +345,43 @@ function regions_center!(runs_rgi, daterange)
 end
 
 
+"""
+    runs_delta!(runs_rgi::Dict, path2reference) -> Dict
+
+Calculate differences between each run and a reference run for all variables.
+
+# Arguments
+- `runs_rgi`: Dictionary containing time series data for different glacier variables
+- `path2reference`: Path to the reference run to subtract from all other runs
+
+# Returns
+- The modified `runs_rgi` dictionary with delta values
+
+This function modifies the input dictionary in-place, subtracting the reference run
+from all runs for each variable, creating anomalies relative to the reference.
+"""
 function runs_delta!(runs_rgi, path2reference)
     for k in keys(runs_rgi)
         runs_rgi[k] = @d runs_rgi[k] .- runs_rgi[k][At(path2reference), :, :]
     end
     return runs_rgi
 end
+"""
+    runs_quantile(runs_rgi, p; on_abs=true) -> Dict
 
+Calculate quantiles of glacier data across multiple model runs.
 
+# Arguments
+- `runs_rgi`: Dictionary containing DimensionalArrays with model run data
+- `p`: Quantile to calculate (e.g., 0.95 for 95th percentile)
+- `on_abs`: Whether to calculate quantiles on absolute values (default: true)
+
+# Returns
+- Dictionary with same keys as input, containing quantile values for each region and date
+
+This function computes quantiles across the run dimension for each variable, region, and date.
+When `on_abs=true`, quantiles are calculated on absolute values, useful for error estimation.
+"""
 function runs_quantile(runs_rgi, p; on_abs=true)
     runs_quantile = Dict()
     on_abs ? (fun=abs) : (fun = identity)
@@ -343,7 +403,21 @@ function runs_quantile(runs_rgi, p; on_abs=true)
     return runs_quantile
 end
 
+"""
+    runs_select(runs_rgi, runs2select) -> Dict
 
+Extract a subset of model runs from a dictionary of glacier data.
+
+# Arguments
+- `runs_rgi`: Dictionary containing DimensionalArrays with model run data
+- `runs2select`: Vector of run identifiers to select
+
+# Returns
+- Dictionary with same keys as input, containing only the selected runs
+
+This function creates a new dictionary with the same structure as the input,
+but including only the specified model runs.
+"""
 function runs_select(runs_rgi, runs2select)
     runs_selected = Dict()
     for k in keys(runs_rgi)
@@ -353,6 +427,23 @@ function runs_select(runs_rgi, runs2select)
 end
 
 
+"""
+    runs_ref_and_err(runs_rgi, path2reference; p = 0.95) -> Dict
+
+Create a dictionary containing reference values and error estimates for glacier model runs.
+
+# Arguments
+- `runs_rgi`: Dictionary containing DimensionalArrays with model run data
+- `path2reference`: Path identifier for the reference run
+- `p`: Quantile level for error estimation (default: 0.95)
+
+# Returns
+- Dictionary with same keys as input, containing DimensionalArrays with an additional
+  error dimension where false=reference values and true=error estimates
+
+This function calculates deviations from a reference run, computes quantile-based
+error estimates, and combines them into a single data structure with an error dimension.
+"""
 function runs_ref_and_err(runs_rgi, path2reference; p = 0.95)
     # remove reference run
     runs_rgi_delta = Altim.runs_delta!(deepcopy(runs_rgi), path2reference)
@@ -375,18 +466,35 @@ function runs_ref_and_err(runs_rgi, path2reference; p = 0.95)
 end
 
 
-function rgi_endorheic(path2river_flux, path2perglacier; dates4trend = nothing)
+"""
+    rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend=nothing)
 
-    # We need to map between river sink and glacier source
-    volume2mass = Altim.δice / 1000
+Calculate glacier mass change and runoff trends for endorheic and non-endorheic basins by RGI region.
+
+# Arguments
+- `path2river_flux`: Path to file containing river flux data with terminal status information
+- `glacier_summary_file`: Path to NetCDF file containing glacier runoff and mass change data
+- `dates4trend`: Optional date range over which to calculate trends
+
+# Returns
+- A DimensionalArray with dimensions for variable name (dm, runoff), RGI region, and endorheic correction
+  where false=all glaciers and true=endorheic glaciers only
+
+This function identifies endorheic (landlocked) glaciers by matching glacier IDs to terminal river basins,
+calculates mass change and runoff trends, and aggregates results by RGI region including special
+aggregations for HMA (region 98) and global (region 99).
+"""
+function rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend=nothing)
+    ds = NCDataset(glacier_summary_file)
+    glaciers = DataFrame(rgiid = ds["rgiid"][:], runoff = eachrow(ds["runoff"][:,:]), dm = eachrow(ds["dm"][:,:]))
+    DataFrames.colmetadata!(glaciers,"runoff", "date", ds["Ti"][:]; style=:note)
+    DataFrames.colmetadata!(glaciers,"dm", "date", ds["Ti"][:]; style=:note)
+
     
     drgi = Dim{:rgi}([collect(1:19)..., 98, 99])
 
     # load river flux data
     river_flux = GeoDataFrames.read(path2river_flux)
-
-    # load in glacier outlines
-    glaciers = load(path2perglacier, "glaciers")
 
     # select only terminal rivers
     river_flux = river_flux[river_flux[:, :NextDownID].==0, :]
@@ -406,7 +514,7 @@ function rgi_endorheic(path2river_flux, path2perglacier; dates4trend = nothing)
     gid1 = gid1[p1]
     endorheic = endorheic[p1]
 
-    indices = [searchsortedfirst(gid1, x) for x in glaciers[:, "RGIId"]]
+    indices = [searchsortedfirst(gid1, x) for x in glaciers[:, "rgiid"]]
 
     # some glaciers are not in the river_flux file (no rivers in the Antarctic)
     valid_indices = indices .<= length(gid1)
@@ -417,35 +525,19 @@ function rgi_endorheic(path2river_flux, path2perglacier; dates4trend = nothing)
 
     # compute mass change for each region for endorheic and glaciers
 
-    # now compute dh rate for all glaciers
-    varname = "dh"  # unit of [m i.e.]
-    date = collect(dims(glaciers[1, varname], :date))
+    # now compute rates for all glaciers
+    varnames = ["dm", "runoff"]  # unit of Gt
 
-    # find the index of valid data
-    index = .!isnan.(glaciers[1, varname])
-    DataFrames.colmetadata!(glaciers, varname, "date", date; style=:note)
+    # fit trend to all glaciers
+    Altim.df_tsfit!(glaciers, varnames; progress=true, datelimits=dates4trend)
 
-    # fit dh trend to all glaciers
-    Altim.df_tsfit!(glaciers, [varname]; progress=true, datelimits=dates4trend)
-
-    # fit fac trend to all glaciers
-    varname = "fac"
-    date = collect(dims(glaciers[1, varname], :date))
-    DataFrames.colmetadata!(glaciers, varname, "date", date; style=:note)
-    Altim.df_tsfit!(glaciers, [varname]; progress=true, datelimits=dates4trend)
-
-    # fit runoff trend to all glaciers
-    varname = "runoff"
-    date = collect(dims(glaciers[1, varname], :date))
-    DataFrames.colmetadata!(glaciers, varname, "date", date; style=:note)
-    Altim.df_tsfit!(glaciers, [varname]; progress=true, datelimits=dates4trend)
-
+    
     # add rgi column
-    glaciers[!, :rgi] = [parse(Int16, g[7:8]) for g in glaciers.RGIId]
+    glaciers[!, :rgi] = [parse(Int16, g[7:8]) for g in glaciers.rgiid]
 
     # (dh - fac)/1000 * area * volume2mass = dm_gt
-    glaciers[!, :dm] = (glaciers.dh_trend .- glaciers.fac_trend) / 1000 .* sum.(glaciers.area_km2) * volume2mass
-    glaciers[!, :runoff] = (glaciers.runoff_trend) / 1000 .* sum.(glaciers.area_km2)
+    glaciers[!, :dm] = glaciers.dm_trend
+    glaciers[!, :runoff] = glaciers.runoff_trend
 
     # derive statistics for each region
     dvarnames = Dim{:varname}(["dm", "runoff"])
@@ -469,8 +561,26 @@ function rgi_endorheic(path2river_flux, path2perglacier; dates4trend = nothing)
 
     return glacier_dm_gt
 end
+"""
+    error_bar_table(region_fits, varnames, params, rgis; digits=2)
 
+Create a formatted table of regional glacier parameter values with error estimates.
 
+# Arguments
+- `region_fits`: DimensionalArray containing fitted parameters with dimensions for variable name, 
+                 RGI region, parameter type, and error
+- `varnames`: List of variable names to include in the table
+- `params`: List of parameters to include (e.g., "trend", "acceleration", "amplitude", "phase")
+- `rgis`: List of RGI region IDs to include in the table
+- `digits`: Number of decimal places for rounding numeric values (default: 2)
+
+# Returns
+- DataFrame with columns for RGI ID, region name, and formatted parameter values with error estimates
+  in the format "value ± error" for each variable and parameter combination
+
+The function automatically determines appropriate units for each parameter type and includes
+them in the column headers.
+"""
 function error_bar_table(region_fits, varnames, params, rgis; digits=2)
 
     rgi_labels = Altim.rginum2label.(rgis)
@@ -481,9 +591,9 @@ function error_bar_table(region_fits, varnames, params, rgis; digits=2)
         #println("    $(varname)")
         for param in params
             if param in ["acceleration"]
-                unit = "Gt_per_decade"
+                unit = "Gt/yr^2"
             elseif param in ["trend"]
-                unit = "Gt_yr"
+                unit = "Gt/yr"
             elseif param in ["amplitude"]
                 unit = "Gt"
             elseif param in ["phase"]
@@ -505,11 +615,11 @@ function error_bar_table(region_fits, varnames, params, rgis; digits=2)
                 
 
                 if param in ["acceleration"]
-                    v = v *10
-                    err = err * 10
-                    unit = "Gt_per_decade"
+                    v = v
+                    err = err
+                    unit = "Gt/yr^2"
                 elseif param in ["trend"]
-                    unit = "Gt_yr"
+                    unit = "Gt/yr"
                 elseif param in ["amplitude"]
                     unit = "Gt"
                 elseif param in ["phase"]
@@ -533,6 +643,25 @@ function error_bar_table(region_fits, varnames, params, rgis; digits=2)
 end
 
 
+"""
+    geotile2dimarray_kgm2(binned_synthesized_dv_file; vars2extract=["runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze", "dm"], trim=true, reference_period=nothing)
+
+Convert geotile data to a dimensional array with standardized units (kg/m²).
+
+# Arguments
+- `binned_synthesized_dv_file`: Path to the file containing geotile data
+- `vars2extract`: List of variable names to extract from the file (default includes common glacier variables)
+- `trim`: Whether to trim data to valid range (default: true)
+- `reference_period`: Optional time period to use as reference for anomaly calculation
+
+# Returns
+- A DimensionalArray with dimensions for variable name, geotile ID, and time, with units in kg/m²
+  (except for 'dv' which is in meters)
+
+This function loads geotile data, converts variables to consistent units (kg/m²), and optionally
+calculates anomalies relative to a reference period. It handles special unit conversions for
+volume ('dv') and mass ('dm') variables.
+"""
 function geotile2dimarray_kgm2(
     binned_synthesized_dv_file; 
     vars2extract=["runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze", "dm"], 
@@ -599,6 +728,24 @@ function geotile2dimarray_kgm2(
 end
 
 
+"""
+    geotiles_mean_error(path2ref, path2files; p=0.95, reference_period=nothing)
+
+Calculate reference values and error estimates for geotile data across multiple model runs.
+
+This function computes the deviation of each model run from a reference run, then calculates
+error estimates based on the quantile of absolute differences.
+
+# Arguments
+- `path2ref`: Path to the reference model run file
+- `path2files`: Vector of paths to model run files to compare against the reference
+- `p`: Quantile level for error estimation (default: 0.95)
+- `reference_period`: Optional time period for centering data (subtracting temporal mean)
+
+# Returns
+- A DimensionalArray with dimensions for variable name, geotile, time, and error,
+  where the error dimension contains reference values (false) and error estimates (true)
+"""
 function geotiles_mean_error(path2ref, path2files; p=0.95, reference_period=nothing)
 
     geotiles_ref = Altim.geotile2dimarray_kgm2(path2ref; reference_period)
@@ -629,6 +776,22 @@ function geotiles_mean_error(path2ref, path2files; p=0.95, reference_period=noth
 end
 
 
+"""
+    geotiles_mean_error_glaciers(glaciers, geotiles; show_progress=true, vars2downscale=nothing)
+
+Downscale geotile-level data to individual glaciers, preserving reference values and error estimates.
+
+# Arguments
+- `glaciers`: DataFrame containing glacier data with columns for rgiid, geotile, and area_km2
+- `geotiles`: DimensionalArray with dimensions for variable name, geotile, time, and error
+- `show_progress`: Whether to display a progress bar during computation (default: true)
+- `vars2downscale`: Optional subset of variables to downscale (default: all variables in geotiles)
+
+# Returns
+- A DimensionalArray with dimensions for variable name, glacier RGI ID, time, and error,
+  where values are scaled by glacier area and the error dimension contains reference values (false)
+  and error estimates (true)
+"""
 function geotiles_mean_error_glaciers(glaciers, geotiles; show_progress=true, vars2downscale=nothing)
 
     drgiid = Dim{:rgiid}(glaciers.rgiid)

@@ -1,7 +1,20 @@
-## this script calculate ice dischage automatically... it was perty much done until I moved to using published values... it works well so I may reserect at some point
+"""
+    Ice Discharge Calculation Module
 
+This module calculates ice discharge for glaciers automatically using velocity data from ITS_LIVE
+and ice thickness data from Millan et al. (2021). The workflow:
 
-#begin
+1. Loads necessary packages and sets paths
+2. Downloads and processes ITS_LIVE velocity data and ice thickness data
+3. Creates masks for glaciers, ocean-terminating, and lake-terminating glaciers
+4. Identifies glacier termini based on elevation thresholds
+5. Calculates ice flux across terminus boundaries
+6. Exports results to shapefiles
+
+The module was developed for research purposes but was later replaced with published values.
+It remains functional and may be useful for future applications.
+"""
+
 # load packages
 begin
     using Downloads
@@ -169,7 +182,7 @@ end
 end
 
 # rasterize shapefile data
-#begin
+begin
     # create masks
     mask0 = Dict()
     # USING OGR2OGR [10s]
