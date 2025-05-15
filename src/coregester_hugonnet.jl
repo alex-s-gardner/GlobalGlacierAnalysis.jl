@@ -14,7 +14,7 @@ The coregistration process aligns elevation data from different sources to minim
 systematic offsets, improving the accuracy of elevation change measurements.
 """
 
-using Altim
+using GlobalGlacierAnalysis
 using Extents
 using Arrow
 using DataFrames
@@ -42,6 +42,6 @@ geotile = first(geotiles);
 dem = first(dems);
 
 for product in products
-        Altim.geotile_coregister(geotile, paths[product.mission].geotile, dem)
+        GlobalGlacierAnalysis.geotile_coregister(geotile, paths[product.mission].geotile, dem)
 end
 

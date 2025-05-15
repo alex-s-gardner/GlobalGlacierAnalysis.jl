@@ -18,7 +18,7 @@ Available product types:
 - HEM.tif: Height Error Mask (32-bit floating point)
 """
 
-using ArchGDAL, Altim
+using ArchGDAL, GlobalGlacierAnalysis
 
 # info page
 # https://spacedata.copernicus.eu/web/guest/collections/copernicus-digital-elevation-model?p_l_back_url=%2Fweb%2Fguest%2Fsearch%3Fq%3DDEM

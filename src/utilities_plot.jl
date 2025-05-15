@@ -107,10 +107,10 @@ function plot_multiregion_dvdm(
     y2ticklabels = fill("", n)
     y2ticklabelcolor = palette.color
 
-    yticklabels = Altim.rginum2label.(region_order)
+    yticklabels = GlobalGlacierAnalysis.rginum2label.(region_order)
 
     if numbersinylabel
-        yticklabels = ["$(Altim.rginum2label(id)) $(Altim.rginum2enclosed_alphanumerics[id])" for id in region_order]
+        yticklabels = ["$(GlobalGlacierAnalysis.rginGlobalGlacierAnalysisbel(id)) $(GlobalGlacierAnalysis.rginum2enclosed_alphanumerics[id])" for id in region_order]
     end
 
     # this is a hack... axes need to be defined early or things break
@@ -179,7 +179,7 @@ function plot_multiregion_dvdm(
             low = mid .- regions[varname][At(rgi), minimum(daterange)..maximum(daterange), At(true)][valid_index]
             high = mid .+ regions[varname][At(rgi), minimum(daterange)..maximum(daterange), At(true)][valid_index]
 
-            CairoMakie.band!(ax1, collect(Altim.decimalyear.(dims(mid0, :date))), collect(low), collect(high); color=(:grey, 0.4))
+            CairoMakie.band!(ax1, collect(GlobalGlacierAnalysis.decimalyear.(dims(mid0, :date))), collect(low), collect(high); color=(:grey, 0.4))
 
             ymin = min(ymin, minimum(low))
             ymax = max(ymax, maximum(high))
@@ -203,14 +203,14 @@ function plot_multiregion_dvdm(
             end
            
             if varname == dvarname[end]
-                ln = CairoMakie.lines!(ax1, collect(Altim.decimalyear.(dims(mid0, :date))), collect(mid0))
+                ln = CairoMakie.lines!(ax1, collect(GlobalGlacierAnalysis.decimalyear.(dims(mid0, :date))), collect(mid0))
 
                 y2ticklabels[i] = string(round(Int64, (mid0[end] - mid0[1]))) * " $(units)"
                 yticks[i] = mid0[1]
                 y2ticks[i] = mid0[end] 
                 y2ticklabelcolor[i] = ln.color.val
             else
-                 ln = CairoMakie.lines!(ax1,collect(Altim.decimalyear.(dims(mid0, :date))), collect(mid0); color = (:black, 0.3))
+                 ln = CairoMakie.lines!(ax1,collect(GlobalGlacierAnalysis.decimalyear.(dims(mid0, :date))), collect(mid0); color = (:black, 0.3))
             end
 
         end

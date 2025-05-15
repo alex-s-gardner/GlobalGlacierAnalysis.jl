@@ -15,7 +15,7 @@ GEMB output is in units of meters ice equivalent (m i.e.) assuming an ice densit
 """
 begin
 begin
-    using Altim 
+    using GlobalGlacierAnalysis 
     using Arrow
     using DataFrames
     using Extents
@@ -45,7 +45,7 @@ begin
     geotile_buffer = 50000 # distance in meters outside of geotiles to look for data
 
     # define date and hight binning ranges 
-    date_range, date_center = Altim.project_date_bins()
+    date_range, date_center = GlobalGlacierAnalysis.project_date_bins()
 
     # expand daterange to 1940 by make sure to match exisiting project ranges 
     foo = collect(date_range[1]:-Day(30):DateTime(1940))
@@ -53,7 +53,7 @@ begin
     date_range = foo[end]:Day(30):date_range[end]
     date_center = date_range[1:end-1] .+ Day(Day(30) / 2)
 
-    height_range, height_center = Altim.project_height_bins()
+    height_range, height_center = GlobalGlacierAnalysis.project_height_bins()
 
     #Δheight simulates changing model elevation to increase / decrease melt, this is done in the regional Δvolume calculation
     height_bin_interval = height_center[2] - height_center[1]
@@ -91,7 +91,7 @@ begin
 
     # funtion used for binning data
     if binning_method == "meanmadnorm3"
-        binfun::Function = binfun(x) = mean(x[Altim.madnorm(x).<3])
+        binfun::Function = binfun(x) = mean(x[GlobalGlacierAnalysis.madnorm(x).<3])
     elseif binning_method == "median"
         binfun::Function = binfun(x) = median(x)
     elseif binning_method == "mean"
@@ -103,13 +103,13 @@ begin
     showplots = false;
 
     # load geotile definitions with corresponding hypsometry
-    geotiles = Altim.geotiles_mask_hyps(surface_mask, geotile_width)
+    geotiles = GlobalGlacierAnalysis.geotiles_mask_hyps(surface_mask, geotile_width)
 
     # filter geotiles
     geotiles = geotiles[geotiles.glacier_frac.>0.0, :]
 
     # make geotile rgi regions mutually exexclusive 
-    geotiles, reg = Altim.geotiles_mutually_exclusive_rgi!(geotiles)
+    geotiles, reg = GlobalGlacierAnalysis.geotiles_mutually_exclusive_rgi!(geotiles)
 
     if !any(Base.contains.("area_km2", names(geotiles)))
         original_area_name = string(surface_mask)*"_area_km2"
@@ -147,14 +147,14 @@ if .!(isfile(filename_gemb_combined)) || force_remake
     #    error("the number of files does not match the number of classes")
     #end
 
-    datebin_edges = Altim.decimalyear.(date_range)
+    datebin_edges = GlobalGlacierAnalysis.decimalyear.(date_range)
     # this takes 4 m
     gemb = []
     
     Threads.@threads for gemb_file in gemb_files
     #gemb_file = first(gemb_files)
 
-        gemb0 = Altim.gemb_read2(gemb_file; vars, datebin_edges)
+        gemb0 = GlobalGlacierAnalysis.gemb_read2(gemb_file; vars, datebin_edges)
 
         # no classes
         if (length(elevation_delta) == 1) .&  (length(precipitation_scale) == 1)
@@ -207,7 +207,7 @@ if .!(isfile(filename_gemb_combined)) || force_remake
     end
 
     gemb0 = Dict(
-        "date" => Altim.decimalyear2datetime.(vec(dates)),
+        "date" => GlobalGlacierAnalysis.decimalyear2datetime.(vec(dates)),
         "latitude" => vec(latitude), 
         "longitude" => vec(longitude),
         "height" => vec(height0), 
@@ -267,7 +267,7 @@ if .!(isfile(filename_gemb_geotile)) || force_remake
 
         # itteratively buffer by geotile_buffer meters untill 
         ext = geotile.extent
-        latitude_distance, longitude_distance = Altim.meters2lonlat_distance(geotile_buffer, mean(ext.Y))
+        latitude_distance, longitude_distance = GlobalGlacierAnalysis.meters2lonlat_distance(geotile_buffer, mean(ext.Y))
         has_data = falses(size(height_center))
         in_geotile = falses(size(gemb["longitude"]))
 
@@ -281,7 +281,7 @@ if .!(isfile(filename_gemb_geotile)) || force_remake
         end
 
         while (sum(geotile.area_km2[has_data]) / total_area) < min_gemb_coverage
-            in_geotile = vec([Altim.within(ext, x, y) for (x, y) in zip(gemb["longitude"], gemb["latitude"])])
+            in_geotile = vec([GlobalGlacierAnalysis.within(ext, x, y) for (x, y) in zip(gemb["longitude"], gemb["latitude"])])
             h = gemb["height_effective"][in_geotile]
 
             for i in 1:(length(height_range)-1)
@@ -448,7 +448,7 @@ if .!(isfile(filename_gemb_geotile_filled_dv)) || force_remake
                         y[:] .= 0
                     else
                         # smooth variables with height and interpolate gaps
-                        validgap = Altim.validgaps(valid)
+                        validgap = GlobalGlacierAnalysis.validgaps(valid)
 
                         # NOTE: interplation increases per variable time from 1 min to 6 min 
                         if sum(valid) > 4
@@ -528,7 +528,7 @@ if .!(isfile(filename_gemb_geotile_filled_dv)) || force_remake
     end
 
     # set some physcial constraints [I think this is redundent now]
-    gemb = Altim.gemb_rate_physical_constraints!(gemb)
+    gemb = GlobalGlacierAnalysis.gemb_rate_physical_constraints!(gemb)
     gemb["fac"][gemb["fac"] .< 0] .= 0 #fac is handled seperately as it is not a rate
 
     # create a DD for volume change results
@@ -575,13 +575,13 @@ if .!(isfile(filename_gemb_geotile_filled_dv)) || force_remake
                             # shift elevation
                             height_shift = round(Int16(Δheight / height_bin_interval))
 
-                            gemb_gt[k][:,:,At(pscale),At(Δheight)] = Altim._matrix_shift_ud!(deepcopy(gemb0[k][:, :, At(pscale)]), height_shift; exclude_zeros_in_extrapolation, npts_linear_extrapolation)
+                            gemb_gt[k][:,:,At(pscale),At(Δheight)] = GlobalGlacierAnalysis._matrix_shift_ud!(deepcopy(gemb0[k][:, :, At(pscale)]), height_shift; exclude_zeros_in_extrapolation, npts_linear_extrapolation)
                         end
                     end
                 end
             end
 
-            gemb_gt = Altim.gemb_rate_physical_constraints!(gemb_gt)
+            gemb_gt = GlobalGlacierAnalysis.gemb_rate_physical_constraints!(gemb_gt)
             gemb["fac"][gemb["fac"] .< 0] .= 0 #fac is handled seperately as it is not a rate
             
             #sanity check
@@ -695,10 +695,10 @@ if !isfile(filename_gemb_geotile_filled_extra_dv) || force_remake
                     end
                 end
 
-                gemb_new[k] = Altim.add_pscale_classes(deepcopy(gemb[k][:, :, :, :]), dpscale_new; allow_negative=false)
+                gemb_new[k] = GlobalGlacierAnalysis.add_pscale_classes(deepcopy(gemb[k][:, :, :, :]), dpscale_new; allow_negative=false)
             end
 
-            gemb_new = Altim.gemb_rate_physical_constraints!(gemb_new)
+            gemb_new = GlobalGlacierAnalysis.gemb_rate_physical_constraints!(gemb_new)
             gemb_new["fac"][gemb_new["fac"] .< 0] .= 0 #fac is handled seperately as it is not a rate
 
             # transform back into cumulative variables

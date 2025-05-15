@@ -1,7 +1,7 @@
 """
     master_run.jl
 
-Main workflow script for the Altim glacier and river analysis pipeline.
+Main workflow script for the GlobalGlacierAnalysis glacier and river analysis pipeline.
 
 Orchestrates the entire data processing workflow by executing component scripts in sequence:
 1. Builds satellite altimetry archives (GEDI, ICESat-2, ICESat)

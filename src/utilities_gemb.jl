@@ -86,7 +86,7 @@ function gemb_read(
 
     any(vars .== "latitude") && (gemb[!, :latitude] = vcat(lat...))
     any(vars .== "longitude") && (gemb[!, :longitude] = vcat(lon...))
-    any(vars .== "date") && (gemb[!, :date] = Altim.decimalyear2datetime.(vcat(t...)))
+    any(vars .== "date") && (gemb[!, :date] = GlobalGlacierAnalysis.decimalyear2datetime.(vcat(t...)))
     any(vars .== "height_ref") && (gemb[!, :height_ref] = vcat(h...))
     any(vars .== "fac") && (gemb[!, :fac] = vcat(fac...))
     any(vars .== "smb") && (gemb[!, :smb] = vcat(smb...))
@@ -498,7 +498,7 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
     ddate_gemb = dims(smb, :date)
     dgeotile = dims(smb, :geotile)
 
-    volume2mass = Altim.δice / 1000
+    volume2mass = GlobalGlacierAnalysis.δice / 1000
 
     if .!isnothing(examine_model_fits)
         geotile_ref = examine_model_fits
@@ -515,7 +515,7 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
     index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
     index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
 
-    decyear = Altim.decimalyear.(ddate_gemb[index_gemb])
+    decyear = GlobalGlacierAnalysis.decimalyear.(ddate_gemb[index_gemb])
     Δdecyear = decyear .- mean(decyear)
 
     # loop for each geotile
@@ -545,7 +545,7 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
         for geotile = eachrow(geotiles[gindex, :])
 
             # total discharge D in Gt/yr converted to km3/yr
-            index = Altim.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
+            index = GlobalGlacierAnalysis.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
 
             if any(index)
                 discharge_km3yr += sum(discharge[index, :discharge_gtyr]) ./ volume2mass
@@ -614,7 +614,7 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
 
                 # ----------------- Objective function definition -[this should be passed as a kwarg]- ----------------
                 # fit a model to the residuals... use the amplitude of the residuals as a weighting of the objective function
-                fit1 = curve_fit(model3, Δdecyear, res, Altim.p3)
+                fit1 = curve_fit(model3, Δdecyear, res, GlobalGlacierAnalysis.p3)
                 mad1 = sqrt(mean(res .^ 2)) + (2*abs(fit1.param[4])) 
                 # --------------------------------------------------------------
 
@@ -705,7 +705,7 @@ function add_pscale_classes(var0, dpscale_new; allow_negative=false)
 
     gemb_new = fill(NaN, (ddate, dheight, dpscale_new, dΔheight))
 
-    valid_range, = Altim.validrange(.!isnan.(var0[:, 1, 1, 1]))
+    valid_range, = GlobalGlacierAnalysis.validrange(.!isnan.(var0[:, 1, 1, 1]))
 
     Threads.@threads for date in ddate[valid_range]
         #date = ddate[820]

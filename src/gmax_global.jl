@@ -18,7 +18,7 @@ begin
     using NCDatasets
     using GeoDataFrames
     using DimensionalData
-    using Altim
+    using GlobalGlacierAnalysis
     using Dates
     using Statistics
     import GeometryOps as GO
@@ -29,7 +29,7 @@ begin
 
     dates4trend = [DateTime(2000, 3, 1), DateTime(2024, 12, 15)]
 
-    paths = Altim.pathlocal
+    paths = GlobalGlacierAnalysis.pathlocal
 
     glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
     glacier_summary_riverflux_file = replace(glacier_summary_file, ".nc" => "_riverflux.nc")
@@ -39,7 +39,7 @@ begin
     glacier_rivers_snow_flux_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_Qsm_acc.nc")
 
     path2discharge = joinpath(paths[:data_dir], "GlacierOutlines/GlacierDischarge/global_glacier_discharge.jld2")
-    rivers_paths = Altim.allfiles(paths[:river]; fn_endswith="MERIT_Hydro_v07_Basins_v01.shp", fn_startswith="riv_pfaf")
+    rivers_paths = GlobalGlacierAnalysis.allfiles(paths[:river]; fn_endswith="MERIT_Hydro_v07_Basins_v01.shp", fn_startswith="riv_pfaf")
     glacier_rivers_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
     dates4trend = (Date(2000,1,1), Date(2024,10,1))
@@ -65,8 +65,8 @@ Returns a GeoDataFrame with river segments and their glacier runoff contribution
     river_flux_nc = NCDataset(glacier_rivers_land_flux_path)
 
     # convert to DimensionalData
-    glacier_runoff = Altim.nc2dd(glacier_flux_nc["runoff"]) / (1000 * u"kg/m^3")
-    river_flux = Altim.nc2dd(river_flux_nc["flux"])
+    glacier_runoff = GlobalGlacierAnalysis.nc2dd(glacier_flux_nc["runoff"]) / (1000 * u"kg/m^3")
+    river_flux = GlobalGlacierAnalysis.nc2dd(river_flux_nc["flux"])
    
     # having issues with sortslices
     #@time glacier_flux = sortslices(glacier_flux, dims=:COMID)
@@ -211,7 +211,7 @@ with associated attributes for visualization and analysis.
     discharge0[!, :COMID] .= 0
     discharge0[!, :discharge] .= true
     discharge0[!, :ocean_terminating] .= true
-    discharge0[!, :runoff_max_avg] .= Altim.gt_per_yr_to_m3_per_s.(discharge.discharge_gtyr)
+    discharge0[!, :runoff_max_avg] .= GlobalGlacierAnalysis.gt_per_yr_to_m3_per_s.(discharge.discharge_gtyr)
 
     # join the discharge to the river sinks
     sinks = vcat(sinks, discharge0)

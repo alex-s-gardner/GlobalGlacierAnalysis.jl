@@ -36,13 +36,13 @@ begin
     using Statistics
     using StatsBase
     using FlexiJoins
-    using Altim
+    using GlobalGlacierAnalysis
     using CSV
     
 end
 
 #--------------- set local paths --------------- 
-paths = Altim.pathlocal
+paths = GlobalGlacierAnalysis.pathlocal
 datadir = paths.data_dir;
 outshapepath = joinpath(datadir, "global_vector_mask")
 
@@ -56,7 +56,7 @@ rgi = 1
 varnames = ["not_ocean", "glacier"]
 
 #--------------- set local paths --------------- 
-paths = Altim.pathlocal
+paths = GlobalGlacierAnalysis.pathlocal
 datadir = paths.data_dir;
 outshapepath = joinpath(datadir, "global_vector_mask")
 

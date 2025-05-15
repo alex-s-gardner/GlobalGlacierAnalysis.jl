@@ -16,7 +16,7 @@ requiring all component files to be loaded into memory simultaneously.
 For downloading the NASADEM data see:
 https://portal.opentopography.org/datasetMetadata?otCollectionID=OT.032021.4326.2 
 """
-using ArchGDAL, Altim
+using ArchGDAL, GlobalGlacierAnalysis
 
 path2folder = "/mnt/devon-r2/shared_data/NASADEM/mosaic/";
 suffix = ["wgs84_hgt.tif", "egm08_hgt.tif", "num.tif", "swb.tif"];

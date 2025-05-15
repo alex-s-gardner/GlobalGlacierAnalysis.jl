@@ -15,7 +15,7 @@ force remake existing extractions if needed.
 """
 
 begin
-    using Altim
+    using GlobalGlacierAnalysis
 
     # Parameters: user defined 
     force_remake = false
@@ -32,7 +32,7 @@ begin
     # Initialize: paths, products, geotiles
     paths = project_paths(; project_id);
     products = project_products(; project_id);
-    geotiles = Altim.geotiles_w_mask(geotile_width);
+    geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width);
 
     # Subset: region & mission 
     geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
@@ -40,11 +40,11 @@ begin
     products = getindex(products, missions)
 
     # Execute: extract dems
-    Altim.geotile_extract_dem(products, dems2extract, geotiles, paths; slope, curvature, force_remake)
+    GlobalGlacierAnalysis.geotile_extract_dem(products, dems2extract, geotiles, paths; slope, curvature, force_remake)
 
     # include hugonnet unfiltered
     if hugonnet_unfiltered && (:hugonnet in missions)
-        paths = Altim.update_geotile_path(paths; mission = :hugonnet, path_replace ="/2deg" => "/2deg_unfiltered")
-        Altim.geotile_extract_dem(products[(:hugonnet,)], dems2extract, geotiles, paths[(:hugonnet,)]; slope, curvature, force_remake)
+        paths = GlobalGlacierAnalysis.update_geotile_path(paths; mission = :hugonnet, path_replace ="/2deg" => "/2deg_unfiltered")
+        GlobalGlacierAnalysis.geotile_extract_dem(products[(:hugonnet,)], dems2extract, geotiles, paths[(:hugonnet,)]; slope, curvature, force_remake)
     end
 end

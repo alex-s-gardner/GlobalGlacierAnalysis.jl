@@ -14,7 +14,7 @@ The reformatting ensures consistent data access patterns for downstream analysis
 """
 
 using DataFrames;
-using Altim;
+using GlobalGlacierAnalysis;
 using Arrow;
 
 folder = "/mnt/bylot-r3/data/hugonnet/HSTACK/001/geotile/2deg/";

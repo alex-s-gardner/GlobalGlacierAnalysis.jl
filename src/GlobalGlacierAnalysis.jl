@@ -1,4 +1,4 @@
-module Altim
+module GlobalGlacierAnalysis
 
     module MyUnits
        using Unitful; @unit Gt "Gt" M 1u"Pg" false
@@ -91,7 +91,7 @@ module Altim
     include("utilities_geotile_processing.jl")
     include("utilities_routing.jl")
     include("utilities_postprocessing.jl")
-    # include("/home/gardnera/Documents/GitHub/Altim.jl/src/STRTreesAbstractTreesExt.jl")
+    # include("/home/gardnera/Documents/GitHub/GlobalGlacierAnalysis.jl/src/STRTreesAbstractTreesExt.jl")
 
     export Extent
     export bin, binnedfiltering, crop!, decimalyear, download!, epsg2epsg, epsg2epsg_nodata

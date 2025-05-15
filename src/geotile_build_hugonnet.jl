@@ -15,7 +15,7 @@ forced to rebuild existing geotiles if needed.
 """
 
 begin
-    using Altim
+    using GlobalGlacierAnalysis
     using Extents
 
 
@@ -28,7 +28,7 @@ begin
     # Initialize: paths, products, geotiles
     paths = project_paths(; project_id);
     products = project_products(; project_id);
-    geotiles = Altim.geotiles_w_mask(geotile_width);
+    geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width);
 
     # Subset: region & mission 
     geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];

@@ -59,7 +59,7 @@ function ts_fit(
     θ = fill(NaN, size(p.coeff_name))
     mad_out = NaN;
 
-    if (length(x) >= p.count_min) && (Altim.range(t) >= p.t_min_range)
+    if (length(x) >= p.count_min) && (GlobalGlacierAnalysis.range(t) >= p.t_min_range)
         
         # data points are grouped by time to remove outliers and improve speed
 
@@ -198,7 +198,7 @@ function geotile_ts_fit(
                 length(idx) >= p.count_min || continue
 
                 # should we continue ?
-                Altim.range(@view(df.decyear[idx])) >= p.t_min_range || continue
+                GlobalGlacierAnalysis.range(@view(df.decyear[idx])) >= p.t_min_range || continue
 
                 # sort as a funciton of time to speedup ts_fit
                 #k = @view(idx[sortperm(@view(decyear[idx]))])

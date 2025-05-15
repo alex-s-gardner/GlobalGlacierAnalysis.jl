@@ -14,7 +14,7 @@ force remake existing extractions if needed.
 """
 
 begin
-    using Altim
+    using GlobalGlacierAnalysis
 
     # Parameters: user defined 
     force_remake = false
@@ -28,7 +28,7 @@ begin
     # Initialize: paths, products, geotiles
     paths = project_paths(; project_id);
     products = project_products(; project_id);
-    geotiles = Altim.geotiles_w_mask(geotile_width);
+    geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width);
 
     # Subset: region & mission 
     geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
@@ -42,7 +42,7 @@ begin
 
     # include hugonnet unfiltered
     if hugonnet_unfiltered && (:hugonnet in missions)
-        paths = Altim.update_geotile_path(paths; mission=:hugonnet, path_replace="/2deg" => "/2deg_unfiltered")
+        paths = GlobalGlacierAnalysis.update_geotile_path(paths; mission=:hugonnet, path_replace="/2deg" => "/2deg_unfiltered")
         geotile_extract_mask(geotiles, paths[:hugonnet].geotile; vars=vars2extract, job_id=:hugonnet, force_remake=force_remake)
     end
 end

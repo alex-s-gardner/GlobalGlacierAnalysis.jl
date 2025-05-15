@@ -16,7 +16,7 @@ concentration time parameter following Getirana et al. (2012).
 """
 
 begin
-    using Altim
+    using GlobalGlacierAnalysis
     using NCDatasets
     using Rasters
     using Arrow
@@ -44,10 +44,10 @@ begin
     #grid resolution
     grid_res = 1.
 
-    paths = Altim.pathlocal
+    paths = GlobalGlacierAnalysis.pathlocal
     rivers_path = joinpath(paths[:river])
-    rivers_paths = Altim.allfiles(rivers_path; fn_startswith="riv_pfaf", fn_endswith= "MERIT_Hydro_v07_Basins_v01.shp")
-    basins_paths = Altim.allfiles(rivers_path; fn_startswith="cat_pfaf", fn_endswith=".shp")
+    rivers_paths = GlobalGlacierAnalysis.allfiles(rivers_path; fn_startswith="riv_pfaf", fn_endswith= "MERIT_Hydro_v07_Basins_v01.shp")
+    basins_paths = GlobalGlacierAnalysis.allfiles(rivers_path; fn_startswith="cat_pfaf", fn_endswith=".shp")
     glacier_rivers_path = joinpath(rivers_path, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
     glacier_rivers_runoff_path = replace(glacier_rivers_path, ".arrow" => "_runoff.arrow")
@@ -70,7 +70,7 @@ end
 # download GLDAS LSMs
 if download_lsm_files   
     # find list of urls that were downloaded from https://disc.gsfc.nasa.gov/datasets?keywords=GLDAS
-    gldas_file_urls = Altim.allfiles(gldas_folder; fn_endswith = "_.txt")
+    gldas_file_urls = GlobalGlacierAnalysis.allfiles(gldas_folder; fn_endswith = "_.txt")
     downloadstreams = 6;
 
     # download the files
@@ -111,7 +111,7 @@ begin #[~2 min]
     sort!(basins, [:COMID])
 
     # load in river reaches
-    rivers = Altim.river_reaches(rivers_paths; col_names=["geometry", "COMID", "NextDownID", "maxup"])
+    rivers = GlobalGlacierAnalysis.river_reaches(rivers_paths; col_names=["geometry", "COMID", "NextDownID", "maxup"])
     
     if nrow(rivers) == nrow(basins)
         basins[!,:NextDownID] = rivers[:,:NextDownID]
@@ -139,14 +139,14 @@ end
 for i in eachindex(runoff_vars)
 
     # read in fluxes from each lsm
-    files = Altim.allfiles(gldas_folder; fn_endswith=".nc4", fn_startswith = lsm_names[1])
+    files = GlobalGlacierAnalysis.allfiles(gldas_folder; fn_endswith=".nc4", fn_startswith = lsm_names[1])
     Q = Dict()
 
     for runoff_var in runoff_vars[i]
         Q[runoff_var] = cat(Raster.(files; name=runoff_vars[i][1])...; dims=Ti)
     
         for lsm_name in lsm_names
-            files = Altim.allfiles(gldas_folder; fn_endswith=".nc4", fn_startswith = lsm_name)
+            files = GlobalGlacierAnalysis.allfiles(gldas_folder; fn_endswith=".nc4", fn_startswith = lsm_name)
         
             if (lsm_name == lsm_names[1]) && (runoff_var == runoff_vars[i][1])
                 continue
@@ -179,11 +179,11 @@ for i in eachindex(runoff_vars)
     # apply linear reservoir model for subsruface runoff with a time delay factor of 45 days [Getirana et al. 2012]
     if haskey(Q, :Qsb_acc) # [~2 min]
         Tb = 45 # concentration time [days] - [Getirana et al. 2012]
-        impulse_resonse = Altim.linear_reservoir_impulse_response_monthly(Tb)
+        impulse_resonse = GlobalGlacierAnalysis.linear_reservoir_impulse_response_monthly(Tb)
 
         p = lines(copy(Q[:Qsb_acc][180, 80, :])) # sanity check
         xlims!(p.axis, [DateTime(2010, 1, 1), DateTime(2015, 1, 1)])
-        Altim.apply_vector_impulse_resonse!(Q[:Qsb_acc], impulse_resonse)
+        GlobalGlacierAnalysis.apply_vector_impulse_resonse!(Q[:Qsb_acc], impulse_resonse)
         lines!(Q[:Qsb_acc][180, 80, :]);p  # sanity check
     end
 
@@ -209,7 +209,7 @@ for i in eachindex(runoff_vars)
     end
 
 
-    river_flux = Altim.flux_accumulate!(river_inputs, basins.COMID, basins.NextDownID, basins.HeadBasin, basins.basin02) #[2 min]
+    river_flux = GlobalGlacierAnalysis.flux_accumulate!(river_inputs, basins.COMID, basins.NextDownID, basins.HeadBasin, basins.basin02) #[2 min]
 
     # subset to glacier river reaches for saving 
     glacier_rivers = GeoDataFrames.read(glacier_routing_path)

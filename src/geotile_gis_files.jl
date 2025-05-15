@@ -14,13 +14,13 @@ The output files are used for visualization and spatial filtering in glacier alt
 """
 
 begin
-    using Altim
+    using GlobalGlacierAnalysis
     using GeoDataFrames
     import GeoInterface as GI
     using DataFrames
 
 
-    paths = Altim.pathlocal
+    paths = GlobalGlacierAnalysis.pathlocal
     geotile_width = 2;
 
     geotiles_file = "geotiles.gpkg"
@@ -28,8 +28,8 @@ begin
         geomfile_rgi6 = joinpath(paths.data_dir, "GlacierOutlines/rgi60/rgi60_Global.gpkg")
 
         glacier_geom = GeoDataFrames.read(geomfile_rgi6)
-        geotiles = Altim.geotiles_w_mask(geotile_width)
-        geotiles[!, :geometry] = Altim.GeoTiles.define(2)[:, :geometry]
+        geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width)
+        geotiles[!, :geometry] = GlobalGlacierAnalysis.GeoTiles.define(2)[:, :geometry]
         geotiles = geotiles[:, Not([:extent])]
         geotiles = geotiles[geotiles.glacier_frac.>0, :]
 

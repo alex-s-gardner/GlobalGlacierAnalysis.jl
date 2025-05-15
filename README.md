@@ -1,10 +1,10 @@
-# Altim.jl
+# GlobalGlacierAnalysis.jl
 
-A Julia package for comprehensive glacier elevation change and hydrological analysis using multi-mission satellite altimetry and model data.
+A Julia package for comprehensive glacier elevation change and hydrological analysis using multi-mission satellite GlobalGlacierAnalysisetry and model data.
 
 ## Overview
 
-Altim.jl provides an end-to-end workflow for processing satellite altimetry, glacier elevation change, and model data to quantify glacier mass changes and their impacts on river systems and populations. The package orchestrates a sequence of processing steps, from raw data ingestion to advanced analysis and visualization.
+GlobalGlacierAnalysis.jl provides an end-to-end workflow for processing satellite altimetry, glacier elevation change, and model data to quantify glacier mass changes and their impacts on river systems and populations. The package orchestrates a sequence of processing steps, from raw data ingestion to advanced analysis and visualization.
 
 ## Quick Start
 
@@ -12,7 +12,7 @@ Altim.jl provides an end-to-end workflow for processing satellite altimetry, gla
 
 ```julia
 using Pkg
-Pkg.add("https://github.com/alex-s-gardner/Altim.jl")
+Pkg.add("https://github.com/alex-s-gardner/GlobalGlacierAnalysis.jl")
 ```
 
 ### 2. Data Requirements

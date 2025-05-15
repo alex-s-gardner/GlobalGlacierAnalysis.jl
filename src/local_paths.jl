@@ -15,7 +15,7 @@ The paths include:
 Throws an error if run on an unrecognized machine.
 
 NOTE:
-If the Altim.jl package is installed from a repository, the local paths will need to be set 
+If the GlobalGlacierAnalysis.jlacierAnalysis.jlacierAnalysis.jl package is installed from a repository, the local paths will need to be set 
 manually and all dependent files will need to be downloaded and stored in the local paths.
 """
 function setpaths() 
@@ -66,7 +66,7 @@ function setpaths()
             itslive_parameters = "/mnt/devon-r2/data/its-live-data/autorift_parameters/v001/",   
 
             # Landice mask: This is a custom mask created by Gardner et al. 2025, please request from the authors: Alex Gardner <alex.s.gardner@jpl.nasa.gov>
-            icemask = "/mnt/devon2-r1/devon0/gardnera/Documents/GitHub/Altim/data/land_ice_0.0083_cog.tif",
+            icemask = "/mnt/devon2-r1/devon0/gardnera/Documents/GitHub/GlobalGlacierAnalysis/data/land_ice_0.0083_cog.tif",
 
             # RGI outlines: can be downloaded from https://www.glims.org/RGI/
             # RGI 7 region outlines

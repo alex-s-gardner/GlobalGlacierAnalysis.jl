@@ -36,7 +36,7 @@ This script processes and analyzes glacier mass change data at regional scales.
 
 # NOTE: errors are at the 95% confidence interval from the reference run for this study and 95% confidence interval from GRACE
 #@time begin
-    using Altim
+    using GlobalGlacierAnalysis
     using DataFrames
     using FileIO
     using CairoMakie
@@ -75,7 +75,7 @@ This script processes and analyzes glacier mass change data at regional scales.
     dates_glambie_overlap = [DateTime(2000, 6, 1), DateTime(2023, 1, 1)] # use these date for comparing individual model runs to GRACE (only need for rmse anlysis)
     center_on_dates = DateTime(2002, 5, 1):Month(1):DateTime(2005, 12, 15)
 
-    paths = Altim.pathlocal
+    paths = GlobalGlacierAnalysis.pathlocal
     path2reference = joinpath(paths[:data_dir], reference_run)
     glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
 
@@ -86,12 +86,12 @@ This script processes and analyzes glacier mass change data at regional scales.
     path2river_flux = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
     param_nt = (;project_id, surface_mask, dem_id, curvature_correct, amplitude_correct, binning_method, paramater_set, binned_folder)
-    params = Altim.ntpermutations(param_nt)
+    params = GlobalGlacierAnalysis.ntpermutations(param_nt)
 
     # only include files that exist
     path2runs = String[]
     for param in params
-        binned_aligned_file = Altim.binned_aligned_filepath(; param...)
+        binned_aligned_file = GlobalGlacierAnalysis.binned_aligned_filepath(; param...)
         if isfile(binned_aligned_file)
             push!(path2runs, binned_aligned_file)
         end
@@ -102,35 +102,35 @@ end
 # pre-process data
 @time begin #[10 min]
     # load discharge for each RGI [<1s]
-    discharge_rgi = Altim.discharge_rgi(path2discharge, path2rgi_regions; fractional_error = discharge_fractional_error);
+    discharge_rgi = GlobalGlacierAnalysis.discharge_rgi(path2discharge, path2rgi_regions; fractional_error = discharge_fractional_error);
 
     # load results for all runs for each RGI [18s]
-    runs_rgi = Altim.runs2rgi(path2runs);
+    runs_rgi = GlobalGlacierAnalysis.runs2rgi(path2runs);
 
     # fit trends and acceleration for each model and RGI [33s]
-    runs_rgi_fits = Altim.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
+    runs_rgi_fits = GlobalGlacierAnalysis.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
 
     # center data
-    runs_rgi = Altim.runs_center!(runs_rgi, center_on_dates);
-    Altim.check_for_all_nans(runs_rgi)
+    runs_rgi = GlobalGlacierAnalysis.runs_center!(runs_rgi, center_on_dates);
+    GlobalGlacierAnalysis.check_for_all_nans(runs_rgi)
 
     # extract reference run and calculate 95% confidence interval
-    regions = Altim.runs_ref_and_err(runs_rgi, path2reference; p = 0.95);
-    Altim.check_for_all_nans(regions)
+    regions = GlobalGlacierAnalysis.runs_ref_and_err(runs_rgi, path2reference; p = 0.95);
+    GlobalGlacierAnalysis.check_for_all_nans(regions)
 
-    region_fits = Altim.region_fit_ref_and_err(runs_rgi_fits, path2reference; p = 0.95, discharge = discharge_rgi)
-    Altim.check_for_all_nans(region_fits)
+    region_fits = GlobalGlacierAnalysis.region_fit_ref_and_err(runs_rgi_fits, path2reference; p = 0.95, discharge = discharge_rgi)
+    GlobalGlacierAnalysis.check_for_all_nans(region_fits)
 
     # load GRACE data [95% confidence interval]
-    grace = Altim.grace_masschange();
-    grace[:,:,At(false)] = Altim.regions_center!(grace[:,:,At(false)], center_on_dates)
+    grace = GlobalGlacierAnalysis.grace_masschange();
+    grace[:,:,At(false)] = GlobalGlacierAnalysis.regions_center!(grace[:,:,At(false)], center_on_dates)
     regions["dm_grace"] = grace
-    Altim.check_for_all_nans(regions)
+    GlobalGlacierAnalysis.check_for_all_nans(regions)
 
     # add GlaMBIE results
-    regions["dm_glambie"] = Altim.glambie2024()
-    regions["dm_glambie"][:,:,At(false)] = Altim.regions_center!(regions["dm_glambie"][:,:,At(false)], center_on_dates)
-    Altim.check_for_all_nans(regions)
+    regions["dm_glambie"] = GlobalGlacierAnalysis.glambie2024()
+    regions["dm_glambie"][:,:,At(false)] = GlobalGlacierAnalysis.regions_center!(regions["dm_glambie"][:,:,At(false)], center_on_dates)
+    GlobalGlacierAnalysis.check_for_all_nans(regions)
 
     # add dicarge to region_fits
     (dvarname, drgi, dparameters, derr) = dims(region_fits)
@@ -143,31 +143,31 @@ end
     if occursin("glacier_rgi7", reference_run)
         error("rivers have only been calculated for rgi6 so this will throw an error if using glacier_rgi7")
     else
-        dm_gt_sinktype = Altim.rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend)
+        dm_gt_sinktype = GlobalGlacierAnalysis.rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend)
         endorheic_scale_correction = 1 .- dm_gt_sinktype[:,:, At(true)] ./ dm_gt_sinktype[:,:, At(false)]
     end
 
     # compute trends over grace-altim overlap period
-    runs_rgi_fits_grace = Altim.rgi_trends(runs_rgi, discharge_rgi, dates_altim_grace_overlap);
+    runs_rgi_fits_grace = GlobalGlacierAnalysis.rgi_trends(runs_rgi, discharge_rgi, dates_altim_grace_overlap);
     dvarname2 = Dim{:varname}([collect(dvarname)..., "dm_grace"])
     region_fits_grace = zeros(dvarname2, drgi, dparameters, derr)
-    region_fits_grace[At(collect(dvarname)), :, : ,:] = Altim.region_fit_ref_and_err(runs_rgi_fits_grace, path2reference; p=0.95, discharge = discharge_rgi)
+    region_fits_grace[At(collect(dvarname)), :, : ,:] = GlobalGlacierAnalysis.region_fit_ref_and_err(runs_rgi_fits_grace, path2reference; p=0.95, discharge = discharge_rgi)
 
     # regions 12 and 99 contain NaN so exclude them in trend calculation
-    region_fits_grace[At("dm_grace"), At(setdiff(drgi, [12, 99])), : , At(false)] = Altim.rgi_trends(regions["dm_grace"][At(setdiff(drgi, [12, 99])),:, At(false)], dates_altim_grace_overlap);
+    region_fits_grace[At("dm_grace"), At(setdiff(drgi, [12, 99])), : , At(false)] = GlobalGlacierAnalysis.rgi_trends(regions["dm_grace"][At(setdiff(drgi, [12, 99])),:, At(false)], dates_altim_grace_overlap);
 
     # compute trends over the GlaMBIE period
     dvarname2 = Dim{:varname}([collect(dvarname)..., "dm_glambie"])
     region_fits_glambie = zeros(dvarname2, drgi, dparameters, derr)
-    runs_rgi_fits_glambie = Altim.rgi_trends(runs_rgi, discharge_rgi, dates_glambie_overlap);
-    region_fits_glambie[At(collect(dvarname)), :, :, :] = Altim.region_fit_ref_and_err(runs_rgi_fits_glambie, path2reference; p=0.95, discharge = discharge_rgi)
-    region_fits_glambie[At("dm_glambie"), :, : , At(false)] = Altim.rgi_trends(regions["dm_glambie"][:,:, At(false)], dates_glambie_overlap);
+    runs_rgi_fits_glambie = GlobalGlacierAnalysis.rgi_trends(runs_rgi, discharge_rgi, dates_glambie_overlap);
+    region_fits_glambie[At(collect(dvarname)), :, :, :] = GlobalGlacierAnalysis.region_fit_ref_and_err(runs_rgi_fits_glambie, path2reference; p=0.95, discharge = discharge_rgi)
+    region_fits_glambie[At("dm_glambie"), :, : , At(false)] = GlobalGlacierAnalysis.rgi_trends(regions["dm_glambie"][:,:, At(false)], dates_glambie_overlap);
 
     runs_rgi_noaltim = filter(p -> p[1] in setdiff(keys(runs_rgi), ["dm_altim", "dv_altim"]), runs_rgi)
-    runs_rgi_fits_firstdecade = Altim.rgi_trends(runs_rgi_noaltim, discharge_rgi, dates_firstdecade);
-    region_fits_firstdecade = Altim.region_fit_ref_and_err(runs_rgi_fits_firstdecade, path2reference; p=0.95, discharge = discharge_rgi);
-    runs_rgi_fits_lastdecade = Altim.rgi_trends(runs_rgi_noaltim, discharge_rgi, dates_lastdecade);
-    region_fits_lastdecade = Altim.region_fit_ref_and_err(runs_rgi_fits_lastdecade, path2reference; p=0.95, discharge = discharge_rgi);
+    runs_rgi_fits_firstdecade = GlobalGlacierAnalysis.rgi_trends(runs_rgi_noaltim, discharge_rgi, dates_firstdecade);
+    region_fits_firstdecade = GlobalGlacierAnalysis.region_fit_ref_and_err(runs_rgi_fits_firstdecade, path2reference; p=0.95, discharge = discharge_rgi);
+    runs_rgi_fits_lastdecade = GlobalGlacierAnalysis.rgi_trends(runs_rgi_noaltim, discharge_rgi, dates_lastdecade);
+    region_fits_lastdecade = GlobalGlacierAnalysis.region_fit_ref_and_err(runs_rgi_fits_lastdecade, path2reference; p=0.95, discharge = discharge_rgi);
 end;
 
 # create table with rgi results and error bars
@@ -176,10 +176,10 @@ begin
     varnames = ["acc", "runoff", "dm_altim", "dm", "ec", "dv_altim", "fac", "net_acc", "gsi"]
     varnames = ["dm_altim", "dm", "acc", "runoff", "ec", "fac", "net_acc", "gsi", "discharge"]
     params = ["trend", "acceleration", "amplitude", "phase"]
-    regional_results = Altim.error_bar_table(region_fits, varnames, params, setdiff(drgi, exclude_regions));
+    regional_results = GlobalGlacierAnalysis.error_bar_table(region_fits, varnames, params, setdiff(drgi, exclude_regions));
 
     # dump table to console
-    Altim.show_error_bar_table(regional_results)
+    GlobalGlacierAnalysis.show_error_bar_table(regional_results)
 
     # for saving to csv
     regional_results_out = copy(regional_results)
@@ -208,8 +208,8 @@ begin
     params = ["trend"]
 
     println("----------- from $(dates4trend[1]) to $(dates4trend[2]) -----------")
-    regional_results = Altim.error_bar_table(region_fits, varnames, params, setdiff(drgi, exclude_regions); digits=2);
-    Altim.show_error_bar_table(regional_results; cols2display = 1)
+    regional_results = GlobalGlacierAnalysis.error_bar_table(region_fits, varnames, params, setdiff(drgi, exclude_regions); digits=2);
+    GlobalGlacierAnalysis.show_error_bar_table(regional_results; cols2display = 1)
 
 end
 
@@ -225,20 +225,20 @@ begin
 
     rgi_subset = [1, 5, 3, 98, 2, 17]
     fact_of_total = round(Int, sum(region_fits[At(varname),At(rgi_subset),At("trend"),At(false)]) ./ sum(region_fits[At(varname),At(rgis),At("trend"),At(false)]) *100)
-    println("$(join(Altim.rginum2label.(rgi_subset), ", ")) comprise $(fact_of_total)% of total mass change")
+    println("$(join(GlobalGlacierAnalysis.rginum2label.(rgi_subset), ", ")) comprise $(fact_of_total)% of total mass change")
 
     varname = "dm";
     sig_index = region_fits[At(varname),:,At("acceleration"),At(false)] .<= -region_fits[At(varname),:,At("acceleration"),At(true)];
     println("Regions with significant acceleration in $(varname):")
     for rgi in drgi[sig_index]
-        println("   $(Altim.rgi2label[Altim.rginum2txt[rgi]])")
+        println("   $(GlobalGlacierAnaGlobalGlacierAnalysis.rgi2label[GlobalGlacierAnalysis.rginum2txt[rgi]])")
     end
     println("")
 
     sig_index = region_fits[At(varname), :, At("acceleration"), At(false)] .>= region_fits[At(varname), :, At("acceleration"), At(true)];
     println("Regions with significant decceleration in $(varname):")
     for rgi in drgi[sig_index]
-        println("   $(Altim.rgi2label[Altim.rginum2txt[rgi]])")
+        println("   $(GlobalGlacierAnaGlobalGlacierAnalysis.rgi2label[GlobalGlacierAnalysis.rginum2txt[rgi]])")
     end
     println("")
 
@@ -342,7 +342,7 @@ begin
 
     variables = ["dm_altim"];
     outfile = joinpath(paths[:figures], "regional_$(join(variables,"_")).png");
-    f, region_order, ylims = Altim.plot_multiregion_dvdm(
+    f, region_order, ylims = GlobalGlacierAnalysis.plot_multiregion_dvdm(
         regions;
         variables = ["dm_altim"], # last variable is plotted last
         units = "Gt",
@@ -360,7 +360,7 @@ begin
     exclude_regions = [5, 19, 13, 14, 15, 99] 
 
     outfile = joinpath(paths[:figures], "regional_$(join(variables,"_")).png");
-    f, _, ylims = Altim.plot_multiregion_dvdm(
+    f, _, ylims = GlobalGlacierAnalysis.plot_multiregion_dvdm(
         regions;
         variables, # last variable is plotted last
         units="Gt",
@@ -376,7 +376,7 @@ begin
     # plot altimetry results with gemb data for RGI regions
     variables = ["dm_altim", "dm"]
     outfile = joinpath(paths[:figures], "regional_$(join(variables,"_")).png");
-    f, _, ylims = Altim.plot_multiregion_dvdm(
+    f, _, ylims = GlobalGlacierAnalysis.plot_multiregion_dvdm(
         regions;
         variables, # last variable is plotted last
         units="Gt",
@@ -394,7 +394,7 @@ begin
     # plot altimetry results with gemb data for RGI regions
     variables = ["dm_glambie", "dm"]
     outfile = joinpath(paths[:figures], "regional_$(join(variables,"_")).png");
-    f, _, ylims = Altim.plot_multiregion_dvdm(
+    f, _, ylims = GlobalGlacierAnalysis.plot_multiregion_dvdm(
         regions;
         variables, # last variable is plotted last
         units="Gt",
@@ -412,7 +412,7 @@ begin
     # plot altimetry results with gemb data for RGI regions
     variables = ["dm"];
     outfile = joinpath(paths[:figures], "regional_$(join(variables,"_")).png");
-    f, _, ylims = Altim.plot_multiregion_dvdm(
+    f, _, ylims = GlobalGlacierAnalysis.plot_multiregion_dvdm(
         regions;
         variables, # last variable is plotted last
         units="Gt",
@@ -427,7 +427,7 @@ begin
 
 
     # GRACE rgi regions    
-    cmap = Altim.resample(:Dark2_4, length(region_order))
+    cmap = GlobalGlacierAnalysis.resample(:Dark2_4, length(region_order))
     cmap = DimArray(cmap.colors, (region_order,))
     
     title = "glacier mass change [Gt/yr]"
@@ -450,7 +450,7 @@ begin
             x = region_fits_grace[At(xvar), At(rgi), At("trend"), At(false)]
             y = region_fits_grace[At(yvar), At(rgi), At("trend"), At(false)] 
             yscale = endorheic_scale_correction[At("dm"), At(rgi)]
-            scatter!(x, y .* yscale; label=Altim.rginum2label(rgi), markersize=15, color=cmap[At(rgi)])
+            scatter!(x, y .* yscale; label=GlobalGlacierAnalysis.rginum2label(rgi), markersize=15, color=cmap[At(rgi)])
         end
 
         for rgi = 98
@@ -499,7 +499,7 @@ begin
             x = region_fits_grace[At(xvar), At(rgi), At("trend"), At(false)]
             y = region_fits_grace[At(yvar), At(rgi), At("trend"), At(false)]
             yscale = 1
-            scatter!(x, y .* yscale; label=Altim.rginum2label(rgi), markersize=15, color=cmap[At(rgi)])
+            scatter!(x, y .* yscale; label=GlobalGlacierAnalysis.rginum2label(rgi), markersize=15, color=cmap[At(rgi)])
         end
 
 
@@ -542,7 +542,7 @@ begin
             x = collect(region_fits_grace[At(xvar), At(rgi), At("trend"), At(false)])
             y = collect(runs_rgi_fits_grace[At(yvar), :, At(rgi), At("trend"), At(false)])
             yscale = endorheic_scale_correction[At("dm"), At(rgi)]
-            scatter!(x .* ones(length(y)), y .* yscale; label=Altim.rginum2label(rgi), markersize=15, color=cmap[At(rgi)])
+            scatter!(x .* ones(length(y)), y .* yscale; label=GlobalGlacierAnalysis.rginum2label(rgi), markersize=15, color=cmap[At(rgi)])
         end
 
 

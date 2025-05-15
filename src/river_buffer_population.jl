@@ -24,7 +24,7 @@ begin
     progress = true
 
     using ProgressMeter
-    using Altim
+    using GlobalGlacierAnalysis
     import GeoFormatTypes as GFT
     using Proj
     import GeometryOps as GO
@@ -34,7 +34,7 @@ begin
     using Rasters, ArchGDAL
     using JLD2
     using FileIO
-    #using Altim
+    #using GlobalGlacierAnalysis
     using ArchGDAL
     using GeoDataFrames
     using DataFrames
@@ -55,7 +55,7 @@ begin
     using ColorSchemes
     using Format
     # Load local configuration paths
-    paths = Altim.pathlocal
+    paths = GlobalGlacierAnalysis.pathlocal
 
     # exclude rivers at high latitudes and near the dateline when calculating population
     latlim = 85.0
@@ -150,16 +150,16 @@ if !isfile(population_file)
 
     
     # 94s for all countires, gmax = 50, buffer_radii = 30km
-    @time population = Altim.compute_population(gpw_ras, rivers, country_polygons, gmax, runoff, buffer_radii; progress=true)
+    @time population = GlobalGlacierAnalysis.compute_population(gpw_ras, rivers, country_polygons, gmax, runoff, buffer_radii; progress=true)
 
     name = "population"
     global_attributes = Dict(
         "title" => "population living within a buffer distance of a river with a gmax threshold",
         "version" => "beta - " * Dates.format(now(), "yyyy-mm-dd"),
         )
-    fn = Altim.dimarray2netcdf(population, population_file; name, units=nothing, global_attributes)
+    fn = GlobalGlacierAnalysis.dimarray2netcdf(population, population_file; name, units=nothing, global_attributes)
 else
-    population = Altim.netcdf2dimarray(population_file; varname=nothing)
+    population = GlobalGlacierAnalysis.netcdf2dimarray(population_file; varname=nothing)
 end
 
 

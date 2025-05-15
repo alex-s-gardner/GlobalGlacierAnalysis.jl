@@ -99,7 +99,7 @@ function geotile_synthesis_error(;
                     continue
                 end
 
-                vdate, vheight = Altim.validrange(valid1)
+                vdate, vheight = GlobalGlacierAnalysis.validrange(valid1)
 
                 for date in ddate[vdate]
 
@@ -161,8 +161,8 @@ function geotile_synthesize_runs(;
 
         # mask GEDI outside of observational latitude limits
         if mission == "gedi"
-            lat_min = getindex.(Altim.geotile_extent.(dgeotile), :min_y)
-            lat_max = getindex.(Altim.geotile_extent.(dgeotile), :max_y)
+            lat_min = getindex.(GlobalGlacierAnalysis.geotile_extent.(dgeotile), :min_y)
+            lat_max = getindex.(GlobalGlacierAnalysis.geotile_extent.(dgeotile), :max_y)
             exclude_gedi = (lat_max .> 51.6) .| (lat_min .< -51.6)
             w[mission][exclude_gedi, :, :] .= 0
         end
@@ -180,8 +180,8 @@ function geotile_synthesize_runs(;
             fig_folder = joinpath(binned_folder, "figures")
             figure_suffix = replace(file_parts[end], ".jld2" => "")
             binned_synthesized_file = replace(binned_aligned_file, "aligned.jld2" => "synthesized.jld2")
-            params = Altim.binned_filled_fileparts(binned_aligned_file)
-            geotiles = Altim.geotiles_mask_hyps(params.surface_mask, geotile_width)
+            params = GlobalGlacierAnalysis.binned_filled_fileparts(binned_aligned_file)
+            geotiles = GlobalGlacierAnalysis.geotiles_mask_hyps(params.surface_mask, geotile_width)
         end
 
         binned_synthesized_file = replace(binned_aligned_file, "aligned.jld2" => "synthesized.jld2")
@@ -198,12 +198,12 @@ function geotile_synthesize_runs(;
             t1 = time()
             dh = FileIO.load(binned_aligned_file, "dh_hyps")
 
-            #heatmap(Altim.dh2dv(dh["hugonnet"], geotiles["glacier_b1km"])[510:511,:])
-            #heatmap!(Altim.dh2dv(dh["icesat2"], geotiles["glacier_b1km"])[510:511,:])
-            #heatmap!(Altim.dh2dv(dh["gedi"], geotiles["glacier_b1km"])[510:511,:])
+            #heatmap(GlobalGlacierAnalysis.dh2dv(dh["hugonnet"], geotiles["glacier_b1km"])[510:511,:])
+            #heatmap!(GlobalGlacierAnalysis.dh2dv(dh["icesat2"], geotiles["glacier_b1km"])[510:511,:])
+            #heatmap!(GlobalGlacierAnalysis.dh2dv(dh["gedi"], geotiles["glacier_b1km"])[510:511,:])
 
             if showplots
-                p = Altim.plot_height_time(dh; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="final", fig_folder, figure_suffix, mask=params.surface_mask, showplots)
+                p = GlobalGlacierAnalysis.plot_height_time(dh; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="final", fig_folder, figure_suffix, mask=params.surface_mask, showplots)
             end
 
             dh_synth = fill(0.0, dims(dh[missions[1]]))
@@ -232,7 +232,7 @@ function geotile_synthesize_runs(;
             #if plot_dh_as_function_of_time_and_elevation
             if showplots
                 # load geotiles
-                p = Altim.plot_height_time(dh_synth; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="raw", fig_folder, figure_suffix, mask=params.surface_mask, mission="synthesis", showplots)
+                p = GlobalGlacierAnalysis.plot_height_time(dh_synth; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="raw", fig_folder, figure_suffix, mask=params.surface_mask, mission="synthesis", showplots)
             end
 
             save(binned_synthesized_file, Dict("dh_hyps" => dh_synth, "dh_hyps_err" => dh_synth_err))
@@ -272,7 +272,7 @@ function geotile_zonal_area_hyps(ras, ras_range, zone_geom, geotile_ids; persist
     for geotile_id0 in geotile_ids
         #geotile = first(geotile_ids)
         t1 = time()
-        bounding_polygon = Altim.extent2rectangle(Altim.GeoTiles.extent(geotile_id0))
+        bounding_polygon = GlobalGlacierAnalysis.extent2rectangle(GlobalGlacierAnalysis.GeoTiles.extent(geotile_id0))
         
         geom_name = GI.geometrycolumns(zone_geom)[1]
 
@@ -293,7 +293,7 @@ function geotile_zonal_area_hyps(ras, ras_range, zone_geom, geotile_ids; persist
 
         rs = RasterStack(ras0, Rasters.cellarea(ras0))
 
-        area_m2 = Altim.mapzonal(Base.Fix2(geotile_zonal_area_hyps, ras_range), identity, rs; of=zone_geom0[!, :geometry])
+        area_m2 = GlobalGlacierAnalysis.mapzonal(Base.Fix2(geotile_zonal_area_hyps, ras_range), identity, rs; of=zone_geom0[!, :geometry])
         zone_geom0[!, :area_km2] = area_m2 * (1E-3)^2
 
         println("$(geotile_id0) zonal area hyps done: $(round(Int,time() -t1))s")
@@ -377,7 +377,7 @@ function geotile_grouping!(geotiles0, glaciers, min_area_km2; geotile_groups_man
         potential_idxs = SortTileRecursiveTree.query(tree, gt.extent)
 
         # Find glaciers that actually intersect the geotile
-        intersecting = findall(Base.Fix1(GO.intersects, Altim.extent2rectangle(gt.extent)),
+        intersecting = findall(Base.Fix1(GO.intersects, GlobalGlacierAnalysis.extent2rectangle(gt.extent)),
             view(glaciers_large[:, geometry_column], potential_idxs))
 
         gt.glacier_overap_ind = potential_idxs[intersecting]
@@ -398,7 +398,7 @@ function geotile_grouping!(geotiles0, glaciers, min_area_km2; geotile_groups_man
 
     # Identify connected groups of geotiles
     connectivity = geotiles0.geotile_intersect
-    geotiles0[!, :group] = Altim.connected_groups(geotiles0.geotile_intersect)
+    geotiles0[!, :group] = GlobalGlacierAnalysis.connected_groups(geotiles0.geotile_intersect)
 
 
     # Assign new group numbers to manual overrides
@@ -414,7 +414,7 @@ function geotile_grouping!(geotiles0, glaciers, min_area_km2; geotile_groups_man
 
     # Convert geotile extents to rectangles 
     geometry_column = first(GI.geometrycolumns(geotiles0))
-    geotiles0[!, geometry_column] = Altim.extent2rectangle.(geotiles0.extent)
+    geotiles0[!, geometry_column] = GlobalGlacierAnalysis.extent2rectangle.(geotiles0.extent)
 
 
     return geotiles0[:, Not(:extent, :area_km2, :glacier_overap_ind, :geotile_intersect)]
