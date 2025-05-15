@@ -1,145 +1,108 @@
 # Altim.jl
 
-A Julia package for comprehensive glacier elevation change analysis using multi-mission satellite altimetry data.
+A Julia package for comprehensive glacier elevation change and hydrological analysis using multi-mission satellite altimetry and model data.
 
 ## Overview
 
-Altim.jl provides an end-to-end workflow for processing satellite altimetry data to understand glacier mass changes and their hydrological impacts. The package handles data from multiple satellite missions, combines them into a consistent framework, and analyzes glacier mass balance and meltwater routing.
+Altim.jl provides an end-to-end workflow for processing satellite altimetry, glacier elevation change, and model data to quantify glacier mass changes and their impacts on river systems and populations. The package orchestrates a sequence of processing steps, from raw data ingestion to advanced analysis and visualization.
 
-## Installation
+## Quick Start
+
+### 1. Installation
 
 ```julia
 using Pkg
 Pkg.add("https://github.com/alex-s-gardner/Altim.jl")
 ```
 
-## Processing Pipeline
+### 2. Data Requirements
 
-### 1. Building Altimetry Archive (geotile_build_archive.jl)
+**Note:** This package is designed for use on JPL servers (bylot, devon, baffin) and expects data to be available at specific locations. If you are running elsewhere, you must adapt `src/local_paths.jl` to point to your data directories.
 
-**Purpose:** Creates the foundational dataset by processing raw satellite measurements into a standardized format.
+**You must download or have access to:**
+- Satellite altimetry data (GEDI, ICESat, ICESat-2)
+- Glacier elevation change stacks (Hugonnet et al.)
+- Global DEMs (REMA, COP30, ArcticDEM, NASADEM)
+- Glacier outlines (RGI v6/v7)
+- Canopy height data (ETH Global Canopy Height)
+- River network and basin data (MERIT Hydro, BasinATLAS, GRDC)
+- Validation datasets (GRACE, Zemp2019, etc.)
 
-This step:
-- Downloads and processes data from ICESat, ICESat-2, and GEDI missions
-- Organizes measurements into 2-degree geotiles for efficient processing
-- Filters data to focus on land ice areas
-- Ensures consistent spatial and temporal organization of measurements
+Paths to these datasets are set in `src/local_paths.jl`. If you are not on a supported machine, you must edit this file to match your environment.
 
-Processing times (100 MB/s IO):
-- GEDI: ~4 days
+### 3. Running the Workflow
+
+The main workflow is orchestrated by `src/master_run.jl`. This script sequentially runs all major processing steps, including data preparation, analysis, and output generation.
+
+**To run the full pipeline:**
+```bash
+julia --project src/master_run.jl
+```
+
+This will:
+1. Build satellite altimetry archives
+2. Process glacier elevation change data
+3. Validate and extract DEMs, masks, and canopy height
+4. Perform hypsometric and statistical analyses
+5. Synthesize data into global/regional datasets
+6. Generate summary files and GIS outputs
+7. Route runoff through river networks
+8. Analyze glacier contributions to rivers and affected populations
+9. Produce figures and regional results
+
+**Processing times:**  
+- GEDI: ~4 days  
 - ICESat-2: ~1 week  
-- ICESat: ~3 hours
+- ICESat: ~3 hours  
+(Other steps are faster, but the full workflow may take several days depending on data and hardware.)
 
-### 2. Processing Hugonnet Data (geotile_build_hugonnet.jl)
+### 4. Script Descriptions
 
-**Purpose:** Incorporates independent glacier elevation change data as a validation source and gap-filler.
+Each step in the workflow is implemented as a separate script in `src/` and included by `master_run.jl`. Advanced users can run these scripts individually for modular processing or debugging.
 
-This step:
-- Catalogs existing elevation change stacks
-- Converts data into the same geotile format as satellite measurements
-- Provides an independent dataset for cross-validation
-- Helps fill gaps in satellite coverage
+Key scripts (in order of execution):
+- `geotile_build_archive.jl` — Build altimetry archives
+- `geotile_build_hugonnet.jl` — Process Hugonnet glacier change data
+- `geotile_ancillary_check.jl` — Validate ancillary data
+- `geotile_dem_extract.jl` — Extract DEMs
+- `geotile_mask_extract.jl` — Extract surface masks
+- `geotile_canopyh_extract.jl` — Extract canopy height
+- `geotile_hyps.jl` — Hypsometric analysis
+- `gemb_classes_binning.jl` — Create glacier model classes
+- `geotile_binning.jl` — Statistical binning
+- `geotile_synthesis.jl` — Synthesize data
+- `summary_files.jl` — Generate summary files
+- `synthesis_plots_gis.jl` — Create plots and GIS outputs
+- `land_surface_model_routing.jl` — Route land surface model runoff
+- `glacier_routing.jl` — Route glacier runoff
+- `gmax_global.jl` — Calculate maximum glacier river flux
+- `river_buffer_population.jl` — Analyze population affected by glacier-fed rivers
+- `gmax_point_figure.jl` — Generate gmax figures
+- `regional_results.jl` — Produce regional results
 
-### 3. DEM Data Extraction (geotile_dem_extract.jl)
+### 5. Customization
 
-**Purpose:** Provides baseline elevation data and topographic parameters needed for accurate change detection.
+- **Data paths:** Edit `src/local_paths.jl` to match your data storage locations if not running on a supported JPL server.
+- **Partial runs:** You may comment/uncomment `include(...)` lines in `master_run.jl` to run only specific steps.
+- **Checkpoints:** The workflow implements checkpoint logic to avoid redundant processing and allow efficient restarts.
 
-Processes multiple DEMs:
-- REMA (Antarctica)
-- COP30 (global)
-- ArcticDEM (Arctic)
-- NASADEM (global)
+### 6. Dependencies
 
-Extracts critical parameters:
-- Base elevations
-- Slope measurements
-- Surface curvature
-- Topographic derivatives
+Core dependencies (see `Project.toml` for full list):
+- DimensionalData
+- Rasters
+- GeoInterface
+- CairoMakie
+- Statistics
+- DataFrames
+- FileIO
+- NCDatasets
+- Unitful
 
-### 4. Surface Mask Processing (geotile_mask_extract.jl)
-
-**Purpose:** Identifies different surface types to ensure accurate data processing and interpretation.
-
-Creates masks for:
-- Floating ice (requires different processing)
-- Glacier ice (primary analysis target)
-- Inland water (affects routing)
-- Land/ocean boundaries (affects discharge calculations)
-
-### 5. Canopy Height Processing (geotile_canopyh_extract.jl)
-
-**Purpose:** Accounts for vegetation effects on elevation measurements.
-
-This step:
-- Extracts vegetation height data from ETH Global Canopy Height dataset
-- Helps correct elevation measurements in vegetated areas
-- Improves accuracy of glacier boundary detection
-
-### 6. Data Synthesis (geotile_synthesis.jl)
-
-**Purpose:** Combines all data sources into a coherent analysis framework.
-
-Key components (~5-6 hours total):
-1. Glacier Hypsometry Processing (~37 min per inventory)
-   - Calculates area-elevation distributions
-   - Essential for mass balance calculations
-
-2. Synthesis Error Calculation (~2 hrs)
-   - Determines uncertainties between missions
-   - Enables proper weighting of different data sources
-
-3. Multi-mission Synthesis (~2 hrs)
-   - Combines data from all missions
-   - Accounts for different uncertainties and biases
-
-4. Geotile to Glacier Downscaling
-   - Converts gridded data to individual glacier measurements
-   - Handles GEMB variables (SMB, FAC, runoff)
-
-5. Time Series Analysis
-   - Fits models to glacier changes (2000-2023)
-   - Calculates rates and trends
-   - Exports results in standard formats
-
-### 7. Glacier Routing Analysis (glacier_routing.jl)
-
-**Purpose:** Tracks how glacier meltwater moves through the landscape.
-
-Analysis components:
-1. Lowest Point Identification
-   - Finds where meltwater enters river networks
-   - Uses high-resolution 30m DEM
-
-2. Drainage Network Mapping
-   - Traces water flow paths
-   - Identifies receiving rivers
-   - Maps ocean vs inland termination
-
-3. Variable Processing
-   - Converts measurements to discharge units
-   - Calculates monthly values
-   - Handles unit conversions
-
-4. Runoff Routing
-   - Maps glacier contributions to rivers
-   - Calculates flow rates
-   - Determines relative glacier contributions
-
-5. Discharge Analysis
-   - Identifies terminal points
-   - Maps ocean drainage
-   - Incorporates measurement stations
-
-## Dependencies
-
-Core dependencies:
-- DimensionalData: For labeled array operations
-- Rasters: For spatial data handling
-- GeoInterface: For geometric operations
-- CairoMakie: For visualization
-- Statistics: For numerical analysis
-- DataFrames: For data organization
-- FileIO: For file operations
+Install all dependencies with:
+```julia
+Pkg.instantiate()
+```
 
 ## License
 
@@ -147,9 +110,9 @@ MIT License
 
 ## Contributing
 
-Contributions welcome! Please submit issues and pull requests on GitHub.
+Contributions are welcome! Please submit issues and pull requests on GitHub.
 
-## Citation
 
-If you use Altim.jl in your research, please cite:
-[Citation information to be added]
+---
+
+**For questions or help, please open an issue on GitHub.**
