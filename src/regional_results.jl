@@ -35,7 +35,7 @@ This script processes and analyzes glacier mass change data at regional scales.
 """
 
 # NOTE: errors are at the 95% confidence interval from the reference run for this study and 95% confidence interval from GRACE
-#@time begin
+@time begin
     using GlobalGlacierAnalysis
     using DataFrames
     using FileIO
@@ -54,6 +54,7 @@ This script processes and analyzes glacier mass change data at regional scales.
     using CSV
 
     # to include in uncertainty
+    paths = GlobalGlacierAnalysis.pathlocal
     reference_run = "binned/2deg/glacier_dh_best_meanmadnorm5_v01_filled_ac_p2_synthesized.jld2"
     glacier_flux_path = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
 
@@ -75,7 +76,7 @@ This script processes and analyzes glacier mass change data at regional scales.
     dates_glambie_overlap = [DateTime(2000, 6, 1), DateTime(2023, 1, 1)] # use these date for comparing individual model runs to GRACE (only need for rmse anlysis)
     center_on_dates = DateTime(2002, 5, 1):Month(1):DateTime(2005, 12, 15)
 
-    paths = GlobalGlacierAnalysis.pathlocal
+    
     path2reference = joinpath(paths[:data_dir], reference_run)
     glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
 
@@ -231,14 +232,14 @@ begin
     sig_index = region_fits[At(varname),:,At("acceleration"),At(false)] .<= -region_fits[At(varname),:,At("acceleration"),At(true)];
     println("Regions with significant acceleration in $(varname):")
     for rgi in drgi[sig_index]
-        println("   $(GlobalGlacierAnaGlobalGlacierAnalysis.rgi2label[GlobalGlacierAnalysis.rginum2txt[rgi]])")
+        println("   $(GlobalGlacierAnalysis.rgi2label[GlobalGlacierAnalysis.rginum2txt[rgi]])")
     end
     println("")
 
     sig_index = region_fits[At(varname), :, At("acceleration"), At(false)] .>= region_fits[At(varname), :, At("acceleration"), At(true)];
     println("Regions with significant decceleration in $(varname):")
     for rgi in drgi[sig_index]
-        println("   $(GlobalGlacierAnaGlobalGlacierAnalysis.rgi2label[GlobalGlacierAnalysis.rginum2txt[rgi]])")
+        println("   $(GlobalGlacierAnalysis.rgi2label[GlobalGlacierAnalysis.rginum2txt[rgi]])")
     end
     println("")
 

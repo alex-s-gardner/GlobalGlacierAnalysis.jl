@@ -143,7 +143,7 @@ end
         decyear .-= mean(decyear)
         
         dates4trend = (DateTime(2000, 1, 1),DateTime(2024, 12, 31))
-        fit =curve_fit(GlobalGlacierAnalysis.offset_trend_seasonal2, decyear[dates4trend[1]..dates4trend[2]], ustrip.(v0)[dates4trend[1]..dGlobalGlacierAnalysistrend[2]], GlobalGlacierAnalysis.p_offset_trend_seasonal)
+        fit = curve_fit(GlobalGlacierAnalysis.offset_trend_seasonal2, decyear[dates4trend[1]..dates4trend[2]], ustrip.(v0)[dates4trend[1]..dates4trend[2]], GlobalGlacierAnalysis.p_offset_trend_seasonal)
         
         p = lines(v0)
         display(p)
@@ -164,7 +164,7 @@ end
         decyear .-= mean(decyear)
         
         dates4trend = (DateTime(2000, 1, 1),DateTime(2024, 12, 31))
-        fit =curve_fit(GlobalGlacierAnalysis.offset_trend_seasonal2, decyear[dates4trend[1]..dates4trend[2]], ustrip.(v0)[dates4trend[1]..dGlobalGlacierAnalysistrend[2]], GlobalGlacierAnalysis.p_offset_trend_seasonal)
+        fit = curve_fit(GlobalGlacierAnalysis.offset_trend_seasonal2, decyear[dates4trend[1]..dates4trend[2]], ustrip.(v0)[dates4trend[1]..dates4trend[2]], GlobalGlacierAnalysis.p_offset_trend_seasonal)
         
         lines!(v0)
         display(p)

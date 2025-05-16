@@ -1,6 +1,6 @@
 # GlobalGlacierAnalysis.jl
 
-A Julia package for comprehensive glacier elevation change and hydrological analysis using multi-mission satellite GlobalGlacierAnalysisetry and model data.
+A Julia package for comprehensive glacier elevation change and hydrological analysis using multi-mission satellite altimetry and model data.
 
 ## Overview
 
@@ -29,6 +29,7 @@ Pkg.add("https://github.com/alex-s-gardner/GlobalGlacierAnalysis.jl")
 - Validation datasets (GRACE, Zemp2019, etc.)
 
 Paths to these datasets are set in `src/local_paths.jl`. If you are not on a supported machine, you must edit this file to match your environment.
+
 
 ### 3. Running the Workflow
 

@@ -164,11 +164,11 @@ function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
                 end
 
                 # first fit linear trend and seasonal [this creates less spread in linear fit as acceleration fixed to zero]
-                dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_sGlobalGlacierAnalysis.l2, x, y, GlobalGlacierAnalysis.p3)
+                dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_seasonal2, x, y, GlobalGlacierAnalysis.p3)
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("trend")] = dm_fit.param[2]
 
                 # then fit linear trend and acceleration and seasonal
-                dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_acceleration_sGlobalGlacierAnalysis.l2, x, y, GlobalGlacierAnalysis.p3)
+                dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_acceleration_seasonal2, x, y, GlobalGlacierAnalysis.p3)
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("acceleration")] = dm_fit.param[3]
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("amplitude")] = hypot(dm_fit.param[4], dm_fit.param[5])
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("phase")] = 365.25 * (mod(0.25 - atan(dm_fit.param[5], dm_fit.param[4]) / (2π), 1))
@@ -227,11 +227,11 @@ function rgi_trends(da::AbstractDimArray, daterange)
     for rgi in drgi
 
         # first fit linear trend and seasonal [this creates less spread in linear fit as acceleration fixed to zero]
-        dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_seasonal2, d, da[At(rgi), minimum(daterange)..maximGlobalGlacierAnalysis.erange)], GlobalGlacierAnalysis.p3)
+        dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_seasonal2, d, da[At(rgi), minimum(daterange)..maximum(daterange)], GlobalGlacierAnalysis.p3)
         region_fit[At(rgi), At("trend")] = dm_fit.param[2]
 
         # then fit linear trend and acceleration and seasonal
-        dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_acceleration_seasonal2, d, da[At(rgi), minimum(daterange)..maximGlobalGlacierAnalysis.erange)], GlobalGlacierAnalysis.p3)
+        dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_acceleration_seasonal2, d, da[At(rgi), minimum(daterange)..maximum(daterange)], GlobalGlacierAnalysis.p3)
         region_fit[At(rgi), At("acceleration")] = dm_fit.param[3]
         region_fit[At(rgi), At("amplitude")] = hypot(dm_fit.param[4], dm_fit.param[5])
         region_fit[At(rgi), At("phase")] = 365.25 * (mod(0.25 - atan(dm_fit.param[5], dm_fit.param[4]) / (2π), 1))

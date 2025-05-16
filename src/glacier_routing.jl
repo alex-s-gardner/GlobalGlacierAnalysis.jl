@@ -79,7 +79,7 @@ begin
     volume2mass = GlobalGlacierAnalysis.δice / 1000
 
     # Load local configuration paths
-    paths = GlobalGlacierAnalysislGlacierAnalysis.pathlocal
+    paths = GlobalGlacierAnalysis.pathlocal
 
     # Derived data paths
     glacier_lowest_point_path = replace(paths[:glacier_individual_outlines], ".gpkg" => "_lowest_point.gpkg")
@@ -89,7 +89,7 @@ begin
     # Note: Two options for river data - using corrected or uncorrected data
 
     # Uncorrected river paths (currently used)
-    rivers_paths = GlobalGlacierAnalysislGlacierAnalysislGlacierAnalysislGlacierAnalysis.allfiles(paths[:river]; fn_endswith="MERIT_Hydro_v07_Basins_v01.shp", fn_startswith="riv_pfaf")
+    rivers_paths = GlobalGlacierAnalysis.allfiles(paths[:river]; fn_endswith="MERIT_Hydro_v07_Basins_v01.shp", fn_startswith="riv_pfaf")
     glacier_rivers_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
     # Output paths for processed data
@@ -219,7 +219,7 @@ if !isfile(glacier_rivers_path)
         buff = 0;
         while isempty(potential_river_idxs)
             buff += 1_000 # distance in meters
-            potential_river_idxs = SortTileRecursiveTree.query(tree, GlobalGlacierAnalysis.to_GlobalGlacierAnalysisng_polygon(GlobalGlacierAnalysis.UnitSphericalCap(pt, buff), 16))
+            potential_river_idxs = SortTileRecursiveTree.query(tree, GlobalGlacierAnalysis.to_latlong_polygon(GlobalGlacierAnalysis.UnitSphericalCap(pt, buff), 16))
         end
 
         if length(potential_river_idxs) == 1

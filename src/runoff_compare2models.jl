@@ -157,7 +157,7 @@ begin
                 
                 gts = groupby(ts, Ti => year)
                 ts_annual = ustrip(sum.(gts[length.(gts) .== 12]))
-                fit = curve_fit(GlobalGlacierAnalysis.model_trend, 1:length(ts_annuGlobalGlacierAnalysiss_annual,  GlobalGlacierAnalysis.p_trend)
+                fit = curve_fit(GlobalGlacierAnalysis.model_trend, 1:(ts_annual), ts_annual, GlobalGlacierAnalysis.p_trend)
                 basin_runoff_trend[At(basin), At(ssp), At(model)] = fit.param[2] 
 
                 basin_runoff_mean[At(basin), At(ssp), At(model)] = mean(ts_annual);

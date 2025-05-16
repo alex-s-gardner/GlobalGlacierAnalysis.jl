@@ -32,24 +32,22 @@ with error bounds and customizable styling.
 - `ylims`: The y-axis limits used in the plot
 """
 function plot_multiregion_dvdm(
-    regions = regions;
-    variables = ["dm", "dm_altim"], # last variable is plotted last
-    units = "Gt",
-    rgi_regions = setdiff(collect(dims(runs_rgi["dm_altim"], :rgi)), [13, 14, 15, 99]),
-    showlines = false,
-    fontsize = 15,
-    cmap = :Dark2_4,
-    region_order = nothing,
-    ylims = nothing,
-    title = nothing,
-    palette = nothing,
-    delta_offset = nothing,
-    all_error_bounds = false,
-    daterange = DateTime(2000, 1, 1):Month(1):DateTime(2025, 1, 1),
-    numbersinylabel = false,
+    regions=regions;
+    variables=["dm", "dm_altim"], # last variable is plotted last
+    units="Gt",
+    rgi_regions=setdiff(collect(dims(runs_rgi["dm_altim"], :rgi)), [13, 14, 15, 99]),
+    showlines=false,
+    fontsize=15,
+    cmap=:Dark2_4,
+    region_order=nothing,
+    ylims=nothing,
+    title=nothing,
+    palette=nothing,
+    delta_offset=nothing,
+    all_error_bounds=false,
+    daterange=DateTime(2000, 1, 1):Month(1):DateTime(2025, 1, 1),
+    numbersinylabel=false,)
 
-    )
- 
     drgi = Dim{:rgi}(rgi_regions)
     dvarname = Dim{:varname}(variables)
 
@@ -110,7 +108,7 @@ function plot_multiregion_dvdm(
     yticklabels = GlobalGlacierAnalysis.rginum2label.(region_order)
 
     if numbersinylabel
-        yticklabels = ["$(GlobalGlacierAnalysis.rginGlobalGlacierAnalysisbel(id)) $(GlobalGlacierAnalysis.rginum2enclosed_alphanumerics[id])" for id in region_order]
+  yticklabels = ["$(GlobalGlacierAnalysis.rginGlobalGlacierAnalysis.el(id)) $(GlobalGlacierAnalysis.rginum2enclosed_alphanumerics[id])" for id in region_order]
     end
 
     # this is a hack... axes need to be defined early or things break
@@ -142,7 +140,7 @@ function plot_multiregion_dvdm(
     ymax = -Inf
 
     region_offsets = zeros(region_order)
-    
+
     # calculate offsets 
     varname = dvarname[end]
     valid_index = .!isnan.(regions[varname][At(region_order[1]), minimum(daterange)..maximum(daterange), At(false)])
@@ -162,15 +160,15 @@ function plot_multiregion_dvdm(
     else
         starti = length(dvarname)
     end
-    
+
     for varname in dvarname[starti:endi]
         valid_index = .!isnan.(regions[varname][At(region_order[1]), minimum(daterange)..maximum(daterange), At(false)])
         last = zeros(sum(valid_index))
 
         for rgi in region_order
- 
+
             mid0 = regions[varname][At(rgi), minimum(daterange)..maximum(daterange), At(false)][valid_index]
-   
+
             if all(isnan.(mid0))
                 continue
             end
@@ -183,7 +181,7 @@ function plot_multiregion_dvdm(
 
             ymin = min(ymin, minimum(low))
             ymax = max(ymax, maximum(high))
-    
+
         end
     end
 
@@ -194,23 +192,23 @@ function plot_multiregion_dvdm(
         last = zeros(sum(valid_index))
 
         for (i, rgi) in enumerate(region_order)
-           
+
             #rgi = region_order[1]
             mid0 = regions[varname][At(rgi), minimum(daterange)..maximum(daterange), At(false)][valid_index] .+ region_offsets[At(rgi)]
 
             if all(isnan.(mid0))
                 continue
             end
-           
+
             if varname == dvarname[end]
                 ln = CairoMakie.lines!(ax1, collect(GlobalGlacierAnalysis.decimalyear.(dims(mid0, :date))), collect(mid0))
 
                 y2ticklabels[i] = string(round(Int64, (mid0[end] - mid0[1]))) * " $(units)"
                 yticks[i] = mid0[1]
-                y2ticks[i] = mid0[end] 
+                y2ticks[i] = mid0[end]
                 y2ticklabelcolor[i] = ln.color.val
             else
-                 ln = CairoMakie.lines!(ax1,collect(GlobalGlacierAnalysis.decimalyear.(dims(mid0, :date))), collect(mid0); color = (:black, 0.3))
+                ln = CairoMakie.lines!(ax1, collect(GlobalGlacierAnalysis.decimalyear.(dims(mid0, :date))), collect(mid0); color=(:black, 0.3))
             end
 
         end
@@ -291,10 +289,10 @@ contain the name of the first column in that section.
 - `regional_results`: DataFrame containing regional data to be displayed
 - `cols2display`: Number of data columns to show in each section (default: 3)
 """
-function show_error_bar_table(regional_results; cols2display = 3)
+function show_error_bar_table(regional_results; cols2display=3)
     # dump table to console
     colnames = names(regional_results)
-    last_set = ceil(Int, (length(colnames) - 2) / (cols2display+1) - 1)
+    last_set = ceil(Int, (length(colnames) - 2) / (cols2display + 1) - 1)
     for i = 0:last_set
         printstyled("\n------------------------------------------------------- $(colnames[3 + (4 * i)])-------------------------------------------------------\n", color=:yellow)
         if (i == last_set) && (length(colnames) > (last_set + 4))
@@ -304,4 +302,3 @@ function show_error_bar_table(regional_results; cols2display = 3)
         end
     end
 end
-

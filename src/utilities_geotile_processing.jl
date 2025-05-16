@@ -284,7 +284,7 @@ function geotile_binning(;
                     altim = select!(DataFrame(Arrow.Table(path2altim)), [:longitude, :latitude, :datetime, :height, :quality]);
 
                     # add height_ref and curvature
-                    altim = GlobalGlacierAnalysislGlacierAnalysis.add_dem_ref!(altim, param.dem_id, geotile, mission_geotile_folder)
+                    altim = GlobalGlacierAnalysis.add_dem_ref!(altim, param.dem_id, geotile, mission_geotile_folder)
                     
                     # load masks
                     path2masks = joinpath(mission_geotile_folder, geotile.id * ".masks");
@@ -295,8 +295,8 @@ function geotile_binning(;
                     end
                     
                     # add high resolution mask 
-                    masks0 = GlobalGlacierAnalysislGlacierAnalysis.highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, param.surface_mask)
-                    valid = GlobalGlacierAnalysislGlacierAnalysis.within.(Ref(geotile.extent), altim.longitude, altim.latitude)
+                    masks0 = GlobalGlacierAnalysis.highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, param.surface_mask)
+                    valid = GlobalGlacierAnalysis.within.(Ref(geotile.extent), altim.longitude, altim.latitude)
 
                     # quick trouble shoot check by plotting time series for each geotile
                     if false
@@ -343,14 +343,14 @@ function geotile_binning(;
                             if isfile(path2dem)
                                 dem = select!(DataFrame(Arrow.Table(path2dem)), :height, :dhdx, :dhdy, :dhddx, :dhddy)
                 
-                                dhdx_dhdy = GlobalGlacierAnalysislGlacierAnalysisGlobalGlacierAnalysise.(dem.dhdxGlobalGlacierAnalysis.dhdy, Ref(GlobalGlacierAnalysislGlacierAnalysis.dem_info(dem_id1)[1].epsg), lat = mean(geotile.extent.Y));
+                                dhdx_dhdy = GlobalGlacierAnalysis.slope.(dem.dhdx, dem.dhdy, Ref(GlobalGlacierAnalysis.dem_info(dem_id1)[1].epsg), lat = mean(geotile.extent.Y));
                                 
                                 var_ind = (.!masks0[:, param.surface_mask]) .& valid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0) .& .!isnan.(altim.curvature) .& (abs.(altim.dh) .< 10) .& masks0.land .& ((canopy.canopyh .<= max_canopy_height) .| (altim.latitude .< -60))
                                 
                                 if sum(var_ind) <= length(p_curvature)
                                     warnings && (@warn ("$(geotile.id): slope offset not calculated, not enought off-ice points"))
                                 else
-                                    offset = GlobalGlacierAnalysislGlacierAnalysis.track_offset(getindex.(dhdx_dhdy[var_ind], 1), getindex.(dhdx_dhdy[var_ind], 2), altim.dh[var_ind]);
+                                    offset = GlobalGlacierAnalysis.track_offset(getindex.(dhdx_dhdy[var_ind], 1), getindex.(dhdx_dhdy[var_ind], 2), altim.dh[var_ind]);
                                 end
                             end
                         end
@@ -359,7 +359,7 @@ function geotile_binning(;
                     # use bin statistics to calculate dh vs. elevation for every 3 months.
 
                     # identify valid dh data
-                    # plot(GlobalGlacierAnalysislGlacierAnalysis.decimalyear.(altim.datetime[valid]),altim.dh[valid]; label="all")
+                    # plot(GlobalGlacierAnalysis.decimalyear.(altim.datetime[valid]),altim.dh[valid]; label="all")
 
                     if param.curvature_correct
                         var_ind = (.!masks0[:, :landice]) .& valid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0) .& .!isnan.(altim.curvature) .& (abs.(altim.dh) .< 10) .& masks0.land .& ((canopy.canopyh .<= max_canopy_height) .| (altim.latitude .< -60))
@@ -368,7 +368,7 @@ function geotile_binning(;
                             warnings && (@warn ("$(geotile.id): no curvature corecction applied, not enought off-ice points"))
                         else
                             # check bounds: binstats will throw an error if no data is passed to median()
-                            if GlobalGlacierAnalysislGlacierAnalysis.vector_overlap(altim[var_ind, :curvature], curvature_range)
+                            if GlobalGlacierAnalysis.vector_overlap(altim[var_ind, :curvature], curvature_range)
                                 df = DataFrame();
                                 try
                                     df = binstats(altim[var_ind, :], [:curvature], [curvature_range], :dh; col_function=[median], missing_bins=true);
@@ -477,15 +477,15 @@ function geotile_binning(;
                         continue
                     end
 
-                    decyear_range = GlobalGlacierAnalysislGlacierAnalysis.decimalyear.(date_range)
+                    decyear_range = GlobalGlacierAnalysis.decimalyear.(date_range)
 
-                    altim[!, :decimalyear] = GlobalGlacierAnalysislGlacierAnalysis.decimalyear.(altim.datetime)
+                    altim[!, :decimalyear] = GlobalGlacierAnalysis.decimalyear.(altim.datetime)
                     
-                    var0, nobs0 = GlobalGlacierAnalysislGlacierAnalysis.geotile_bin2d(
+                    var0, nobs0 = GlobalGlacierAnalysis.geotile_bin2d(
                         altim[var_ind, :];
                         var2bin="dh",
                         dims_edges=("decimalyear" => decyear_range, "height_ref" => height_range),
-                        binfunction=GlobalGlacierAnalysislGlacierAnalysis.binningfun_define(param.binning_method))
+                        binfunction=GlobalGlacierAnalysis.binningfun_define(param.binning_method))
 
                     if isnothing(var0)
                         continue
@@ -603,10 +603,10 @@ function geotile_binned_fill(;
     # load geotiles
     geotiles0 = Dict()
     for surface_mask in surface_masks
-        geotiles0[surface_mask] = GlobalGlacierAnalysislGlacierAnalysis.geotiles_mask_hyps(surface_mask, geotile_width)
+        geotiles0[surface_mask] = GlobalGlacierAnalysis.geotiles_mask_hyps(surface_mask, geotile_width)
 
         # make geotile rgi regions mutually exexclusive 
-        geotiles0[surface_mask], _ = GlobalGlacierAnalysislGlacierAnalysis.geotiles_mutually_exclusive_rgi!(geotiles0[surface_mask])
+        geotiles0[surface_mask], _ = GlobalGlacierAnalysis.geotiles_mutually_exclusive_rgi!(geotiles0[surface_mask])
     end
 
     # usings threads here cuases the memory usage to explode, Threads is implimented at
@@ -624,8 +624,8 @@ function geotile_binned_fill(;
             end
         end
 
-        binned_file = GlobalGlacierAnalysislGlacierAnalysis.binned_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct)
-        binned_file_land = GlobalGlacierAnalysislGlacierAnalysis.binned_filepath(; param.binned_folder, surface_mask=:land, param.dem_id, param.binning_method, project_id, param.curvature_correct)
+        binned_file = GlobalGlacierAnalysis.binned_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct)
+        binned_file_land = GlobalGlacierAnalysis.binned_filepath(; param.binned_folder, surface_mask=:land, param.dem_id, param.binning_method, project_id, param.curvature_correct)
 
         if !isfile(binned_file)
             @warn "binned_file does not exist, skipping: $binned_file"
@@ -640,7 +640,7 @@ function geotile_binned_fill(;
              for amplitude_correct = amplitude_corrects
 
                 # paths to files
-                binned_filled_file, figure_suffix = GlobalGlacierAnalysislGlacierAnalysis.binned_filled_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct, amplitude_correct, paramater_set)
+                binned_filled_file, figure_suffix = GlobalGlacierAnalysis.binned_filled_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct, amplitude_correct, paramater_set)
 
                 if isfile(binned_filled_file) && !isnothing(force_remake_before)
                     if Dates.unix2datetime(mtime(binned_file)) > force_remake_before
@@ -690,11 +690,11 @@ function geotile_binned_fill(;
                 show_times ? t5 = time() : nothing
                 show_times && printstyled("deepcopy of dh1 and nobs1: $(round(Int16, t5 - t4))s\n", color=:green)
 
-                param_filling = GlobalGlacierAnalysislGlacierAnalysis.binned_filling_parameters[paramater_set]
+                param_filling = GlobalGlacierAnalysis.binned_filling_parameters[paramater_set]
 
                 # paths to files
 
-                binned_filled_file, figure_suffix = GlobalGlacierAnalysislGlacierAnalysis.binned_filled_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct, amplitude_correct, paramater_set)
+                binned_filled_file, figure_suffix = GlobalGlacierAnalysis.binned_filled_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct, amplitude_correct, paramater_set)
 
                 if !isnothing(force_remake_before) || !isfile(binned_filled_file)
 
@@ -727,7 +727,7 @@ function geotile_binned_fill(;
                     params_fill = Dict()
                     for mission in keys(dh1)
                         n = length(dims(dh1[mission], :geotile))
-                        params_fill[mission] = DataFrame(geotile=val(dims(dh1[mission], :geotile)), nobs_raw=zeros(n), nbins_raw=zeros(n), nobs_final=zeros(n), nbins_filt1=zeros(n), param_m1=[fill(NaN, size(GlobalGlacierAnalysislGlacierAnalysis.p1)) for i in 1:n], h0=fill(NaN, n), t0=fill(NaN, n), dh0=fill(NaN, n), bin_std=fill(NaN, n), bin_anom_std=fill(NaN, n))
+                        params_fill[mission] = DataFrame(geotile=val(dims(dh1[mission], :geotile)), nobs_raw=zeros(n), nbins_raw=zeros(n), nobs_final=zeros(n), nbins_filt1=zeros(n), param_m1=[fill(NaN, size(GlobalGlacierAnalysis.p1)) for i in 1:n], h0=fill(NaN, n), t0=fill(NaN, n), dh0=fill(NaN, n), bin_std=fill(NaN, n), bin_anom_std=fill(NaN, n))
                     end
 
                     show_times ? t7 = time() : nothing
@@ -735,7 +735,7 @@ function geotile_binned_fill(;
 
                     if plot_dh_as_function_of_time_and_elevation
                         dh_time_elevation_idx = findfirst(geotiles.id .== "lat[+28+30]lon[+082+084]")
-                        GlobalGlacierAnalysislGlacierAnalysis.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="raw", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
+                        GlobalGlacierAnalysis.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="raw", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
                     end
 
                     # I think that the model fitting can have a large influence on how off ice dh is treated. When lots of off ice area is included (e.g. param.surface_mask == glacier_b1km of glacier_b10km) there can be a very sharp transition at lower elevations from high rates to low rates of elevation change. 
@@ -744,7 +744,7 @@ function geotile_binned_fill(;
                         dh_land = FileIO.load(binned_file_land, "dh_hyps")
                         nobs_land = FileIO.load(binned_file_land, "nobs_hyps")
 
-                        dh1["hugonnet"] = GlobalGlacierAnalysislGlacierAnalysis.geotile_adjust!(
+                        dh1["hugonnet"] = GlobalGlacierAnalysis.geotile_adjust!(
                             dh1["hugonnet"],
                             dh_land["hugonnet"],
                             nobs_land["hugonnet"],
@@ -755,7 +755,7 @@ function geotile_binned_fill(;
                         )
                     end
 
-                    GlobalGlacierAnalysislGlacierAnalysis.hyps_model_fill!(dh1, nobs1, params_fill; bincount_min=param_filling.bincount_min,
+                    GlobalGlacierAnalysis.hyps_model_fill!(dh1, nobs1, params_fill; bincount_min=param_filling.bincount_min,
                         model1_madnorm_max=param_filling.model1_madnorm_max, smooth_n=param_filling.smooth_n,
                         smooth_h2t_length_scale=param_filling.smooth_h2t_length_scale, show_times = false)
 
@@ -766,7 +766,7 @@ function geotile_binned_fill(;
 
                     # make plot of the height to time variogram range ratio
                     if variogram_range_ratio
-                        range_ratio = GlobalGlacierAnalysislGlacierAnalysis.hyps_model_fill!(dh1, nobs1, params_fill; bincount_min=param_filling.bincount_min,
+                        range_ratio = GlobalGlacierAnalysis.hyps_model_fill!(dh1, nobs1, params_fill; bincount_min=param_filling.bincount_min,
                             model1_madnorm_max=param_filling.model1_madnorm_max, smooth_n=param_filling.smooth_n,
                             smooth_h2t_length_scale=param_filling.smooth_h2t_length_scale, variogram_range_ratio)
 
@@ -789,7 +789,7 @@ function geotile_binned_fill(;
 
                     # filter and fit model to geotiles [4 min for for all glacierized geotiles and 4 missions]
                     if plot_dh_as_function_of_time_and_elevation
-                        GlobalGlacierAnalysislGlacierAnalysis.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled", fig_folder, figure_suffix, mask=param.surface_mask)
+                        GlobalGlacierAnalysis.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled", fig_folder, figure_suffix, mask=param.surface_mask)
                     end
 
                     # apply seasonal amplitude normalization
@@ -810,7 +810,7 @@ function geotile_binned_fill(;
                             params_fill = merge(params_fill, model_param)
                         end
 
-                        GlobalGlacierAnalysislGlacierAnalysis.hyps_amplitude_normalize!(dh1, params_fill; mission_reference=mission_reference_for_amplitude_normalization)
+                        GlobalGlacierAnalysis.hyps_amplitude_normalize!(dh1, params_fill; mission_reference=mission_reference_for_amplitude_normalization)
 
                         # remove mission_reference_for_amplitude_normalization if it was added.
                         if ref_added
@@ -823,21 +823,21 @@ function geotile_binned_fill(;
                     show_times && printstyled("amplitude_normalize: $(round(Int16, t9 - t8))s\n", color=:green)
 
                     if plot_dh_as_function_of_time_and_elevation
-                        GlobalGlacierAnalysislGlacierAnalysis.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled_ampnorm", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
+                        GlobalGlacierAnalysis.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled_ampnorm", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
                     end
 
-                    dh1 = GlobalGlacierAnalysislGlacierAnalysis.hyps_fill_empty!(dh1, params_fill, geotiles; mask=param.surface_mask)
+                    dh1 = GlobalGlacierAnalysis.hyps_fill_empty!(dh1, params_fill, geotiles; mask=param.surface_mask)
 
                     show_times ? t10 = time() : nothing
                     show_times && printstyled("hyps_fill_empty: $(round(Int16, t10 - t9))s\n", color=:green)
 
-                    dh1 = GlobalGlacierAnalysislGlacierAnalysis.hyps_fill_updown!(dh1, geotiles; mask=param.surface_mask)
+                    dh1 = GlobalGlacierAnalysis.hyps_fill_updown!(dh1, geotiles; mask=param.surface_mask)
 
                     show_times ? t11 = time() : nothing
                     show_times && printstyled("hyps_fill_updown: $(round(Int16, t11 - t10))s\n", color=:green)
 
                     if plot_dh_as_function_of_time_and_elevation
-                        GlobalGlacierAnalysislGlacierAnalysis.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled_updown", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
+                        GlobalGlacierAnalysis.plot_height_time(dh1; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="filled_updown", fig_folder, figure_suffix, mask=param.surface_mask, showplots)
                     end
 
                     if update_geotile && isfile(binned_filled_file)
@@ -935,15 +935,15 @@ function geotile_filled_landfit(;
 
     Threads.@threads for param in params
 
-        geotiles = copy(GlobalGlacierAnalysislGlacierAnalysis.geotiles_mask_hyps(param.surface_mask, geotile_width))
+        geotiles = copy(GlobalGlacierAnalysis.geotiles_mask_hyps(param.surface_mask, geotile_width))
 
         # make geotile rgi regions mutually exexclusive 
-        geotiles, reg = GlobalGlacierAnalysislGlacierAnalysis.geotiles_mutually_exclusive_rgi!(geotiles)
+        geotiles, reg = GlobalGlacierAnalysis.geotiles_mutually_exclusive_rgi!(geotiles)
 
         fig_folder = joinpath(param.binned_folder, "figures")
 
         # paths to files
-        binned_filled_file, figure_suffix = GlobalGlacierAnalysislGlacierAnalysis.binned_filled_filepath(; param...)
+        binned_filled_file, figure_suffix = GlobalGlacierAnalysis.binned_filled_filepath(; param...)
 
         landfit_param_file = replace(binned_filled_file, ".jld2" => "_modelfit.jld2")
 
@@ -984,13 +984,13 @@ function geotile_filled_landfit(;
 
                 for geotile in dgeotile
                     for date in ddate
-                        out[At(geotile), At(date)] = GlobalGlacierAnalysislGlacierAnalysis.nanmedian(foo[At(geotile), At(date), :])
+                        out[At(geotile), At(date)] = GlobalGlacierAnalysis.nanmedian(foo[At(geotile), At(date), :])
                     end
                 end
 
                 out2 = deepcopy(foo[1, :, 1])
                 for date in ddate
-                    out2[At(date)] = GlobalGlacierAnalysislGlacierAnalysis.nanmedian(out[:, At(date)])
+                    out2[At(date)] = GlobalGlacierAnalysis.nanmedian(out[:, At(date)])
                 end
 
                 out2 = dropdims(out2, dims=(:height, :geotile))
@@ -1001,13 +1001,13 @@ function geotile_filled_landfit(;
 
                 valid = .!isnan.(out2)
                 y = collect(out2[valid])
-                x = GlobalGlacierAnalysislGlacierAnalysis.decimalyear.(collect(ddate[valid]))
+                x = GlobalGlacierAnalysis.decimalyear.(collect(ddate[valid]))
 
-                fit = curve_fit(GlobalGlacierAnalysislGlacierAnGlobalGlacierAnalysiss.model3, xGlobalGlacierAnalysisean(x), y, GlobalGlacierAnalysis.p3;)
+                fit = curve_fit(GlobalGlacierAnalysis.model3, x .- mean(x), y, GlobalGlacierAnalysis.p3;)
 
                 fit_date = Base.range(extrema(ddate[.!isnan.(out2)])..., step=Day(10))
 
-                fit_y = GlobalGlacierGlobalGlacierAnalysissislGlacierGlobalGlacierAnalysissis.model3(GlobalGlacierAnalysis.decimalyear.(fit_date) .- mean(x), fit.param)
+                fit_y = GlobalGlacierAnalysis.model3(GlobalGlacierAnalysis.decimalyear.(fit_date) .- mean(x), fit.param)
 
                 Plots.plot!(fit_date, fit_y; label="trend = $(round(fit.param[2], digits = 3)) m yr⁻¹")
 
@@ -1021,7 +1021,7 @@ function geotile_filled_landfit(;
 
                 # NOTE: number of observations over are < 1m canopy height !== total land 
                 # area hyspmetric distribution. This is why the plots here do not match those 
-                # generated by `dv_reg = GlobalGlacierAnalysislGlacierAnalysis.hyps_geotile_aggrigate(dv, geotiles, reg; fun=sum)`
+                # generated by `dv_reg = GlobalGlacierAnalysis.hyps_geotile_aggrigate(dv, geotiles, reg; fun=sum)`
 
                 nopbs_sum = sum(nobs1[mission], dims=:height)
                 nopbs_sum = dropdims(nopbs_sum, dims=:height)
@@ -1046,7 +1046,7 @@ function geotile_filled_landfit(;
             # smooth with loess function
             if false
                 dh_reg_smooth = deepcopy(dh_reg)
-                x = GlobalGlacierAnalysislGlacierAnalysis.decimalyear.(collect(ddate))
+                x = GlobalGlacierAnalysis.decimalyear.(collect(ddate))
 
                 for rgi in drgi
                     for mission in dmission
@@ -1056,17 +1056,17 @@ function geotile_filled_landfit(;
                             # first do a course fit can remove 3 sigma outliers
                             span = 1.0
                             degree = 2
-                            rng, = GlobalGlacierAnalysislGlacierAnalysis.validrange(valid)
+                            rng, = GlobalGlacierAnalysis.validrange(valid)
                             model = MLJ.loess(x[valid], y[valid]; span, degree)
                             dh_reg_smooth[At(mission), At(rgi), rng] = MLJ.predict(model, x[rng])
 
                             # identify outliers
-                            valid[valid] = GlobalGlacierAnalysislGlacierAnalysis.madnorm(y[valid] .- dh_reg_smooth[At(mission), At(rgi), valid]) .< 3
+                            valid[valid] = GlobalGlacierAnalysis.madnorm(y[valid] .- dh_reg_smooth[At(mission), At(rgi), valid]) .< 3
 
                             # fit again with with shorter span
                             a, b = extrema(x[valid])
                             span = min(1.0, (b - a) / 4.0)
-                            rng, = GlobalGlacierAnalysislGlacierAnalysis.validrange(valid)
+                            rng, = GlobalGlacierAnalysis.validrange(valid)
                             model = MLJ.loess(x[valid], y[valid]; span, degree)
                             dh_reg_smooth[At(mission), At(rgi), rng] = MLJ.predict(model, x[rng])
                         end
@@ -1101,7 +1101,7 @@ function geotile_filled_landfit(;
 
             for rgi in drgi
                 title = "Randolph Glacier Inventory: Region $(rgi[4:end])"
-                f, fit_param[:, At(rgi), :] = GlobalGlacierAnalysislGlacierAnalysis.plot_dh(dh_reg[:, At(rgi), :], (nobs_reg[:, At(rgi), :]); title, xlims=(DateTime(2000), DateTime(2024)), ylims=(-3, 3))
+                f, fit_param[:, At(rgi), :] = GlobalGlacierAnalysis.plot_dh(dh_reg[:, At(rgi), :], (nobs_reg[:, At(rgi), :]); title, xlims=(DateTime(2000), DateTime(2024)), ylims=(-3, 3))
 
                 fname = joinpath(fig_folder, "$(figure_suffix)_$(rgi)_dh.png")
                 save(fname, f)
@@ -1156,15 +1156,15 @@ function geotile_adjust!(
     Δstd = fill(NaN, dgeotile)
     amplitude = fill(NaN, dgeotile)
 
-    decimalyear = GlobalGlacierAnalysislGlacierAnalysis.decimalyear.(dates)
+    decimalyear = GlobalGlacierAnalysis.decimalyear.(dates)
     Δdecimalyear = decimalyear .- mean(decimalyear)
 
     # loop through each geotile
     Threads.@threads for i in eachindex(dgeotile)
         #i = 1000    
         # time series over land
-        ts_ref = GlobalGlacierAnalysislGlacierAnalysis.nanmedian.(eachrow(dh_land_ref[i, :, :]))
-        ts = GlobalGlacierAnalysislGlacierAnalysis.nanmedian.(eachrow(dh_land[i, :, :]))
+        ts_ref = GlobalGlacierAnalysis.nanmedian.(eachrow(dh_land_ref[i, :, :]))
+        ts = GlobalGlacierAnalysis.nanmedian.(eachrow(dh_land[i, :, :]))
         ts_nobs = sum(nobs_land[i, :, :], dims=:height)
 
         ts[vec(ts_nobs).<minnobs] .= NaN
@@ -1175,9 +1175,9 @@ function geotile_adjust!(
             continue
         end
 
-        valid[valid] = GlobalGlacierAnalysislGlacierAnalysis.madnorm(ts_ref[valid]) .< ref_madnorm_max
+        valid[valid] = GlobalGlacierAnalysis.madnorm(ts_ref[valid]) .< ref_madnorm_max
 
-        fit1 = curve_fit(GlobalGlacierAnalysis.model4, Δdecimalyear[valid],GlobalGlacierAnalysisef[valid], GlobalGlacierAnalysis.p4)
+        fit1 = curve_fit(GlobalGlacierAnalysis.model4, Δdecimalyear[valid], ts_ref[valid], GlobalGlacierAnalysis.p4)
         amplitude[i] = fit1.param[2]
 
         ts_fit = GlobalGlacierAnalysis.model4(Δdecimalyear, fit1.param)
@@ -1269,7 +1269,7 @@ function geotile_align!(
         #geotile = dgeotile[700]
         (ridx, cidx) = GlobalGlacierAnalysis.validrange(.!isnan.(dh[mission_ref1][At(geotile), :, :]))
         offset_ref = dropdims(median(dh[mission_ref1][At(geotile), ridx, cidx], dims=:date), dims=:date)
-        #fit = curve_fit(GlobalGlacierAnalysis.offset_trend, collect(dheight[cidx]),GlobalGlacierAnalysiset_ref[:], GlobalGlacierAnalysis.offset_trend_p)
+        #fit = curve_fit(GlobalGlacierAnalysis.offset_trend, collect(dheight[cidx]), offset_ref[:], GlobalGlacierAnalysis.offset_trend_p)
         #offset_ref = DimArray(GlobalGlacierAnalysis.offset_trend(dheight, fit.param), dheight)
 
         for height in dheight[cidx]
@@ -1540,10 +1540,10 @@ function replace_with_model!(dh, nobs, geotiles2replace::AbstractArray; mission_
 
         # fit global model 
         if length(vheight) == 1
-            fit1 = curve_fit(GlobalGlacierAnalysis.model3, t0[valid0], dh0[valid0],GlobalGlacierAnalysis0[valid0], GlobalGlacierAnalysis.p3)
+            fit1 = curve_fit(GlobalGlacierAnalysis.model3, t0[valid0], dh0[valid0], nobs0[valid0], GlobalGlacierAnalysis.p3)
             dh[mission_replace][At(geotile), vdates, vheight] = GlobalGlacierAnalysis.model3(t0[vdates, :][:], fit1.param)
         else
-            fit1 = curve_fit(GlobalGlacierAnalysis.model1, hcat(t0[valid0], h0[valid0]), dh0[valid0],GlobalGlacierAnalysis0[valid0], GlobalGlacierAnaGlobalGlacierAnalGlobalGlacierAnalysisp1; lower=GlobalGlacierAnalGlobalGlacierAnalysislb1, upper=GlobalGlacierAnalysis.ub1)
+            fit1 = curve_fit(GlobalGlacierAnalysis.model1, hcat(t0[valid0], h0[valid0]), dh0[valid0], nobs0[valid0], GlobalGlacierAnalysis.p1; lower=GlobalGlacierAnalysis.lb1, upper=GlobalGlacierAnalysis.ub1)
             dh[mission_replace][At(geotile), vdates, vheight] = GlobalGlacierAnalysis.model1(hcat(t0[vdates, :][:], h0[vdates, :][:]), fit1.param)
         end
 

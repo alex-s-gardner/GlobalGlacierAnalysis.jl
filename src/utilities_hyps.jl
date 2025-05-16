@@ -1584,7 +1584,7 @@ function discharge2smb(glaciers; discharge2smb_max_latitude=-60, discharge2smb_e
 
     for (i, glacier) in enumerate(eachrow(glaciers[index_discharge2smb, :]))
         y = glacier.smb[index_date]
-        fit = curve_fit(GlobalGlacierAnalysis.offset_trend, Δdecyear[index_date]GlobalGlacierAnalysis- mean(y), GlobalGlacierAnalysis.offset_trend_p)
+        fit = curve_fit(GlobalGlacierAnalysis.offset_trend, Δdecyear[index_date], y .- mean(y), GlobalGlacierAnalysis.offset_trend_p)
         discharge0[i, :discharge_gtyr] = fit.param[2] .* sum(glacier.area_km2) / 1000
     end
     return discharge0

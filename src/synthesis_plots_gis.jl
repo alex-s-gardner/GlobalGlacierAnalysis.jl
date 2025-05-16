@@ -75,14 +75,14 @@ begin
     linewidth = 3
     ax1 = f[1, 1] = Axis(f; xlabel = "trend [m i.e. yr⁻¹]", ylabel = "count")
     CairoMakie.stephist!(geotiles0[:, var1], bins = -5:0.25:5; label = "gemb", linewidth)
-    CairoMakie.stephist!(geotiles0[:, var2], bins = -5:0.25:5; label = "GlobalGlacierAnalysis", linewidth); 
+    CairoMakie.stephist!(geotiles0[:, var2], bins = -5:0.25:5; label = "altim", linewidth); 
     axislegend(ax1, framevisible = false); 
     
     var1 = "dv_amplitude"
     var2 = "dv_altim_amplitude"
     ax2 = f[1, 2] = Axis(f; xlabel = "amplitude [m i.e.]", ylabel = "count")
     CairoMakie.stephist!(geotiles0[:, var1], bins = 0:0.25:5; label = "gemb", linewidth)
-    CairoMakie.stephist!(geotiles0[:, var2], bins = 0:0.25:5; label = "GlobalGlacierAnalysis", linewidth); 
+    CairoMakie.stephist!(geotiles0[:, var2], bins = 0:0.25:5; label = "altim", linewidth); 
     axislegend(ax2, framevisible = false); 
     display(f)
 
