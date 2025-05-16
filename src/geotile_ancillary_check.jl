@@ -33,7 +33,7 @@ end
 for mission_geotile_folder in mission_geotile_folders
 
     mission_dir_files = GlobalGlacierAnalysis.allfiles(mission_geotile_folder)
-    paths2GlobalGlacierAnalysis = filter(x -> occursin(".arrow", x), mission_dir_files)
+    paths2altim = filter(x -> occursin(".arrow", x), mission_dir_files)
 
     if isempty(paths2altim)
         @warn "no altimetry files found in: $mission_geotile_folder"

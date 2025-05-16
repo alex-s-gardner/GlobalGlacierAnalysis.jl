@@ -108,7 +108,7 @@ function plot_multiregion_dvdm(
     yticklabels = GlobalGlacierAnalysis.rginum2label.(region_order)
 
     if numbersinylabel
-  yticklabels = ["$(GlobalGlacierAnalysis.rginGlobalGlacierAnalysis.el(id)) $(GlobalGlacierAnalysis.rginum2enclosed_alphanumerics[id])" for id in region_order]
+        yticklabels = ["$(GlobalGlacierAnalysis.rginum2label(id)) $(GlobalGlacierAnalysis.rginum2enclosed_alphanumerics[id])" for id in region_order]
     end
 
     # this is a hack... axes need to be defined early or things break
