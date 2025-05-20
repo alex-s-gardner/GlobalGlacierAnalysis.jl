@@ -14,22 +14,21 @@ The output files are used for visualization and spatial filtering in glacier alt
 """
 
 begin
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     using GeoDataFrames
     import GeoInterface as GI
     using DataFrames
 
 
-    paths = GlobalGlacierAnalysis.pathlocal
+    paths = GGA.pathlocal
     geotile_width = 2;
+    paths = GGA.project_paths(; project_id)
 
     geotiles_file = "geotiles.gpkg"
     if !isfile(geotiles_file)
-        geomfile_rgi6 = joinpath(paths.data_dir, "GlacierOutlines/rgi60/rgi60_Global.gpkg")
-
-        glacier_geom = GeoDataFrames.read(geomfile_rgi6)
-        geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width)
-        geotiles[!, :geometry] = GlobalGlacierAnalysis.GeoTiles.define(2)[:, :geometry]
+        glacier_geom = GeoDataFrames.read(paths[:glacier_individual_outlines])
+        geotiles = GGA.geotiles_w_mask(geotile_width)
+        geotiles[!, :geometry] = GGA.GeoTiles.define(2)[:, :geometry]
         geotiles = geotiles[:, Not([:extent])]
         geotiles = geotiles[geotiles.glacier_frac.>0, :]
 
@@ -43,8 +42,6 @@ begin
     else
         geotiles = GeoDataFrames.read("geotiles.gpkg")
     end
-
-
 
     mission0 = ["GEDI", "ASTER", "ICESat", "ICESat-2", "WorldView"]
     lat_limit0 = [51.6, 83.0, 86.0, 88., 90.]

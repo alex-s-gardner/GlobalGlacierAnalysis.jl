@@ -14,7 +14,7 @@ force remake existing extractions if needed.
 """
 
 begin
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
 
     # Parameters: user defined 
     force_remake = false
@@ -26,9 +26,9 @@ begin
     vars2extract = [:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean];
 
     # Initialize: paths, products, geotiles
-    paths = project_paths(; project_id);
-    products = project_products(; project_id);
-    geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width);
+    paths = GGA.project_paths(; project_id)
+    products = GGA.project_products(; project_id)
+    geotiles = GGA.geotiles_w_mask(geotile_width);
 
     # Subset: region & mission 
     geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
@@ -37,12 +37,12 @@ begin
 
     # Execute: extract masks
     for product in products
-        geotile_extract_mask(geotiles, paths[product.mission].geotile; vars=vars2extract, job_id=product.mission, force_remake=force_remake)
+        GGA.geotile_extract_mask(geotiles, paths[product.mission].geotile; vars=vars2extract, job_id=product.mission, force_remake=force_remake)
     end
 
     # include hugonnet unfiltered
     if hugonnet_unfiltered && (:hugonnet in missions)
-        paths = GlobalGlacierAnalysis.update_geotile_path(paths; mission=:hugonnet, path_replace="/2deg" => "/2deg_unfiltered")
-        geotile_extract_mask(geotiles, paths[:hugonnet].geotile; vars=vars2extract, job_id=:hugonnet, force_remake=force_remake)
+        paths = GGA.update_geotile_path(paths; mission=:hugonnet, path_replace="/2deg" => "/2deg_unfiltered")
+        GGA.geotile_extract_mask(geotiles, paths[:hugonnet].geotile; vars=vars2extract, job_id=:hugonnet, force_remake=force_remake)
     end
 end

@@ -145,7 +145,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
         error("smooth_h2t_length_scale is < 1, should be in the range 2000 to 1, sypically 800")
     end
    
-    t = GlobalGlacierAnalysis.decimalyear.(dims(dh1[first(keys(dh1))], :date))
+    t = decimalyear.(dims(dh1[first(keys(dh1))], :date))
     t = repeat(t, 1, length(dims(dh1[first(keys(dh1))], :height)))
 
     h = val(dims(dh1[first(keys(dh1))], :height))'
@@ -167,7 +167,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
         #mission = "hugonnet"
 
         # find valid range for entire mission so that all filled geotiles cover the same date range
-        rrange, = GlobalGlacierAnalysis.validrange(vec(any(.!isnan.(dh1[mission]), dims=(1, 3))))
+        rrange, = validrange(vec(any(.!isnan.(dh1[mission]), dims=(1, 3))))
 
         Threads.@threads for geotile in dims(dh1[mission], :geotile)
             show_times ? t1 = time() : nothing
@@ -210,7 +210,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
             end
 
             # determine valid range of data
-            (_, crange) = GlobalGlacierAnalysis.validrange(valid1)
+            (_, crange) = validrange(valid1)
             valid0 = valid1[rrange, crange]
 
             # if there are not enough points to fit a model then set all to NaNs
@@ -263,7 +263,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
 
             ###################################### FILTER 2 ####################################
             # filter model1_madnorm_max sigma outliers
-            valid0[valid0] = GlobalGlacierAnalysis.madnorm(dh0_anom) .<= model1_madnorm_max
+            valid0[valid0] = madnorm(dh0_anom) .<= model1_madnorm_max
             vb = sum(valid0)
             df.nbins_filt1 = vb
 
@@ -374,7 +374,7 @@ preserving other aspects of the elevation change signal.
 """
 function hyps_amplitude_normalize!(dh1, params; mission_reference = "icesat2")
 
-    t = GlobalGlacierAnalysis.decimalyear.(dims(dh1[first(keys(dh1))], :date))
+    t = decimalyear.(dims(dh1[first(keys(dh1))], :date))
     t = repeat(t, 1, length(dims(dh1[first(keys(dh1))], :height)))
 
     h = val(dims(dh1[first(keys(dh1))], :height))'
@@ -401,7 +401,7 @@ function hyps_amplitude_normalize!(dh1, params; mission_reference = "icesat2")
             dh0 = dh1[mission][At(geotile), :, :]
             valid = .!isnan.(dh0)
         
-            (rrange, crange) = GlobalGlacierAnalysis.validrange(valid)
+            (rrange, crange) = validrange(valid)
 
             dh0 = dh0[rrange, crange]
             valid = valid[rrange, crange]
@@ -455,7 +455,7 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
         # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 
          # find valid range for entire mission so that all filled geotiles cover the same date range
-        rrange, = GlobalGlacierAnalysis.validrange(vec(any(.!isnan.(dh1[mission]), dims=(1, 3))))
+        rrange, = validrange(vec(any(.!isnan.(dh1[mission]), dims=(1, 3))))
         dh0_median = getindex.(params[mission][:, :param_m1], 1) .+ params[mission][:, :dh0]
         
         # copy dh as it gets morphed inside of parallel loop
@@ -481,7 +481,7 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
                 dh0 .= 0
                 continue
             else
-                crange, = GlobalGlacierAnalysis.validrange(has_ice)
+                crange, = validrange(has_ice)
             end
 
             dh0 = @view dh1[mission][At(geotile), rrange, crange]
@@ -534,7 +534,7 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
                 end
 
                 # if there are any gaps along an elevation profile then they need to be filled
-                (rrange0, crange0) = GlobalGlacierAnalysis.validrange(.!isnan.(dh0))
+                (rrange0, crange0) = validrange(.!isnan.(dh0))
                 if any(isnan.(dh0[rrange0, crange0]))
                     x = 1:size(dh0,2)
                     for i in rrange0
@@ -582,7 +582,7 @@ function hyps_fill_updown!(dh1, geotiles; mask = :glacier)
         # mission = "hugonnet"
         # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
 
-        rrange, = GlobalGlacierAnalysis.validrange(vec(any(.!isnan.(dh1[mission]), dims=(:geotile, :height))))
+        rrange, = validrange(vec(any(.!isnan.(dh1[mission]), dims=(:geotile, :height))))
         dgeotile = dims(dh1[mission], :geotile);
 
         Threads.@threads for geotile in dgeotile
@@ -598,7 +598,7 @@ function hyps_fill_updown!(dh1, geotiles; mask = :glacier)
             if !any(valid)
                 continue
             else
-                crange, = GlobalGlacierAnalysis.validrange(valid)
+                crange, = validrange(valid)
             end
             
             dh0 = @view dh1[mission][At(geotile), rrange, crange]
@@ -890,10 +890,10 @@ Both panels share the same x-axis scale for direct comparison.
 function plot_height_time(dh1; geotile, fig_suffix, fig_folder, figure_suffix, mask=:glacier, mission, showplots=false)
     height = dims(dh1, :height)
     valid = geotile["$(mask)_area_km2"] .> 0
-    crange, = GlobalGlacierAnalysis.validrange(geotile["$(mask)_area_km2"] .> 0)
+    crange, = validrange(geotile["$(mask)_area_km2"] .> 0)
 
     # find valid range for entire mission so that all filled geotiles cover the same date range
-    rrange, = GlobalGlacierAnalysis.validrange(vec(any(.!isnan.(dh1), dims=(1, 3))))
+    rrange, = validrange(vec(any(.!isnan.(dh1), dims=(1, 3))))
 
     # i need to plot twice, once to get colorbar and once to align x-axis.. makie does not yet support catigorical axis.. but coming soon
     color = Plots.cgrad(:balance, rev=true);
@@ -1069,7 +1069,7 @@ function geotile_binarea!(geotile, ras, feature, bin_edges; invert=false, exclud
     # calculate area per cell
     lon = lookup(ras0, X)
     lat = lookup(ras0, Y)
-    d = GlobalGlacierAnalysis.meters2lonlat_distance.(Ref(1), lat)
+    d = meters2lonlat_distance.(Ref(1), lat)
     a = abs.((1 ./ getindex.(d, 2) * (lat[2] .- lat[1])) .* (1 / d[1][1] * (lon[2] - lon[1])))
     area_m2 = repeat(a', outer = [length(lon), 1])
 
@@ -1118,7 +1118,7 @@ function geotiles_mask_hyps(surface_mask, geotile_width)
 
 
     # As of now I can not figure out how to restore geometry using GI.Polygon
-    df2 = GlobalGlacierAnalysis.project_geotiles(; geotile_width);
+    df2 = project_geotiles(; geotile_width);
     if !any(Base.contains.(names(geotiles), "geometry"))
         geotiles = innerjoin(geotiles, df2[!, [:id, :geometry]], on = [:id])
     else
@@ -1153,7 +1153,7 @@ function plot_dh(dh_reg, w; title="", xlims=(DateTime(2000), DateTime(2024)), yl
     dmetric = Dim{:metric}(["mean", "trend", "acceleration", "amplitude", "date_intercept"])
     fit_param = fill(NaN, (dmission, dmetric))
     ddate = dims(dh_reg, :date)
-    decdate = GlobalGlacierAnalysis.decimalyear.(ddate)
+    decdate = decimalyear.(ddate)
     for mission in dmission
         dh0 = dh_reg[At(mission), :]
         valid = .!isnan.(dh0)
@@ -1287,7 +1287,7 @@ Generate filepath for aligned binned elevation change data.
 - `binned_aligned_file`: Full filepath to the aligned binned data file
 """
 function binned_aligned_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
-    binned_filled_file, _ = GlobalGlacierAnalysis.binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
+    binned_filled_file, _ = binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
     binned_aligned_file = replace(binned_filled_file, ".jld2" => "_aligned.jld2")
     return binned_aligned_file
 end
@@ -1311,7 +1311,7 @@ Generate filepath for synthesized binned elevation change data.
 - `binned_synthesized_file`: Full filepath to the synthesized binned data file
 """
 function binned_synthesized_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
-    binned_filled_file, _ = GlobalGlacierAnalysis.binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
+    binned_filled_file, _ = binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
     binned_synthesized_file = replace(binned_filled_file, ".jld2" => "_synthesized.jld2")
     return binned_synthesized_file
 end
@@ -1400,7 +1400,7 @@ end
         df; 
         var2bin="dh",
         dims_edges=("decyear" => 1990:(30/365):2026, "height_reference" => 0.:100.:10000.),
-        binfunction::T = GlobalGlacierAnalysis.binningfun_define(binning_method)
+        binfunction::T = binningfun_define(binning_method)
     ) where {T <: Function} -> Tuple{Union{Nothing, DimArray}, Union{Nothing, DimArray}}
 
 Bin data in a DataFrame by date and elevation into a 2D grid.
@@ -1424,7 +1424,7 @@ function geotile_bin2d(
     df; 
     var2bin="dh",
     dims_edges=("decyear" => 1990:(30/365):2026, "height_reference" => 0.:100.:10000.),
-    binfunction::T = GlobalGlacierAnalysis.binningfun_define(binning_method)
+    binfunction::T = binningfun_define(binning_method)
     ) where {T <: Function}
 
     # bin data by date and elevation
@@ -1452,13 +1452,13 @@ function geotile_bin2d(
         return var0, nobs0
     end
 
-    if !GlobalGlacierAnalysis.vector_overlap(df[!, dims_edges[1][1]], dims_edges[1][2][date_ind]) ||
-    !GlobalGlacierAnalysis.vector_overlap(df[!, dims_edges[2][1]], dims_edges[2][2][height_ind])
+    if !vector_overlap(df[!, dims_edges[1][1]], dims_edges[1][2][date_ind]) ||
+    !vector_overlap(df[!, dims_edges[2][1]], dims_edges[2][2][height_ind])
         
     return var0, nobs0
     end
 
-    df = GlobalGlacierAnalysis.binstats(df, [getindex.(dims_edges,1)...], [getindex.(dims_edges,2)...],
+    df = binstats(df, [getindex.(dims_edges,1)...], [getindex.(dims_edges,2)...],
         var2bin; col_function=[binfunction], missing_bins=true)
 
     gdf = DataFrames.groupby(df, dims_edges[1][1])
@@ -1489,12 +1489,12 @@ end
 
 
 """
-    glacier_discharge(; datadir=GlobalGlacierAnalysis.pathlocal[:data_dir]) -> DataFrame
+    glacier_discharge(; datadir=pathlocal[:data_dir]) -> DataFrame
 
 Load and combine glacier discharge data from multiple sources.
 
 # Arguments
-- `datadir`: Base directory containing glacier data files (default: GlobalGlacierAnalysis.pathlocal[:data_dir])
+- `datadir`: Base directory containing glacier data files (default: pathlocal[:data_dir])
 
 # Returns
 - DataFrame containing glacier discharge information with columns:
@@ -1509,7 +1509,7 @@ Combines discharge data from Kochtitzky (2022) for the Northern Hemisphere and
 Fuerst (2023) for Patagonia. Matches Patagonian glaciers with RGI database entries
 to obtain coordinates, and standardizes data format across sources.
 """
-function glacier_discharge(; datadir=GlobalGlacierAnalysis.pathlocal[:data_dir])
+function glacier_discharge(; datadir=pathlocal[:data_dir])
     # Kochtitzky NH discharge and terminus retreate 
     nh_discharge = joinpath(datadir, "GlacierOutlines/GlacierDischarge/Kochtitzky2022/41467_2022_33231_MOESM4_ESM.csv")
     nothern_hemisphere = CSV.read(nh_discharge, DataFrame; header=14, skipto=16)
@@ -1545,10 +1545,10 @@ function glacier_discharge(; datadir=GlobalGlacierAnalysis.pathlocal[:data_dir])
     df = DataFrame()
     df[!, :latitude] = vcat(nothern_hemisphere.lat, patagonia.Latitude)
     df[!, :longitude] = vcat(nothern_hemisphere.lon, patagonia.Longitude)
-    df[!, :discharge_gtyr] = vcat(nothern_hemisphere[:,"2010_2020_mean_discharge_gt_per_year"], (patagonia[:,"Calving FG"] .* GlobalGlacierAnalysis.δice/1000))
-    df[!, :discharge_err_gtyr] = vcat(nothern_hemisphere[:,"2010_2020_mean_flux_err_gt"], (patagonia[:,"Unc. Calving FG"].* GlobalGlacierAnalysis.δice/1000))
-    df[!, :frontal_ablation_gtyr] = vcat(nothern_hemisphere[:,"Frontal_ablation_2010_to_2020_gt_per_yr_mean"], (patagonia[:,"Frontal ablation Minowa (2000-2019)"].* GlobalGlacierAnalysis.δice/1000))
-    df[!, :frontal_ablation_gtyr] = vcat(nothern_hemisphere[:,"Frontal_ablation_2010_to_2020_gt_per_yr_mean"], (patagonia[:,"Unc. Frontal ablation Minowa (2000-2019)"].* GlobalGlacierAnalysis.δice/1000))
+    df[!, :discharge_gtyr] = vcat(nothern_hemisphere[:,"2010_2020_mean_discharge_gt_per_year"], (patagonia[:,"Calving FG"] .* δice/1000))
+    df[!, :discharge_err_gtyr] = vcat(nothern_hemisphere[:,"2010_2020_mean_flux_err_gt"], (patagonia[:,"Unc. Calving FG"].* δice/1000))
+    df[!, :frontal_ablation_gtyr] = vcat(nothern_hemisphere[:,"Frontal_ablation_2010_to_2020_gt_per_yr_mean"], (patagonia[:,"Frontal ablation Minowa (2000-2019)"].* δice/1000))
+    df[!, :frontal_ablation_gtyr] = vcat(nothern_hemisphere[:,"Frontal_ablation_2010_to_2020_gt_per_yr_mean"], (patagonia[:,"Unc. Frontal ablation Minowa (2000-2019)"].* δice/1000))
 
     return df
 end
@@ -1578,13 +1578,13 @@ function discharge2smb(glaciers; discharge2smb_max_latitude=-60, discharge2smb_e
     discharge0 = DataFrame(latitude=glaciers[index_discharge2smb, :CenLat], longitude=glaciers[index_discharge2smb, :CenLon], discharge_gtyr=NaN, discharge_err_gtyr=NaN, frontal_ablation_gtyr=NaN)
 
     ddate = dims(glaciers[1, :smb], :date)
-    decyear = GlobalGlacierAnalysis.decimalyear.(ddate)
+    decyear = decimalyear.(ddate)
     Δdecyear = decyear .- decyear[1]
     index_date = (ddate .>= discharge2smb_equilibrium_period[1]) .& (ddate .<= discharge2smb_equilibrium_period[2])
 
     for (i, glacier) in enumerate(eachrow(glaciers[index_discharge2smb, :]))
         y = glacier.smb[index_date]
-        fit = curve_fit(GlobalGlacierAnalysis.offset_trend, Δdecyear[index_date], y .- mean(y), GlobalGlacierAnalysis.offset_trend_p)
+        fit = curve_fit(offset_trend, Δdecyear[index_date], y .- mean(y), offset_trend_p)
         discharge0[i, :discharge_gtyr] = fit.param[2] .* sum(glacier.area_km2) / 1000
     end
     return discharge0

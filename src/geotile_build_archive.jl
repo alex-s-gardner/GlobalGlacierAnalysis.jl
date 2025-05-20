@@ -18,7 +18,7 @@ polar regions which require more processing time.
 
 begin
     # add packages
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     using Statistics
     using Dates
 
@@ -32,9 +32,9 @@ begin
     rebuild_geotiles_dataframe = false;
 
     # Initialize: paths, products, geotiles
-    paths = project_paths(; project_id);
-    products = project_products(; project_id);
-    geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width);
+    paths = GGA.project_paths(; project_id);
+    products = GGA.project_products(; project_id);
+    geotiles = GGA.geotiles_w_mask(geotile_width);
 
     # Subset: region & mission 
     geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
@@ -56,10 +56,10 @@ begin
 
             ## 'find' can run in parallel.. therfore run first [GLAH06 = 30 min from scratch]
             # do not use kward `after` as it will cuase downstream issues as earlier data will be excluded
-            geotile_search_granules(geotiles, product.mission, product.name, product.version, paths[product.mission].granules_remote; rebuild_dataframe=rebuild_geotiles_dataframe)
+            GGA.geotile_search_granules(geotiles, product.mission, product.name, product.version, paths[product.mission].granules_remote; rebuild_dataframe=rebuild_geotiles_dataframe)
 
             # load remote granule list
-            geotile_granules = granules_load(paths[product.mission].granules_remote, product.mission; geotiles = geotiles)
+            geotile_granules = GGA.granules_load(paths[product.mission].granules_remote, product.mission; geotiles = geotiles)
 
             # download granules from list [ATL06 17 min, no data]
 
@@ -68,7 +68,7 @@ begin
             foo = true
             while foo
                 try
-                    geotile_download_granules!(geotile_granules, product.mission, paths[product.mission].raw_data, 
+                    GGA.geotile_download_granules!(geotile_granules, product.mission, paths[product.mission].raw_data, 
                         paths[product.mission].granules_local; threads = false, aria2c = true, 
                         rebuild_dataframe = rebuild_geotiles_dataframe, downloadstreams = 8)
 
@@ -80,7 +80,7 @@ begin
         end
 
         # load local granule list [most load time used adding back granule_type]
-        geotile_granules = granules_load(paths[product.mission].granules_local, product.mission; geotiles = geotiles)
+        geotile_granules = GGA.granules_load(paths[product.mission].granules_local, product.mission; geotiles = geotiles)
 
 
         # sort by longitude for imporved speed (less cashing as granules run north-south)
@@ -98,6 +98,6 @@ begin
         ind = (geotile_granules[:, :latitude] .> -91) .& (geotile_granules[:, :latitude] .< -84.9)
         geotile_granules = vcat(geotile_granules[ind, :], geotile_granules[.!ind, :])
 
-        geotile_build(geotile_granules, paths[product.mission].geotile; warnings=false)
+        GGA.geotile_build(geotile_granules, paths[product.mission].geotile; warnings=false)
     end
 end

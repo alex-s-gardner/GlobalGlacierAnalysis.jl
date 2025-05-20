@@ -16,7 +16,8 @@ requiring all component files to be loaded into memory simultaneously.
 For downloading the NASADEM data see:
 https://portal.opentopography.org/datasetMetadata?otCollectionID=OT.032021.4326.2 
 """
-using ArchGDAL, GlobalGlacierAnalysis
+using ArchGDAL
+import GlobalGlacierAnalysis as GGA
 
 path2folder = "/mnt/devon-r2/shared_data/NASADEM/mosaic/";
 suffix = ["wgs84_hgt.tif", "egm08_hgt.tif", "num.tif", "swb.tif"];
@@ -25,7 +26,7 @@ suffix = ["wgs84_hgt.tif", "egm08_hgt.tif", "num.tif", "swb.tif"];
 for suff in suffix
     suff = first(suffix)
     out_vrt = joinpath(path2folder, replace(suff, ".tif" => ".vrt"))
-    in_tifs =  searchdir(path2folder, suff);
+    in_tifs =  GGA.searchdir(path2folder, suff);
     in_tifs = joinpath.(path2folder, in_tifs)
     in_tifs = ArchGDAL.read.(in_tifs)
 

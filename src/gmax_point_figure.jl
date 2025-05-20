@@ -19,7 +19,7 @@ begin
     using NCDatasets
     using GeoDataFrames
     using DimensionalData
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     using Dates
     using Statistics
     using CairoMakie
@@ -28,7 +28,7 @@ begin
     dates4plot = (Date(2000,1,1), Date(2024,10,1))
     seperate_out_snow = false;
 
-    paths = GlobalGlacierAnalysis.pathlocal
+    paths = GGA.pathlocal
 
     glacier_flux_path = joinpath(paths[:project_dir], "gardner2025_glacier_summary_riverflux.nc")
 
@@ -46,9 +46,9 @@ begin #[50s]
     seperate_out_snow && (snow_flux = NCDataset(glacier_rivers_snow_flux_path))
 
     # convert to DimensionalData
-    glacier_flux = GlobalGlacierAnalysis.nc2dd(glacier_flux["runoff"]) / (1000 * u"kg/m^3")
-    land_flux = GlobalGlacierAnalysis.nc2dd(land_flux["flux"])
-    seperate_out_snow && (snow_flux = GlobalGlacierAnalysis.nc2dd(snow_flux["flux"]))
+    glacier_flux = GGA.nc2dd(glacier_flux["runoff"]) / (1000 * u"kg/m^3")
+    land_flux = GGA.nc2dd(land_flux["flux"])
+    seperate_out_snow && (snow_flux = GGA.nc2dd(snow_flux["flux"]))
     # having issues with sortslices
     #@time glacier_flux = sortslices(glacier_flux, dims=:COMID)
     #@time land_flux = sortslices(land_flux, dims=:COMID)
@@ -130,7 +130,7 @@ location = locations[1]
 
     seperate_out_snow && (y .-= y_snow)
 
-    x = GlobalGlacierAnalysis.decimalyear.(collect(dims(land_flux, :Ti)[date_interval]))
+    x = GGA.decimalyear.(collect(dims(land_flux, :Ti)[date_interval]))
     x = vcat(x[1],x, x[end])
     yunits = unit(land_flux[1])
     y = vcat(0*yunits, y, 0*yunits)
@@ -140,7 +140,7 @@ location = locations[1]
     # plot snow flux
     if seperate_out_snow
         y = y_snow;
-        x = GlobalGlacierAnalysis.decimalyear.(collect(dims(land_flux, :Ti)[date_interval]))
+        x = GGA.decimalyear.(collect(dims(land_flux, :Ti)[date_interval]))
         x = vcat(x[1], x, x[end])
         yunits = unit(y[1])
         y = vcat(0.0*yunits , y, 0.0*yunits)
@@ -150,7 +150,7 @@ location = locations[1]
 
     y = collect(glacier_flux[date_interval,At(COMID)])./1000
     yunits = unit(y[1])
-    x = GlobalGlacierAnalysis.decimalyear.(collect(dims(glacier_flux, :Ti)[date_interval]))
+    x = GGA.decimalyear.(collect(dims(glacier_flux, :Ti)[date_interval]))
     x = vcat(x[1],x, x[end])
     y = vcat(0*yunits, y, 0*yunits)
     poly!(ax1, Point.(ustrip(x), ustrip(y)); color = (:blue, 0.5), label = "glacier")
@@ -163,7 +163,7 @@ location = locations[1]
 
     ax2 = Axis(fig[3, 1],  xticks = xticks)
     glacier_frac = glacier_flux[date_interval,At(COMID)] ./ (land_flux[date_interval,At(COMID)] .+ glacier_flux[date_interval,At(COMID)])*100
-    x = GlobalGlacierAnalysis.decimalyear.(collect(dims(glacier_flux, :Ti)[date_interval]))
+    x = GGA.decimalyear.(collect(dims(glacier_flux, :Ti)[date_interval]))
     gmax = groupby(glacier_frac, Ti => Bins(month, 1:12))
     gmax = mean.(gmax; dims=:Ti)
     gmax = cat(gmax...; dims=dims(gmax, :Ti))
@@ -175,15 +175,15 @@ location = locations[1]
     gmax_min = round(Int8, minimum(foo))
     gmax_max = round(Int8, maximum(foo))
 
-    x = GlobalGlacierAnalysis.decimalyear.(collect(dims(glacier_flux, :Ti)[date_interval]))
+    x = GGA.decimalyear.(collect(dims(glacier_flux, :Ti)[date_interval]))
     lines!(ax2, collect(x), collect(glacier_frac); color = (:blue, 0.5))
-    lines!(ax2, [GlobalGlacierAnalysis.decimalyear(dates4plot[1]), GlobalGlacierAnalysis.decimalyear(dates4plot[end])], [gmax_min, gmax_min]; color = (:gray, 0.5), linestyle = :dash)
-    lines!(ax2, [GlobalGlacierAnalysis.decimalyear(dates4plot[1]), GlobalGlacierAnalysis.decimalyear(dates4plot[end])], [gmax_max, gmax_max]; color=(:gray, 0.5), linestyle=:dash)
-    lines!(ax2, [GlobalGlacierAnalysis.decimalyear(dates4plot[1]), GlobalGlacierAnalysis.decimalyear(dates4plot[end])], [gmax, gmax]; color=(:black, 1))
+    lines!(ax2, [GGA.decimalyear(dates4plot[1]), GGA.decimalyear(dates4plot[end])], [gmax_min, gmax_min]; color = (:gray, 0.5), linestyle = :dash)
+    lines!(ax2, [GGA.decimalyear(dates4plot[1]), GGA.decimalyear(dates4plot[end])], [gmax_max, gmax_max]; color=(:gray, 0.5), linestyle=:dash)
+    lines!(ax2, [GGA.decimalyear(dates4plot[1]), GGA.decimalyear(dates4plot[end])], [gmax, gmax]; color=(:black, 1))
     ax2.ylabel = "glacier fraction [%]"
 
     xlims!(ax2, minimum(xticks), maximum(xticks))
-    text!(GlobalGlacierAnalysis.decimalyear(dates4plot[end]), mean((gmax_max, gmax)), text="gmax = $gmax [$(Dates.monthname(gmax_month))] ", align=[:right, :center], color=(:black, 0.8), overdraw=true)
+    text!(GGA.decimalyear(dates4plot[end]), mean((gmax_max, gmax)), text="gmax = $gmax [$(Dates.monthname(gmax_month))] ", align=[:right, :center], color=(:black, 0.8), overdraw=true)
     display(fig)
 
     out_name = replace(split(name, ",")[1], " " => "_")

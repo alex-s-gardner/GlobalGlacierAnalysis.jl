@@ -483,7 +483,7 @@ function river_cumulative_lengths(rivers)
     dcomid = Dim{:COMID}(rivers.COMID)
     river_lengths = DimArray(rivers.lengthkm, dcomid; name = "river lengths [km]")
 
-    river_lengths = GlobalGlacierAnalysis.flux_accumulate!(river_lengths, rivers.COMID, rivers.NextDownID, rivers.headbasin, rivers.basin02; accumulated_length=true)
+    river_lengths = flux_accumulate!(river_lengths, rivers.COMID, rivers.NextDownID, rivers.headbasin, rivers.basin02; accumulated_length=true)
 
     return river_lengths
 end

@@ -106,7 +106,7 @@ function project_geotiles(; geotile_width = 2, domain = :all, extent=nothing)
     elseif domain == :landice
         icemaskfn = paths.icemask
         icemask = GeoArrays.read(icemaskfn);
-        geotilemask = GeoArrays.crop.(Ref(icemask), GlobalGlacierAnalysis.extent2nt.(geotiles.extent))
+        geotilemask = GeoArrays.crop.(Ref(icemask), extent2nt.(geotiles.extent))
         #geotilemask = GeoArrays.crop.(Ref(icemask), geotiles.extent)
         hasice = [any(mask.A.==1) for mask in geotilemask];
         geotiles = geotiles[hasice,:];

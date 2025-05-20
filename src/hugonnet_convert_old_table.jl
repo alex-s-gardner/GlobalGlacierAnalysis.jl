@@ -14,11 +14,11 @@ The reformatting ensures consistent data access patterns for downstream analysis
 """
 
 using DataFrames;
-using GlobalGlacierAnalysis;
+import GlobalGlacierAnalysis as GGA
 using Arrow;
 
 folder = "/mnt/bylot-r3/data/hugonnet/HSTACK/001/geotile/2deg/";
-fns = allfiles(folder; fn_endswith=".arrow");
+fns = GGA.allfiles(folder; fn_endswith=".arrow");
 
 for outfile in fns
     reformat(outfile)

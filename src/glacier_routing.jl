@@ -29,7 +29,7 @@ This module handles the routing of glacier meltwater through river networks.
 
 # Import packages needed for glacier:
 begin
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     using GeoDataFrames
     using Rasters
     using Statistics
@@ -76,10 +76,10 @@ begin
     SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60
 
     #NOTE: glacier variables are in unit of m i.e.
-    volume2mass = GlobalGlacierAnalysis.δice / 1000
+    volume2mass = GGA.δice / 1000
 
     # Load local configuration paths
-    paths = GlobalGlacierAnalysis.pathlocal
+    paths = GGA.pathlocal
 
     # Derived data paths
     glacier_lowest_point_path = replace(paths[:glacier_individual_outlines], ".gpkg" => "_lowest_point.gpkg")
@@ -89,7 +89,7 @@ begin
     # Note: Two options for river data - using corrected or uncorrected data
 
     # Uncorrected river paths (currently used)
-    rivers_paths = GlobalGlacierAnalysis.allfiles(paths[:river]; fn_endswith="MERIT_Hydro_v07_Basins_v01.shp", fn_startswith="riv_pfaf")
+    rivers_paths = GGA.allfiles(paths[:river]; fn_endswith="MERIT_Hydro_v07_Basins_v01.shp", fn_startswith="riv_pfaf")
     glacier_rivers_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
     # Output paths for processed data
@@ -102,7 +102,7 @@ begin
     # TODO: I need to update to use the new glacier_flux path
     # glacier_flux = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
     
-    glacier_vars_fns = reduce(vcat,GlobalGlacierAnalysis.allfiles.(["/mnt/bylot-r3/data/binned_unfiltered/2deg/", "/mnt/bylot-r3/data/binned/2deg/"]; fn_endswith="synthesized_perglacier.jld2"))
+    glacier_vars_fns = reduce(vcat,GGA.allfiles.(["/mnt/bylot-r3/data/binned_unfiltered/2deg/", "/mnt/bylot-r3/data/binned/2deg/"]; fn_endswith="synthesized_perglacier.jld2"))
     # glacier_vars_fns = ["/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_synthesized_perglacier.jld2"]
 
     # GLDAS flux data configuration
@@ -219,13 +219,13 @@ if !isfile(glacier_rivers_path)
         buff = 0;
         while isempty(potential_river_idxs)
             buff += 1_000 # distance in meters
-            potential_river_idxs = SortTileRecursiveTree.query(tree, GlobalGlacierAnalysis.to_latlong_polygon(GlobalGlacierAnalysis.UnitSphericalCap(pt, buff), 16))
+            potential_river_idxs = SortTileRecursiveTree.query(tree, GGA.to_latlong_polygon(GGA.UnitSphericalCap(pt, buff), 16))
         end
 
         if length(potential_river_idxs) == 1
             river_indices[idx] = potential_river_idxs[1]
         else
-            river_distances = [GlobalGlacierAnalysis.haversine_distance(pt, rivers.geometry[river_idx]) for river_idx in potential_river_idxs]
+            river_distances = [GGA.haversine_distance(pt, rivers.geometry[river_idx]) for river_idx in potential_river_idxs]
             river_indices[idx] = first(potential_river_idxs[river_distances .== minimum(river_distances)])
         end
     end
@@ -243,7 +243,7 @@ if !isfile(glacier_rivers_path)
     glaciers[!, :RiverIDTrace] .= [Int64[]]
     @showprogress dt=1 desc="Tracing downstream..." for r in eachrow(glaciers)
     #r = eachrow(glaciers)[1]
-        r.RiverIDTrace = GlobalGlacierAnalysis.trace_downstream(r.RiverID, rivers.COMID, rivers.NextDownID; maxiters=length(rivers.COMID))
+        r.RiverIDTrace = GGA.trace_downstream(r.RiverID, rivers.COMID, rivers.NextDownID; maxiters=length(rivers.COMID))
     end
 
     # save the glaciers with the routing information
@@ -337,7 +337,7 @@ begin # [4 minutes]
 
     for tsvar in vars2route
     #tsvar = "runoff"
-        var0 = GlobalGlacierAnalysis.nc2dd(glacier_flux_nc[tsvar])
+        var0 = GGA.nc2dd(glacier_flux_nc[tsvar])
 
         # convert from Gt to kg³/s
         dTi = dims(var0, :Ti)
@@ -412,7 +412,7 @@ begin # [4 minutes]
         end
 
         # accululate inputs downstream
-        river_flux[tsvar] = GlobalGlacierAnalysis.flux_accumulate!(river_inputs[tsvar], rivers.COMID, rivers.NextDownID, rivers.headbasin, rivers.basin02) #[< 1 second]
+        river_flux[tsvar] = GGA.flux_accumulate!(river_inputs[tsvar], rivers.COMID, rivers.NextDownID, rivers.headbasin, rivers.basin02) #[< 1 second]
 
         # save data as netcdf
         # data needs to be Float32 (not Real) for saving as netcdf

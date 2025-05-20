@@ -14,8 +14,8 @@ The canopy height data is from ETH's Global Canopy Height 10m 2020 dataset.
 """
 
 begin
-    using GlobalGlacierAnalysis, GeoArrays, Dates, Arrow, DataFrames
-
+    using GeoArrays, Dates, Arrow, DataFrames
+    import GlobalGlacierAnalysis as GGA
     ## Download canopy height data in teminal
     #= 
     ;cd /mnt/devon-r0/shared_data/canopy_height/
@@ -32,9 +32,9 @@ begin
     hugonnet_unfiltered = true;
 
     # Initialize: paths, products, geotiles
-    paths = project_paths(; project_id);
-    products = project_products(; project_id);
-    geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width);
+    paths = GGA.project_paths(; project_id);
+    products = GGA.project_products(; project_id);
+    geotiles = GGA.geotiles_w_mask(geotile_width);
 
     # Subset: region & mission 
     geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
@@ -42,13 +42,13 @@ begin
     products = getindex(products, missions)
 
     # Execute: extract canopy height
-    ga = GeoArrays.read(setpaths().canopyheight_10m_v1, masked=false);
+    ga = GeoArrays.read(GGA.setpaths().canopyheight_10m_v1, masked=false)
     nodatavalue = 255;
-    GlobalGlacierAnalysis.geotile_pointextract(geotiles, [paths[mission].geotile for mission in missions], ga; var_name = :canopyh, job_ids = [missions...], nodatavalue = nodatavalue, force_remake = force_remake)
+    GGA.geotile_pointextract(geotiles, [paths[mission].geotile for mission in missions], ga; var_name = :canopyh, job_ids = [missions...], nodatavalue = nodatavalue, force_remake = force_remake)
 
     # include hugonnet unfiltered
     if hugonnet_unfiltered && (:hugonnet in missions)
-        paths = GlobalGlacierAnalysis.update_geotile_path(paths; mission=:hugonnet, path_replace="/2deg" => "/2deg_unfiltered")
-        GlobalGlacierAnalysis.geotile_pointextract(geotiles, paths[:hugonnet].geotile, ga; var_name=:canopyh, job_ids=[:hugonnet,], nodatavalue=nodatavalue, force_remake=force_remake)
+        paths = GGA.update_geotile_path(paths; mission=:hugonnet, path_replace="/2deg" => "/2deg_unfiltered")
+        GGA.geotile_pointextract(geotiles, paths[:hugonnet].geotile, ga; var_name=:canopyh, job_ids=[:hugonnet,], nodatavalue=nodatavalue, force_remake=force_remake)
     end
 end

@@ -12,9 +12,10 @@ This script:
 The script is designed for maintenance and cleanup of geotile data directories
 when specific derived products need to be regenerated.
 """
-    begin
+begin
+    import GlobalGlacierAnalysis as GGA
     project_id = :v01;
-    paths = project_paths(; project_id);
+    paths = GGA.project_paths(; project_id)
     delete_temp_files = true
 
     #mission = ["icesat2", "icesat",  "gedi",  "hugonnet"]
@@ -41,7 +42,7 @@ when specific derived products need to be regenerated.
 
     for mission in missions
         for filesufx in filesufxs
-            files2delete = allfiles(paths[Symbol(mission)].geotile; fn_endswith = filesufx)
+            files2delete = GGA.allfiles(paths[Symbol(mission)].geotile; fn_endswith = filesufx)
 
             if isempty(files2delete)
                 continue
@@ -51,7 +52,7 @@ when specific derived products need to be regenerated.
         end
 
         if delete_temp_files
-            files2delete = allfiles(paths[Symbol(mission)].geotile; fn_startswith="jl_")
+            files2delete = GGA.allfiles(paths[Symbol(mission)].geotile; fn_startswith="jl_")
 
             if isempty(files2delete)
                 continue

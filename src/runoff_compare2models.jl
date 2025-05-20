@@ -14,7 +14,7 @@ multiple visualization outputs in the figures directory.
 """
 
 begin
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     using NCDatasets
     using GeoDataFrames
     import GeometryOps as GO
@@ -28,12 +28,12 @@ begin
     using Statistics
     using LsqFit
     using Unitful
-    using GlobalGlacierAnalysis.MyUnits
+    using GGA.MyUnits
 
     dates2average = [Date("2000-01-01"), Date("2025-01-01")]
     glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
    
-    paths = GlobalGlacierAnalysis.pathlocal
+    paths = GGA.pathlocal
     km2Gt = 910/1000
 end
 
@@ -53,7 +53,7 @@ begin #[70s cold]
     basins = GeoDataFrames.read(paths[:river_major_basins])
 
     # load wimberly 2024 data to subset basins [is in units of Gt]
-    runoff_modeled = GlobalGlacierAnalysis.wimberly2024()
+    runoff_modeled = GGA.wimberly2024()
     dbasin = collect(dims(runoff_modeled, :Basin))
 
     # this is done in 2 steps to minimize risk of `occursin` returning an incorrect match
@@ -84,7 +84,7 @@ begin
     glacier_runoff = NCDataset(glacier_summary_file)
 
     # convert to DimensionalData
-    glacier_runoff = GlobalGlacierAnalysis.nc2dd(glacier_runoff["runoff"])
+    glacier_runoff = GGA.nc2dd(glacier_runoff["runoff"])
 
     
     dTi = dims(glacier_runoff, :Ti)
@@ -157,7 +157,7 @@ begin
                 
                 gts = groupby(ts, Ti => year)
                 ts_annual = ustrip(sum.(gts[length.(gts) .== 12]))
-                fit = curve_fit(GlobalGlacierAnalysis.model_trend, 1:(ts_annual), ts_annual, GlobalGlacierAnalysis.p_trend)
+                fit = curve_fit(GGA.model_trend, 1:(ts_annual), ts_annual, GGA.p_trend)
                 basin_runoff_trend[At(basin), At(ssp), At(model)] = fit.param[2] 
 
                 basin_runoff_mean[At(basin), At(ssp), At(model)] = mean(ts_annual);

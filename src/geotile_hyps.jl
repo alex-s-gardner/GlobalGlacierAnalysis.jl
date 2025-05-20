@@ -15,7 +15,7 @@ which can be used for hypsometric analysis of glacier and land areas.
 """
 
 begin
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     using Rasters
     using Shapefile
     using DataFrames 
@@ -35,18 +35,18 @@ end
 for mask in masks
     
     runid = "geotile_$(mask)_hyps"
-    binned_folder = analysis_paths(; geotile_width).binned
+    binned_folder = GGA.analysis_paths(; geotile_width).binned
     out_file = joinpath(binned_folder, "$(runid).arrow");
 
     if !isfile(out_file) || force_remake
-        height_range, height_center = GlobalGlacierAnalysis.project_height_bins()
+        height_range, height_center = GGA.project_height_bins()
         Δh = abs(height_center[2] - height_center[1])
 
         excludemask_flag = false
 
         var_name = Symbol("$(mask)_area_km2")
-        geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width);
-        fn_raster = GlobalGlacierAnalysis.pathlocal[raster_file];
+        geotiles = GGA.geotiles_w_mask(geotile_width);
+        fn_raster = GGA.pathlocal[raster_file];
         ras = Raster(fn_raster; lazy=true);
 
         if mask == :land
@@ -57,7 +57,7 @@ for mask in masks
             invert = false
         end
 
-        fn_shp = GlobalGlacierAnalysis.pathlocal[shp];
+        fn_shp = GGA.pathlocal[shp];
         feature = Shapefile.Handle(fn_shp);
 
         geotiles[!, var_name] = [zeros(size(height_centers)) for r in 1:nrow(geotiles)];
@@ -65,7 +65,7 @@ for mask in masks
 
         if mask == :land
             shp = Symbol("$(:glacier)_shp")
-            fn_shp = GlobalGlacierAnalysis.pathlocal[shp]
+            fn_shp = GGA.pathlocal[shp]
             excludefeature = Shapefile.Handle(fn_shp)
         else
             excludefeature = nothing

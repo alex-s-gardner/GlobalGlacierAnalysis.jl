@@ -21,7 +21,7 @@ Key outputs:
 """
 
 begin
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     using FileIO
     using Dates
     using GeoDataFrames
@@ -32,7 +32,7 @@ begin
 
     reference_run = "binned/2deg/glacier_dh_best_meanmadnorm5_v01_filled_ac_p2_synthesized.jld2"
 
-    paths = GlobalGlacierAnalysis.pathlocal
+    paths = GGA.pathlocal
 end
 
 # export trends and amplitudes for plotting of reference_run only
@@ -47,7 +47,7 @@ begin
     
     # Fit temporal trends to all variables
     source_crs1 = GFT.EPSG(4326)
-    geotiles0 = GlobalGlacierAnalysis.df_tsfit!(geotiles0, vars_ts; datelimits = (DateTime(2000,1,1), DateTime(2023,1,1)))
+    geotiles0 = GGA.df_tsfit!(geotiles0, vars_ts; datelimits = (DateTime(2000,1,1), DateTime(2023,1,1)))
     geotiles0[!,:area_km2] = sum.(geotiles0[!,:area_km2])
     outfile = joinpath(paths.data_dir, "project_data", "geotiles_rates_km3yr.arrow");
     GeoDataFrames.write(outfile, geotiles0[:, Not(vars_no_write)]; crs=source_crs1)
@@ -66,7 +66,7 @@ begin
     end
 
     # Fit temporal trends to all variables (easier than finding all of the fits and then multiplying by mie2cubickm)
-    geotiles0 = GlobalGlacierAnalysis.df_tsfit!(geotiles0, vars_ts; datelimits = (DateTime(2000,1,1), DateTime(2025,1,1)))
+    geotiles0 = GGA.df_tsfit!(geotiles0, vars_ts; datelimits = (DateTime(2000,1,1), DateTime(2025,1,1)))
 
     # plot a histogram of the rates
     f = Figure();

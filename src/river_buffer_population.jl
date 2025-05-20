@@ -24,7 +24,7 @@ begin
     progress = true
 
     using ProgressMeter
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     import GeoFormatTypes as GFT
     using Proj
     import GeometryOps as GO
@@ -55,7 +55,7 @@ begin
     using ColorSchemes
     using Format
     # Load local configuration paths
-    paths = GlobalGlacierAnalysis.pathlocal
+    paths = GGA.pathlocal
 
     # exclude rivers at high latitudes and near the dateline when calculating population
     latlim = 85.0
@@ -150,16 +150,16 @@ if !isfile(population_file)
 
     
     # 94s for all countires, gmax = 50, buffer_radii = 30km
-    @time population = GlobalGlacierAnalysis.compute_population(gpw_ras, rivers, country_polygons, gmax, runoff, buffer_radii; progress=true)
+    @time population = GGA.compute_population(gpw_ras, rivers, country_polygons, gmax, runoff, buffer_radii; progress=true)
 
     name = "population"
     global_attributes = Dict(
         "title" => "population living within a buffer distance of a river with a gmax threshold",
         "version" => "beta - " * Dates.format(now(), "yyyy-mm-dd"),
         )
-    fn = GlobalGlacierAnalysis.dimarray2netcdf(population, population_file; name, units=nothing, global_attributes)
+    fn = GGA.dimarray2netcdf(population, population_file; name, units=nothing, global_attributes)
 else
-    population = GlobalGlacierAnalysis.netcdf2dimarray(population_file; varname=nothing)
+    population = GGA.netcdf2dimarray(population_file; varname=nothing)
 end
 
 

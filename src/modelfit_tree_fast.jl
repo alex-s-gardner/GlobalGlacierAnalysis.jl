@@ -1,3 +1,5 @@
+import GlobalGlacierAnalysis as GGA
+
 """ 
     TSModelParameters
 Defines TSModelParameters parameter type
@@ -59,7 +61,7 @@ function ts_fit(
     θ = fill(NaN, size(p.coeff_name))
     mad_out = NaN;
 
-    if (length(x) >= p.count_min) && (GlobalGlacierAnalysis.range(t) >= p.t_min_range)
+    if (length(x) >= p.count_min) && (GGA.range(t) >= p.t_min_range)
         
         # data points are grouped by time to remove outliers and improve speed
 
@@ -169,7 +171,7 @@ function geotile_ts_fit(
             y_max=ceil(minmax_y[2], digits=-4)
         )
 
-        griddef = regular_grid(center_extent, grid.node_spacing, node_width=grid.node_width);
+        griddef = GGA.regular_grid(center_extent, grid.node_spacing, node_width=grid.node_width);
 
         # build tree
         tree = KDTree(vcat(df.X', df.Y'); leafsize=1000)
@@ -198,7 +200,7 @@ function geotile_ts_fit(
                 length(idx) >= p.count_min || continue
 
                 # should we continue ?
-                GlobalGlacierAnalysis.range(@view(df.decyear[idx])) >= p.t_min_range || continue
+                GGA.range(@view(df.decyear[idx])) >= p.t_min_range || continue
 
                 # sort as a funciton of time to speedup ts_fit
                 #k = @view(idx[sortperm(@view(decyear[idx]))])
@@ -214,7 +216,7 @@ function geotile_ts_fit(
         begin
             df0 = DataFrame()
             valid = .!isnan.(coefficeints[:, :, 1])
-            df0[!, :longitude], df0[!, :latitude] = epsg2epsg(x_cord[valid], y_cord[valid], epsg, "EPSG:4326", parse_output=true)
+            df0[!, :longitude], df0[!, :latitude] = GGA.epsg2epsg(x_cord[valid], y_cord[valid], epsg, "EPSG:4326", parse_output=true)
             df0[!, :height] = height[valid]
             for i = eachindex(p.coeff_name)
                 df0[!, p.coeff_name[i]] = coefficeints[:, :, i][valid]

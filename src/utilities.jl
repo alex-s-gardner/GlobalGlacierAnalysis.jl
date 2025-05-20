@@ -2825,7 +2825,7 @@ function geotile_track_offset(
 
         # read in dem data
         df = DataFrame(Arrow.Table(fn_dem))
-        deminfo, goids_folder = GlobalGlacierAnalysis.dem_info(:arcticdem_v3_10m)
+        deminfo, goids_folder = dem_info(:arcticdem_v3_10m)
 
         # difference altimetry with dem
         df[!, :dh] = Arrow.Table(path2geotile)[:height] .- df.height
@@ -3523,7 +3523,7 @@ function geotiles_w_mask(geotile_width; resolution = (X=.001, Y= .001), remake =
             sym = Symbol("$(mask)_frac")
             geotiles[!,sym] = zeros(nrow(geotiles))
             for geotile in eachrow(geotiles)
-                mask = GlobalGlacierAnalysis.mask_rasterize(feature, geotile.extent, resolution; target_crs=EPSG(4326), source_crs=EPSG(4326), boundary = :center);
+                mask = mask_rasterize(feature, geotile.extent, resolution; target_crs=EPSG(4326), source_crs=EPSG(4326), boundary = :center);
                 geotile[sym] = sum(mask) / length(mask)
             end
         end
@@ -3543,7 +3543,7 @@ function geotiles_w_mask(geotile_width; resolution = (X=.001, Y= .001), remake =
             for geotile in eachrow(geotiles)
                 for (id, rgi_id) in zip(ids, rgi_ids)
                     idx = feature.RGI_CODE .== id
-                    mask = GlobalGlacierAnalysis.mask_rasterize(feature.geometry[idx], geotile.extent, (X=.01, Y= .01); target_crs=EPSG(4326), source_crs=EPSG(4326), boundary=:center)
+                    mask = mask_rasterize(feature.geometry[idx], geotile.extent, (X=.01, Y= .01); target_crs=EPSG(4326), source_crs=EPSG(4326), boundary=:center)
 
                     if any(mask)
                         geotile[rgi_id] = sum(mask) / length(mask)
@@ -3761,7 +3761,7 @@ function add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder)
             dem = select!(DataFrame(Arrow.Table(path2dem)), :height, :dhddx, :dhddy)
 
             # a bit faster to calculate curvature on all data then subset
-            curv = GlobalGlacierAnalysis.curvature.(dem.dhddx, dem.dhddy, Ref(GlobalGlacierAnalysis.dem_info(dem_id1)[1].epsg), lat=mean(geotile.extent.Y))
+            curv = curvature.(dem.dhddx, dem.dhddy, Ref(dem_info(dem_id1)[1].epsg), lat=mean(geotile.extent.Y))
 
             ind = .!isnan.(curv) .& (abs.(dem.height) .< 9998)
 
@@ -3824,7 +3824,7 @@ function highres_mask(geotile, feature, invert, excludefeature)
     # calculate area per cell
     lon = lookup(mask1, X)
     lat = lookup(mask1, Y)
-    d = GlobalGlacierAnalysis.meters2lonlat_distance.(Ref(1), lat)
+    d = meters2lonlat_distance.(Ref(1), lat)
     a = abs.((1 ./ getindex.(d, 2) * (lat[2] .- lat[1])) .* (1 / d[1][1] * (lon[2] - lon[1])))
     area_m2 = repeat(a', outer=[length(lon), 1])
 
@@ -3859,7 +3859,7 @@ function highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, 
     y_mask = Y(geotile.extent.Y[1]:grid_resolution:geotile.extent.Y[2],
         sampling=DimensionalData.Intervals(DimensionalData.Start()))
 
-    valid = GlobalGlacierAnalysis.within.(Ref(geotile.extent), altim.longitude, altim.latitude)
+    valid = within.(Ref(geotile.extent), altim.longitude, altim.latitude)
     masks0[!, surface_mask] .= false
 
     fast_index = true
@@ -3898,11 +3898,11 @@ Create a binning function based on the specified method.
 """
 function binningfun_define(binning_method)
     if binning_method == "meanmadnorm3"
-        x -> mean(x[GlobalGlacierAnalysis.madnorm(x).<3])
+        x -> mean(x[madnorm(x).<3])
     elseif binning_method == "meanmadnorm5"
-        x -> mean(x[GlobalGlacierAnalysis.madnorm(x).<5])
+        x -> mean(x[madnorm(x).<5])
     elseif binning_method == "meanmadnorm10"
-        x -> mean(x[GlobalGlacierAnalysis.madnorm(x).<10])
+        x -> mean(x[madnorm(x).<10])
     elseif binning_method == "median"
         x -> median(x)
     else
@@ -3998,7 +3998,7 @@ converting the number to a text key using `rginum2txt` and then looking up the l
 in the `rgi2label` dictionary.
 """
 function rginum2label(rginum) 
-    return getindex(GlobalGlacierAnalysis.rgi2label,getindex(GlobalGlacierAnalysis.rginum2txt, rginum))
+    return getindex(rgi2label,getindex(rginum2txt, rginum))
 end
 
 
@@ -4109,7 +4109,7 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
 
     for tsvar in tsvars
         ddate = colmetadata(df, tsvar, "date")
-        x = GlobalGlacierAnalysis.decimalyear.(ddate)
+        x = decimalyear.(ddate)
         x = x .- mean(x)
 
         out_var_offset = string(tsvar)*"_offset"
@@ -4133,10 +4133,10 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
             valid = .!isnan.(y) .& date_index
 
             fit = curve_fit(
-                GlobalGlacierAnalysis.offset_trend_seasonal2, 
+                offset_trend_seasonal2, 
                 x[valid], 
                 y[valid], 
-                GlobalGlacierAnalysis.p_offset_trend_seasonal
+                p_offset_trend_seasonal
                 )
 
             g[out_var_offset] = fit.param[1]
@@ -4269,7 +4269,7 @@ function nc2dd(cfv)
         try
             units = Unitful.uparse(unit; unit_context=Unitful.unitmodules)
         catch
-            units = GlobalGlacierAnalysis.unit_convert[unit]
+            units = unit_convert[unit]
         end
     else
         units = NoUnits
@@ -4428,11 +4428,11 @@ dimensional array structure with dimensions for region, date, and error bounds.
 The error values are multiplied by 2 to represent 95% confidence intervals.
 """
 function grace_masschange(; path2file=setpaths()[:grace_rgi])
-    grace_raw = GlobalGlacierAnalysis.read_grace_rgi(; path2file)
+    grace_raw = read_grace_rgi(; path2file)
 
     # organize GRACE grace data into a DimArray
     drgi = Dim{:rgi}(collect([1:19..., 98:99...]))
-    ddate = Dim{:date}(vec(GlobalGlacierAnalysis.datenum2date.(grace_raw["rgi1"]["dM_gt_mdl_fill_date"])))
+    ddate = Dim{:date}(vec(datenum2date.(grace_raw["rgi1"]["dM_gt_mdl_fill_date"])))
     derror = Dim{:error}([false, true])
 
     grace = fill(NaN, drgi, ddate, derror)
@@ -4525,7 +4525,7 @@ function glambie2024(; path2glambie=paths = setpaths()[:glambie_2024])
     drgi = Dim{:rgi}(vcat(collect(1:19), 98, 99))
     derror = Dim{:error}([false, true])
     @warn "GlaMBIE dates are shifted by up to 6 months from the original data to align dates across hemispheres"
-    ddate = Dim{:date}(collect(GlobalGlacierAnalysis.decimalyear2datetime.(2000:2024)); name="GlaMBIE 2024 cumulative glacier mass balance [GLAMBIE]")
+    ddate = Dim{:date}(collect(decimalyear2datetime.(2000:2024)); name="GlaMBIE 2024 cumulative glacier mass balance [GLAMBIE]")
 
     glambie_Gt = fill(NaN, drgi, ddate, derror)
 
@@ -4538,7 +4538,7 @@ function glambie2024(; path2glambie=paths = setpaths()[:glambie_2024])
         scol = (i - 1) * 3 + 1
         date1 = round.(df[:, scol])
         valid = .!ismissing.(date1)
-        date1 = collect(GlobalGlacierAnalysis.decimalyear2datetime.(date1[valid]))
+        date1 = collect(decimalyear2datetime.(date1[valid]))
 
         glambie_Gt[At(rgi), At(date1), At(false)] = coalesce.(df[valid, scol+1], NaN)
         glambie_Gt[At(rgi), At(date1), At(true)] = coalesce.(df[valid, scol+2], NaN)
@@ -4558,8 +4558,8 @@ function glambie2024(; path2glambie=paths = setpaths()[:glambie_2024])
         for err_flag in derror
             valid = .!isnan.(glambie_Gt[At(rgi), :, At(err_flag)])
             if !all(valid)
-                fit = curve_fit(GlobalGlacierAnalysis.model1_trend, collect(GlobalGlacierAnalysis.decimalyear.(ddate[valid])), collect(glambie_Gt[At(rgi), :, At(err_flag)][valid]), GlobalGlacierAnalysis.p_trend)
-                glambie_Gt[At(rgi), .!valid, At(err_flag)] = GlobalGlacierAnalysis.model1_trend(GlobalGlacierAnalysis.decimalyear.(collect(ddate[.!valid])), fit.param)
+                fit = curve_fit(model1_trend, collect(decimalyear.(ddate[valid])), collect(glambie_Gt[At(rgi), :, At(err_flag)][valid]), p_trend)
+                glambie_Gt[At(rgi), .!valid, At(err_flag)] = model1_trend(decimalyear.(collect(ddate[.!valid])), fit.param)
             end
         end
     end

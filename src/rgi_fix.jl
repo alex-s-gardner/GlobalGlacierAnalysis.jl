@@ -12,12 +12,13 @@ The conversion is necessary for compatibility with certain GIS operations
 that require consistent geometry types across all features.
 """
 using ArchGDAL
+import GlobalGlacierAnalysis as GGA
 
 folder = "/Users/gardnera/data/GlacierOutlines/RGI2000-v7.0-C-global"
 
 cp(folder, folder * "-fix", force=true)
 
-shp = allfiles(folder; subfolders=true, fn_endswith=".shp")
+shp = GGA.allfiles(folder; subfolders=true, fn_endswith=".shp")
 
 for s in shp
     d = ArchGDAL.read(s)

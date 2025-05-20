@@ -152,7 +152,7 @@ function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
                 ddate = dims(regional_sum[varname][:,:,minimum(daterange)..maximum(daterange)], :date)
             end
 
-            x = GlobalGlacierAnalysis.decimalyear.(ddate)
+            x = decimalyear.(ddate)
             x = x .- mean(x)
 
             
@@ -164,11 +164,11 @@ function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
                 end
 
                 # first fit linear trend and seasonal [this creates less spread in linear fit as acceleration fixed to zero]
-                dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_seasonal2, x, y, GlobalGlacierAnalysis.p3)
+                dm_fit = curve_fit(offset_trend_seasonal2, x, y, p3)
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("trend")] = dm_fit.param[2]
 
                 # then fit linear trend and acceleration and seasonal
-                dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_acceleration_seasonal2, x, y, GlobalGlacierAnalysis.p3)
+                dm_fit = curve_fit(offset_trend_acceleration_seasonal2, x, y, p3)
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("acceleration")] = dm_fit.param[3]
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("amplitude")] = hypot(dm_fit.param[4], dm_fit.param[5])
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("phase")] = 365.25 * (mod(0.25 - atan(dm_fit.param[5], dm_fit.param[4]) / (2π), 1))
@@ -219,7 +219,7 @@ function rgi_trends(da::AbstractDimArray, daterange)
 
     ddate = dims(da[:,minimum(daterange)..maximum(daterange)], :date)
 
-    d = GlobalGlacierAnalysis.decimalyear.(ddate)
+    d = decimalyear.(ddate)
     d = d .- mean(d)
 
     region_fit = zeros(drgi, dparameter)
@@ -227,11 +227,11 @@ function rgi_trends(da::AbstractDimArray, daterange)
     for rgi in drgi
 
         # first fit linear trend and seasonal [this creates less spread in linear fit as acceleration fixed to zero]
-        dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_seasonal2, d, da[At(rgi), minimum(daterange)..maximum(daterange)], GlobalGlacierAnalysis.p3)
+        dm_fit = curve_fit(offset_trend_seasonal2, d, da[At(rgi), minimum(daterange)..maximum(daterange)], p3)
         region_fit[At(rgi), At("trend")] = dm_fit.param[2]
 
         # then fit linear trend and acceleration and seasonal
-        dm_fit = curve_fit(GlobalGlacierAnalysis.offset_trend_acceleration_seasonal2, d, da[At(rgi), minimum(daterange)..maximum(daterange)], GlobalGlacierAnalysis.p3)
+        dm_fit = curve_fit(offset_trend_acceleration_seasonal2, d, da[At(rgi), minimum(daterange)..maximum(daterange)], p3)
         region_fit[At(rgi), At("acceleration")] = dm_fit.param[3]
         region_fit[At(rgi), At("amplitude")] = hypot(dm_fit.param[4], dm_fit.param[5])
         region_fit[At(rgi), At("phase")] = 365.25 * (mod(0.25 - atan(dm_fit.param[5], dm_fit.param[4]) / (2π), 1))
@@ -446,13 +446,13 @@ error estimates, and combines them into a single data structure with an error di
 """
 function runs_ref_and_err(runs_rgi, path2reference; p = 0.95)
     # remove reference run
-    runs_rgi_delta = GlobalGlacierAnalysis.runs_delta!(deepcopy(runs_rgi), path2reference)
+    runs_rgi_delta = runs_delta!(deepcopy(runs_rgi), path2reference)
 
     # get 95% confidence interval
-    regions_err = GlobalGlacierAnalysis.runs_quantile(runs_rgi_delta, p; on_abs=true)
+    regions_err = runs_quantile(runs_rgi_delta, p; on_abs=true)
 
     # selected run as reference
-    regions_ref = GlobalGlacierAnalysis.runs_select(runs_rgi, path2reference)
+    regions_ref = runs_select(runs_rgi, path2reference)
 
     regions = Dict()
     derror = Dim{:error}([false, true])
@@ -529,7 +529,7 @@ function rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend=nothin
     varnames = ["dm", "runoff"]  # unit of Gt
 
     # fit trend to all glaciers
-    GlobalGlacierAnalysis.df_tsfit!(glaciers, varnames; progress=true, datelimits=dates4trend)
+    df_tsfit!(glaciers, varnames; progress=true, datelimits=dates4trend)
 
     
     # add rgi column
@@ -583,7 +583,7 @@ them in the column headers.
 """
 function error_bar_table(region_fits, varnames, params, rgis; digits=2)
 
-    rgi_labels = GlobalGlacierAnalysis.rginum2label.(rgis)
+    rgi_labels = rginum2label.(rgis)
 
     regional_results = DataFrames.DataFrame(rgi = rgis, region_name = rgi_labels)
 
@@ -606,7 +606,7 @@ function error_bar_table(region_fits, varnames, params, rgis; digits=2)
     end
 
     for (i, rgi) in enumerate(rgis)
-        #println("$(GlobalGlacierAnalysis.rginum2label(rgi))")
+        #println("$(rginum2label(rgi))")
         for varname in varnames
             #println("    $(varname)")
             for param in params
@@ -675,7 +675,7 @@ function geotile2dimarray_kgm2(
 
     # trim data to valid range and update date metadata
     if trim
-        valid, = GlobalGlacierAnalysis.validrange(.!isnan.(geotiles0[1, vars2extract[1]]))
+        valid, = validrange(.!isnan.(geotiles0[1, vars2extract[1]]))
     else
         valid = 1:length(geotiles0[1, vars2extract[1]])
     end
@@ -748,8 +748,8 @@ error estimates based on the quantile of absolute differences.
 """
 function geotiles_mean_error(path2ref, path2files; p=0.95, reference_period=nothing)
 
-    geotiles_ref = GlobalGlacierAnalysis.geotile2dimarray_kgm2(path2ref; reference_period)
-    geotiles0 = GlobalGlacierAnalysis.geotile2dimarray_kgm2.(path2files; reference_period)
+    geotiles_ref = geotile2dimarray_kgm2(path2ref; reference_period)
+    geotiles0 = geotile2dimarray_kgm2.(path2files; reference_period)
 
     # calculate the deviation relative to a reference run
     for gt in geotiles0

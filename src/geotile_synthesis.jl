@@ -27,7 +27,7 @@ begin
 end
 # LOAD PACKAGES,SET PATHS AND PARAMETERS
 begin
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     using FileIO
     using DimensionalData
     using Statistics
@@ -53,7 +53,7 @@ begin
     using DataInterpolations
     include("utilities_synthesis.jl")
 
-    paths = GlobalGlacierAnalysis.pathlocal
+    paths = GGA.pathlocal
     geotile_width = 2;
     downscale_to_glacier_method = "area"
 
@@ -80,12 +80,12 @@ begin
     discharge2smb_equilibrium_period = (Date(1979), Date(2000))
 
     param_nt = (;project_id, surface_mask, dem_id, curvature_correct, amplitude_correct, binning_method, paramater_set, binned_folder)
-    params = GlobalGlacierAnalysis.ntpermutations(param_nt)
+    params = GGA.ntpermutations(param_nt)
 
     # only include files that exist
     path2runs = String[]
     for param in params
-        binned_aligned_file = GlobalGlacierAnalysis.binned_aligned_filepath(; param...)
+        binned_aligned_file = GGA.binned_aligned_filepath(; param...)
         if isfile(binned_aligned_file)
             push!(path2runs, binned_aligned_file)
         end
@@ -161,10 +161,10 @@ for sm in surface_mask
             
             # Load elevation data and define height bins
             h = Raster(paths.cop30_v2, lazy=true)
-            height_range, height_center = GlobalGlacierAnalysis.project_height_bins()
+            height_range, height_center = GGA.project_height_bins()
             
             # Get geotiles that contain glaciers
-            geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width)
+            geotiles = GGA.geotiles_w_mask(geotile_width)
             geotiles = geotiles[geotiles.glacier_frac .> 0.0, :]
 
             
@@ -207,7 +207,7 @@ if .!isfile(globaldischarge_fn) || force_remake_discharge # Load RGI6 glacier hy
     # - Filter to only tiles with glaciers
     # - Set precipitation scaling to 1.0 (no scaling)
     # - Set height adjustment to 0
-    geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width)
+    geotiles = GGA.geotiles_w_mask(geotile_width)
     geotiles = geotiles[(geotiles.glacier_frac.>0.0), :]
 
     pscale = 1;
@@ -232,7 +232,7 @@ if .!isfile(globaldischarge_fn) || force_remake_discharge # Load RGI6 glacier hy
             end
 
             # Convert geotile-level data to per-glacier values
-            glaciers0 = GlobalGlacierAnalysis.geotile2glacier!(glaciers0, var1; varname)
+            glaciers0 = GGA.geotile2glacier!(glaciers0, var1; varname)
         end
     elseif downscale_to_glacier_method == "area"
         glacier_area_km2 = sum.(glaciers0.area_km2)
@@ -258,14 +258,14 @@ if .!isfile(globaldischarge_fn) || force_remake_discharge # Load RGI6 glacier hy
 
     # For unmeasured glaciers, estimate discharge using surface mass balance
     # Only process glaciers with non-zero area
-    discharge0 = GlobalGlacierAnalysis.discharge2smb(
+    discharge0 = GGA.discharge2smb(
         glaciers0[sum.(glaciers0.area_km2).>0, :];
         discharge2smb_max_latitude,
         discharge2smb_equilibrium_period
     )
 
     # Combine estimated discharge with measured discharge data
-    discharge = GlobalGlacierAnalysis.glacier_discharge(; datadir=GlobalGlacierAnalysis.pathlocal[:data_dir])
+    discharge = GGA.glacier_discharge(; datadir=GGA.pathlocal[:data_dir])
     discharge = vcat(discharge, discharge0)
     
     # Set any negative discharge values to zero
@@ -343,10 +343,10 @@ begin
     for sm in surface_mask
     #sm = surface_mask[1]
         # Generate geotiles for this mask
-        geotiles0 = GlobalGlacierAnalysis.geotiles_mask_hyps(sm, geotile_width)
+        geotiles0 = GGA.geotiles_mask_hyps(sm, geotile_width)
         
         # Make geotiles mutually exclusive by RGI region
-        geotiles0, reg = GlobalGlacierAnalysis.geotiles_mutually_exclusive_rgi!(copy(geotiles0))
+        geotiles0, reg = GGA.geotiles_mutually_exclusive_rgi!(copy(geotiles0))
         
         # Align geotile indices with elevation change dimensions
         gt_ind = [findfirst(geotiles0.id .== g0) for g0 in collect(dgeotile)]
@@ -446,13 +446,13 @@ begin
             
             t1 = time()
 
-            run_parameters = GlobalGlacierAnalysis.binned_filled_fileparts(synthesized_gemb_fit)
+            run_parameters = GGA.binned_filled_fileparts(synthesized_gemb_fit)
             sm = run_parameters.surface_mask;
 
             dh = FileIO.load(binned_synthesized_file, "dh_hyps")
     
             # convert elevation change to volume change
-            dv_altim = GlobalGlacierAnalysis.dh2dv(dh, geotiles[sm]);
+            dv_altim = GGA.dh2dv(dh, geotiles[sm]);
   
             if any(all(isnan.(dv_altim), dims = :date))
                 # keep this error message
@@ -461,7 +461,7 @@ begin
                 printstyled("Geotiles that only contain NaNs:\n"; color = :red)
                 println("$(collect(all_nan_geotiles)))")
                 printstyled("Possible sources of error include:\n"; color = :red)
-                printstyled("  [1] synthesis_error_file was run on a subset of files that do not include the full error range of the data, to fix this you need to delete the exisiting error file and any synthesis files that were created :\n [2] the wrong surface mask was passed to GlobalGlacierAnalysis.dh2dv\n"; color = :red)
+                printstyled("  [1] synthesis_error_file was run on a subset of files that do not include the full error range of the data, to fix this you need to delete the exisiting error file and any synthesis files that were created :\n [2] the wrong surface mask was passed to GGA.dh2dv\n"; color = :red)
                 error("geotile volume change contains all NaNs")
             end
 
@@ -478,12 +478,12 @@ begin
             #examine_model_fits = "lat[+58+60]lon[-132-130]"
             #examine_model_fits = "lat[+52+54]lon[-128-126]"
         
-            df = GlobalGlacierAnalysis.gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles0; examine_model_fits)
+            df = GGA.gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles0; examine_model_fits)
 
             df[!,:area_km2] = sum.(geotiles[sm].area_km2)
             df.mad = df.mad ./ df.area_km2
             rename!(df, "mad"=>"mad_m")
-            df.geometry = GlobalGlacierAnalysis.extent2rectangle.(df.extent)
+            df.geometry = GGA.extent2rectangle.(df.extent)
             df = df[:,Not(:extent)]
             GeoDataFrames.write(synthesized_gemb_fit, df)
             println("\n $binned_synthesized_file optimal GEMB fit found: $(round(Int,time() -t1))s")
@@ -517,7 +517,7 @@ Output is saved as JLD2 files with "_gembfit_dv.jld2" suffix.
 begin
     # Load synthesized data and GEMB fit parameters
     discharge = load(globaldischarge_fn, "discharge")
-    volume2mass = GlobalGlacierAnalysis.δice / 1000
+    volume2mass = GGA.δice / 1000
 
     has_glacier = Dict()
     for keys in keys(geotiles)
@@ -529,7 +529,7 @@ begin
 
         binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
 
-        run_parameters = GlobalGlacierAnalysis.binned_filled_fileparts(binned_synthesized_file)
+        run_parameters = GGA.binned_filled_fileparts(binned_synthesized_file)
         sm = run_parameters.surface_mask
 
         glaciers0 = copy(glaciers[sm])
@@ -570,7 +570,7 @@ begin
             # load to get date vector
             var0 = load(filename_gemb_geotile_filled_dv, "smb")
             ddate = dims(var0, :date)
-            Δdecyear = GlobalGlacierAnalysis.decimalyear.(ddate) .- GlobalGlacierAnalysis.decimalyear.(ddate[1])
+            Δdecyear = GGA.decimalyear.(ddate) .- GGA.decimalyear.(ddate[1])
             geotiles0[!, :discharge] .=[fill(NaN, length(ddate)) for _ in 1:nrow(geotiles0)]
             
             for geotile in eachrow(geotiles0)
@@ -581,7 +581,7 @@ begin
                     geotile.mie2cubickm = area_km2/1000  # Convert meters ice equivalent to cubic kilometers
 
                     # include discharge average over total glacier area [i.e. save in units of mie]
-                    index = GlobalGlacierAnalysis.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
+                    index = GGA.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
                     geotile.discharge = sum(discharge.discharge_gtyr[index])/volume2mass * Δdecyear # Gt to units of mie
             end
 
@@ -595,7 +595,7 @@ begin
                 # Special handling for height change data
                 if varname == "dv_altim"
                     dh = load(binned_synthesized_file, "dh_hyps")
-                    var0 = GlobalGlacierAnalysis.dh2dv(dh, geotiles0);
+                    var0 = GGA.dh2dv(dh, geotiles0);
                 else
                     var0 = load(filename_gemb_geotile_filled_dv, varname)
                 end
@@ -627,8 +627,8 @@ begin
             # altimetry dm
             geotiles0[!, :dm_altim] = copy(geotiles0[!, :dv_altim])
             for r in eachrow(geotiles0)
-                model = LinearInterpolation(r.fac, GlobalGlacierAnalysis.decimalyear.(colmetadata(geotiles0, "fac", "date")))
-                fac = model(GlobalGlacierAnalysis.decimalyear.(colmetadata(geotiles0, "dv_altim", "date")))
+                model = LinearInterpolation(r.fac, GGA.decimalyear.(colmetadata(geotiles0, "fac", "date")))
+                fac = model(GGA.decimalyear.(colmetadata(geotiles0, "dv_altim", "date")))
                 r.dm_altim = (r.dv_altim .- fac) .* volume2mass # in units of Gt
             end
 

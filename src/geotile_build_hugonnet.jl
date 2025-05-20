@@ -15,7 +15,7 @@ forced to rebuild existing geotiles if needed.
 """
 
 begin
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     using Extents
 
 
@@ -26,9 +26,9 @@ begin
     domain = :landice; # :glacier -or- :landice
 
     # Initialize: paths, products, geotiles
-    paths = project_paths(; project_id);
-    products = project_products(; project_id);
-    geotiles = GlobalGlacierAnalysis.geotiles_w_mask(geotile_width);
+    paths = GGA.project_paths(; project_id);
+    products = GGA.project_products(; project_id)
+    geotiles = GGA.geotiles_w_mask(geotile_width);
 
     # Subset: region & mission 
     geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
@@ -44,7 +44,7 @@ begin
     end
 
     # get hstack catalogue
-    hstacks = hstack_catalogue(paths.hugonnet.raw_data; update_catalogue=force_remake)
+    hstacks = GGA.hstack_catalogue(paths.hugonnet.raw_data; update_catalogue=force_remake)
 
     if contains(hstacks.path[1], "prefilt")
         old_format = false
@@ -56,7 +56,7 @@ begin
     begin
         printstyled("building Hugonnet geotiles\n"; color=:blue, bold=true)
         for geotile in eachrow(geotiles)
-            geotile_build_hugonnet(geotile, paths.hugonnet.geotile, hstacks; force_remake, old_format)
+            GGA.geotile_build_hugonnet(geotile, paths.hugonnet.geotile, hstacks; force_remake, old_format)
         end
     end
 end

@@ -20,6 +20,7 @@ using Arrow
 using DataFrames
 using ProfileView
 using Plots
+import GlobalGlacierAnalysis as GGA
 
 geotile_width = 2; #geotile width [degrees]
 grid = (node_spacing = 100, node_width = 500); # [(node_spacing = 500, node_width = 500 * 2)]
@@ -28,20 +29,20 @@ project_id = :v01;
 domain = :landice;
 #domain = :all;
 
-paths = project_paths(project_id = project_id);
-products = project_products(; project_id=:v01);
-geotiles = project_geotiles(; geotile_width = geotile_width, domain = domain);
+paths = GGA.project_paths(project_id = project_id);
+products = GGA.project_products(; project_id=:v01);
+geotiles = GGA.project_geotiles(; geotile_width = geotile_width, domain = domain);
 
 dems = [:cop30_v2]; 
 # missions = [:gedi, :icesat, :icesat2, :hugonnet]
 # --------------------------------------------------------------------------
 ext = Extent(X=(-126.9, -126.1), Y=(51.1, 51.8));
-geotiles = geotile_subset!(geotiles, ext);
+geotiles = GGA.geotile_subset!(geotiles, ext);
 
 geotile = first(geotiles);
 dem = first(dems);
 
 for product in products
-        GlobalGlacierAnalysis.geotile_coregister(geotile, paths[product.mission].geotile, dem)
+    GGA.geotile_coregister(geotile, paths[product.mission].geotile, dem)
 end
 

@@ -13,7 +13,7 @@ various ancillary data types (masks, DEMs, canopy height).
 """
 
 using Arrow
-using GlobalGlacierAnalysis
+import GlobalGlacierAnalysis as GGA
 using ProgressMeter
 
 # Parameters: user defined 
@@ -21,7 +21,7 @@ missions = (:icesat2, :icesat, :gedi, :hugonnet)
 suffix2check = ["masks", "cop30_v2", "canopyh", "rema_v2_10m", "arcticdem_v4_10m", "nasadem_v1"]
 
 # Initialize: paths, products, geotiles
-paths = project_paths(; project_id);
+paths = GGA.project_paths(; project_id);
 mission_geotile_folders = [paths[mission].geotile for mission in missions]
 
 # add hugonnet unfiltered to the list
@@ -32,7 +32,7 @@ end
 # Execute: check length of all files
 for mission_geotile_folder in mission_geotile_folders
 
-    mission_dir_files = GlobalGlacierAnalysis.allfiles(mission_geotile_folder)
+    mission_dir_files = GGA.allfiles(mission_geotile_folder)
     paths2altim = filter(x -> occursin(".arrow", x), mission_dir_files)
 
     if isempty(paths2altim)

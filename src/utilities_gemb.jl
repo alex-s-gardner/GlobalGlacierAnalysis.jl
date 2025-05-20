@@ -86,7 +86,7 @@ function gemb_read(
 
     any(vars .== "latitude") && (gemb[!, :latitude] = vcat(lat...))
     any(vars .== "longitude") && (gemb[!, :longitude] = vcat(lon...))
-    any(vars .== "date") && (gemb[!, :date] = GlobalGlacierAnalysis.decimalyear2datetime.(vcat(t...)))
+    any(vars .== "date") && (gemb[!, :date] = decimalyear2datetime.(vcat(t...)))
     any(vars .== "height_ref") && (gemb[!, :height_ref] = vcat(h...))
     any(vars .== "fac") && (gemb[!, :fac] = vcat(fac...))
     any(vars .== "smb") && (gemb[!, :smb] = vcat(smb...))
@@ -705,7 +705,7 @@ function add_pscale_classes(var0, dpscale_new; allow_negative=false)
 
     gemb_new = fill(NaN, (ddate, dheight, dpscale_new, dΔheight))
 
-    valid_range, = GlobalGlacierAnalysis.validrange(.!isnan.(var0[:, 1, 1, 1]))
+    valid_range, = validrange(.!isnan.(var0[:, 1, 1, 1]))
 
     Threads.@threads for date in ddate[valid_range]
         #date = ddate[820]

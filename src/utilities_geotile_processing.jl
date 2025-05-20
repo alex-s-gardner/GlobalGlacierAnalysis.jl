@@ -135,7 +135,7 @@ function geotile_binning(;
     curvature_center = curvature_range[1:end-1] .+ Δc/2;
 
     ## THIS WILL REMOVE ALL _dh_ files if you need to rebuild binned archive
-    #files2delete = allfiles("/mnt/bylot-r3/data/binned/2deg"; fn_contains="_dh_")
+    #files2delete = GGA.allfiles("/mnt/bylot-r3/data/binned/2deg"; fn_contains="_dh_")
     #rm.(files2delete)
     ##########
 

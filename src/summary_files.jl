@@ -22,7 +22,7 @@ Key outputs:
 """
 
 begin
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     using FileIO
     using DataFrames
     import GeometryOps as GO
@@ -35,8 +35,9 @@ begin
     using Unitful
     using NonlinearSolve
     using LsqFit
-
     using GlobalGlacierAnalysis.MyUnits
+    paths = GGA.pathlocal
+
     Unitful.register(MyUnits)
 
     geotile_summary_file = joinpath(paths[:project_dir], "gardner2025_geotile_summary.nc")
@@ -54,16 +55,15 @@ begin
     paramater_set = [1, 2, 3, 4]
     binned_folder = ["/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"]
 
-    paths = GlobalGlacierAnalysis.pathlocal
     path2reference = joinpath(paths[:data_dir], reference_run)   
 
     param_nt = (;project_id, surface_mask, dem_id, curvature_correct, amplitude_correct, binning_method, paramater_set, binned_folder)
-    params = GlobalGlacierAnalysis.ntpermutations(param_nt)
+    params = GGA.ntpermutations(param_nt)
 
     # only include files that exist
     path2runs = String[]
     for param in params
-        binned_aligned_file = GlobalGlacierAnalysis.binned_aligned_filepath(; param...)
+        binned_aligned_file = GGA.binned_aligned_filepath(; param...)
         if isfile(binned_aligned_file)
             push!(path2runs, binned_aligned_file)
         end
@@ -98,7 +98,7 @@ end
     path2files = setdiff(binned_synthesized_dv_files, [binned_synthesized_dv_files[index_ref]]);
 
     # return a DimensionalArray with the mean and error for all runs relative to the reference run, for all modeled variables 
-    geotiles0 = GlobalGlacierAnalysis.geotiles_mean_error(path2ref, path2files; reference_period, p = 0.95) # returns variables in units of kg/m2 [90s]
+    geotiles0 = GGA.geotiles_mean_error(path2ref, path2files; reference_period, p = 0.95) # returns variables in units of kg/m2 [90s]
 
     #TODO: it would be good to save this to disk and a gpkg file of trends and amplitudes currently in synthesis_plots_gis.jl... synthesis_plots_gis.jl should be deprecated at some point
 
@@ -139,18 +139,18 @@ end
         v0 = uconvert.(u"Gt",dropdims(sum(foo[varname = At(varname), error=At(false)] .* area, dims = :geotile), dims = :geotile))
         
         dTi = dims(foo, :Ti)
-        decyear = GlobalGlacierAnalysis.decimalyear.(dTi)
+        decyear = GGA.decimalyear.(dTi)
         decyear .-= mean(decyear)
         
         dates4trend = (DateTime(2000, 1, 1),DateTime(2024, 12, 31))
-        fit = curve_fit(GlobalGlacierAnalysis.offset_trend_seasonal2, decyear[dates4trend[1]..dates4trend[2]], ustrip.(v0)[dates4trend[1]..dates4trend[2]], GlobalGlacierAnalysis.p_offset_trend_seasonal)
+        fit = curve_fit(GGA.offset_trend_seasonal2, decyear[dates4trend[1]..dates4trend[2]], ustrip.(v0)[dates4trend[1]..dates4trend[2]], GGA.p_offset_trend_seasonal)
         
         p = lines(v0)
         display(p)
         println("trend = $(round(fit.param[2], digits=2)) Gt/yr")
     end
 
-    glacier_out = GlobalGlacierAnalysis.geotiles_mean_error_glaciers(glaciers, geotiles0) #[2 min]
+    glacier_out = GGA.geotiles_mean_error_glaciers(glaciers, geotiles0) #[2 min]
 
     # sanity check: 2000-2024 dm trend should be -316 Gt/yr
     begin
@@ -160,11 +160,11 @@ end
         v0 = dropdims(sum(foo[varname = At(varname), error=At(false)], dims = :rgiid), dims = :rgiid)
         
         dTi = dims(foo, :Ti)
-        decyear = GlobalGlacierAnalysis.decimalyear.(dTi)
+        decyear = GGA.decimalyear.(dTi)
         decyear .-= mean(decyear)
         
         dates4trend = (DateTime(2000, 1, 1),DateTime(2024, 12, 31))
-        fit = curve_fit(GlobalGlacierAnalysis.offset_trend_seasonal2, decyear[dates4trend[1]..dates4trend[2]], ustrip.(v0)[dates4trend[1]..dates4trend[2]], GlobalGlacierAnalysis.p_offset_trend_seasonal)
+        fit = curve_fit(GGA.offset_trend_seasonal2, decyear[dates4trend[1]..dates4trend[2]], ustrip.(v0)[dates4trend[1]..dates4trend[2]], GGA.p_offset_trend_seasonal)
         
         lines!(v0)
         display(p)
@@ -173,9 +173,9 @@ end
 
     foo = glacier_out
     v0 = dropdims(sum(foo[varname = At("dm"), error=At(false)], dims = :rgiid), dims = :rgiid)
-    err = dropdims(sum(foo[varname = At("dm"), error=At(true)], dims = :rgiid), dims = :rgiid)
-    p = lines(v0.- err)
-    lines!(v0.+ err)
+    err0 = dropdims(sum(foo[varname = At("dm"), error=At(true)], dims = :rgiid), dims = :rgiid)
+    p = lines(v0.- err0)
+    lines!(v0.+ err0)
     lines!(v0)
     display(p)
 

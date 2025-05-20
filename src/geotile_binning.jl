@@ -13,7 +13,7 @@ The script processes multiple altimetry missions (ICESat-2, ICESat, GEDI, Hugonn
 various filtering and processing options to create a consistent global dataset.
 """
 begin
-    using GlobalGlacierAnalysis
+    import GlobalGlacierAnalysis as GGA
     using Dates
         
     # remake files that were created before this date
@@ -24,7 +24,7 @@ begin
 
     gemb_file = "/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2023_820_40_racmo_grid_lwt_e97_0_geotile_filled_d_reg.jld2";
 
-    binned_folder_filtered = GlobalGlacierAnalysis.analysis_paths(; geotile_width).binned
+    binned_folder_filtered = GGA.analysis_paths(; geotile_width).binned
     binned_folder_unfiltered = replace(binned_folder_filtered, "binned" => "binned_unfiltered")
 
     warnings = false 
@@ -82,7 +82,7 @@ changed to NetCDF format for better compatibility.
 - `max_canopy_height`: Maximum canopy height to consider (do not change)
 - `dh_max`: Maximum elevation difference filter
 """
-GlobalGlacierAnalysis.geotile_binning(; 
+GGA.geotile_binning(; 
     project_id,
     geotile_width,
     warnings,
@@ -140,7 +140,7 @@ normalize data between different missions, and apply amplitude corrections where
 - `showplots`: Whether to display plots
 - `show_times`: Whether to display processing times
 """
-GlobalGlacierAnalysis.geotile_binned_fill(; project_id,
+GGA.geotile_binned_fill(; project_id,
     geotile_width,
     force_remake_before,
     update_geotile = false, # this will load in prevous results to update select geotiles or missions
@@ -192,11 +192,11 @@ This function performs two key operations:
 - `showplots`: Whether to display diagnostic plots
 - `force_remake_before`: Remake files created before this date
 """
-@time GlobalGlacierAnalysis.geotile_align_replace(;
+@time GGA.geotile_align_replace(;
     mission_ref1 = "icesat2",
     mission_ref2 = "icesat",
     min_trend_count = 5,
-    remove_land_surface_trend=GlobalGlacierAnalysis.mission_land_trend(),
+    remove_land_surface_trend=GGA.mission_land_trend(),
     project_id,
     surface_masks,
     binned_folders,
