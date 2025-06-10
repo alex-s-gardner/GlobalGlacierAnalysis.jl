@@ -9,7 +9,10 @@ begin
         p[3] .* x[:, 1] .^ 2 .+
         p[4] .* x[:, 2] .+
         p[5] .* x[:, 2] .^ 2 .+
-        sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* (p[7] .+ p[8] .* x[:, 2] .* p[9] .* x[:, 2] .^ 2)
+        p[7] .* sin.(2 .* pi .* (x[:, 1] .+ p[6])) .+
+        p[8] .* sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* x[:, 2] .+
+        p[9] .* sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* x[:, 2] .^ 2
+
 
     const p1 = zeros(9);
     const lb1 = [-10.0, -3.0, -2.0, -0.05, -0.0001, -1.0, -7.0, -0.05, -0.001];
@@ -18,8 +21,9 @@ begin
 
     # seasonal only [amplitude is a quadratic function of elevation]
     model1_seasonal::Function = model1_seasonal(x, p) = 
-        sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* 
-        (p[7] .+ p[8] .* x[:, 2] .* p[9] .* x[:, 2] .^ 2)
+            p[2] .* sin.(2 .* pi .* (x[:, 1] .+ p[1])) .+
+            p[3] .* sin.(2 .* pi .* (x[:, 1] .+ p[1])) .* x[:, 2] .+
+            p[4] .* sin.(2 .* pi .* (x[:, 1] .+ p[1])) .* x[:, 2] .^ 2
 
     # linear trend
     model_trend::Function = model1_trend(h, p) = p[1] .+ p[2] .* h;
@@ -69,6 +73,9 @@ begin
     const p_offset_trend_seasonal = zeros(4)
 end
 
+offset_trend::Function = offset_trend(t, p) = p[1] .+ p[2] .* t;
+offset_trend_p = zeros(2);
+
 """
     geotiles_mutually_exclusive_rgi!(geotiles) -> (geotiles, reg)
 
@@ -109,9 +116,9 @@ end
 """
     hyps_model_fill!(dh1, nobs1, params; 
                      bincount_min=5, 
-                     model1_madnorm_max=5, 
+                     model1_nmad_max=5, 
                      smooth_n=9, 
-                     smooth_h2t_length_scale=800, 
+                     smooth_h2t_length_scale=800,
                      variogram_range_ratio=false, 
                      show_times=false) -> Union{Nothing, Dict}
 
@@ -122,7 +129,7 @@ Fill gaps in elevation change data using a spatiotemporal model.
 - `nobs1`: Dictionary of observation count DimArrays by mission
 - `params`: Dictionary of parameter DataFrames by mission
 - `bincount_min`: Minimum number of observations required for a valid bin (default: 5)
-- `model1_madnorm_max`: Maximum MAD normalization threshold for outlier filtering (default: 5)
+- `model1_nmad_max`: Maximum MAD normalization threshold for outlier filtering (default: 5)
 - `smooth_n`: Number of nearest neighbors for smoothing (default: 9)
 - `smooth_h2t_length_scale`: Scaling factor for height relative to time (default: 800)
 - `variogram_range_ratio`: Whether to calculate and return variogram range ratios (default: false)
@@ -139,7 +146,7 @@ This function fills gaps in elevation change data by:
 3. Smoothing residuals using k-nearest neighbors
 4. Filling gaps with model predictions plus smoothed residuals
 """
-function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max=5, smooth_n=9, smooth_h2t_length_scale=800, variogram_range_ratio = false, show_times=false)
+function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5, smooth_n=9, smooth_h2t_length_scale=800, variogram_range_ratio = false, show_times=false)
 
     if smooth_h2t_length_scale < 1
         error("smooth_h2t_length_scale is < 1, should be in the range 2000 to 1, sypically 800")
@@ -162,28 +169,14 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
     end
 
     for mission in keys(dh1)
-        # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><>
-        # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-        #mission = "hugonnet"
 
         # find valid range for entire mission so that all filled geotiles cover the same date range
         rrange, = validrange(vec(any(.!isnan.(dh1[mission]), dims=(1, 3))))
 
         Threads.@threads for geotile in dims(dh1[mission], :geotile)
+
             show_times ? t1 = time() : nothing
             
-            #for geotile in dims(dh1[mission], :geotile)
-            # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><>
-            #geotile =       "lat[+80+82]lon[+058+060]"
-            # geotile = first(dims(dh1[mission], :geotile))
-
-            # geotile = geotiles[findfirst((geotiles.rgi1 .> 0.) .& (geotiles.glacier_frac .> 0.3)),:]
-
-            # geotile = "lat[-72-70]lon[-014-012]"
-            # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-
-            # println("$mission: $geotile")
-
             k = findfirst(params[mission].geotile .== geotile)
             df = @view params[mission][k, :]
 
@@ -246,15 +239,14 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
 
             show_times ? t3 = time() : nothing
             show_times && printstyled("statistics $mission: $(round(t3 - t2; digits=2))s\n", color=:yellow)
-
             # fit global model 
+
             fit1 = []
             try
                 fit1 = curve_fit(model1, hcat(t0[valid0], h0[valid0]), dh0[valid0], nobs0[valid0], p1; lower=lb1, upper=ub1)
             catch
                 fit1 = curve_fit(model1, hcat(t0[valid0], h0[valid0]), dh0[valid0], nobs0[valid0], p1)
             end
-
             show_times ? t4 = time() : nothing
             show_times && printstyled("model fit $mission: $(round(t4 - t3; digits=2))s\n", color=:yellow)
 
@@ -262,8 +254,8 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
             dh0_anom = dh0[valid0] .- dh0_mdl
 
             ###################################### FILTER 2 ####################################
-            # filter model1_madnorm_max sigma outliers
-            valid0[valid0] = madnorm(dh0_anom) .<= model1_madnorm_max
+            # filter model1_nmad_max sigma outliers
+            valid0[valid0] = nmad(dh0_anom) .<= model1_nmad_max
             vb = sum(valid0)
             df.nbins_filt1 = vb
 
@@ -348,31 +340,53 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_madnorm_max
     if variogram_range_ratio
         return range_ratio
     end
+    return dh1, nobs1, params
+end
+
+"""
+    geotile_mass_change(dh, glacier_area_km2)
+
+Calculate mass change in gigatons from elevation change and glacier area data.
+
+# Arguments
+- `dh`: Elevation change data (DimArray with height and time dimensions)
+- `glacier_area_km2`: Glacier area in km² for each height bin (DimArray with height dimension)
+
+# Returns
+- `mass_change_gt`: Time series of mass change in gigatons (Gt)
+
+# Description
+Multiplies elevation change by glacier area to get volume change, converts from 
+m·km² to km³, then sums across all height bins to get total mass change over time.
+"""
+function geotile_mass_change(dh, glacier_area_km2)
+    ddate = dims(dh, :date)
+    mass_change_gt = fill(NaN, ddate)
+    dm = @d dh .* glacier_area_km2
+    dm = dm *1E-3 # m -> km
+    r, c = validrange(.!isnan.(dm))
+    mass_change_gt[r] = dropdims(sum(dm[r,c], dims=:height), dims=(:height))
+    return mass_change_gt
 end
 
 
 """
-    hyps_amplitude_normalize!(dh1, params; mission_reference = "icesat2")
+    hyps_amplitude_normalize!(dh1, params; mission_reference="icesat2", plots_show=false)
 
-Normalize seasonal amplitude of elevation change data across different missions.
+Normalize seasonal amplitude of elevation change data between missions.
 
 # Arguments
-- `dh1`: Dictionary of elevation change DimArrays by mission
-- `params`: Dictionary of parameter DataFrames by mission
+- `dh1`: Dictionary of elevation change DimArrays indexed by mission
+- `params`: Dictionary of parameter DataFrames indexed by mission
 - `mission_reference`: Reference mission to normalize against (default: "icesat2")
+- `plots_show`: Whether to display diagnostic plots (default: false)
 
 # Description
-This function adjusts the seasonal amplitude of elevation change data from different
-missions to match a reference mission (default: ICESat-2). For each geotile:
-1. Extracts model parameters for both the target and reference missions
-2. Calculates the difference in seasonal components between the models
-3. Adds this difference to the target mission's data to normalize its seasonal amplitude
-4. Skips geotiles where model parameters are not available for either mission
-
-The function modifies `dh1` in place, adjusting only the seasonal component while
-preserving other aspects of the elevation change signal.
+For each non-reference mission, calculates the difference in seasonal components between
+the mission's model and the reference mission's model. Adds this difference to normalize
+the seasonal amplitude of the target mission's data to match the reference mission.
 """
-function hyps_amplitude_normalize!(dh1, params; mission_reference = "icesat2")
+function hyps_amplitude_normalize!(dh1, params; mission_reference="icesat2", plots_show=false)
 
     t = decimalyear.(dims(dh1[first(keys(dh1))], :date))
     t = repeat(t, 1, length(dims(dh1[first(keys(dh1))], :height)))
@@ -381,15 +395,11 @@ function hyps_amplitude_normalize!(dh1, params; mission_reference = "icesat2")
     h = repeat(h, length(dims(dh1[first(keys(dh1))], :date)), 1)
 
     for mission in keys(dh1)
-        #mission = "hugonnet"
-
         if mission == mission_reference
             continue
         end
 
-        for geotile in dims(dh1[mission], :geotile)
-            #geotile = "lat[-72-70]lon[-014-012]"
-            #geotile = first(dims(dh1[mission], :geotile))
+        Threads.@threads for geotile in dims(dh1[mission], :geotile)
             k = findfirst(params[mission].geotile .== geotile)
             df0 = params[mission][k, :]
             dfr = params[mission_reference][k, :]
@@ -405,21 +415,111 @@ function hyps_amplitude_normalize!(dh1, params; mission_reference = "icesat2")
 
             dh0 = dh0[rrange, crange]
             valid = valid[rrange, crange]
+
+            # only last 6 fit parameters are related to seasonal cycle
+            p0 = df0.param_m1[6:end]
+            p_ref = dfr.param_m1[6:end]
+    
+            # parameters are tied to a relative height and time for eartlier fitting normalization
             t0 = t[rrange, crange] .- df0.t0
-            h0x = h[rrange, crange] .- df0.h0
+            h0 = h[rrange, crange] .- df0.h0
+            model0 = DimArray(reshape(model1_seasonal(hcat(t0[:], h0[:]), p0), size(dh0)), dims(dh0));
 
-            p0 = df0.param_m1
-            pr = dfr.param_m1
-            pr[1:5] = p0[1:5] # coeffients 1 to 5 are unrelated to seasonal cycle [pr[1:5] are not used but resetting here for clarity]
-
-            delta = model1_seasonal(hcat(t0[:], h0x[:]), pr) .- model1_seasonal(hcat(t0[:], h0x[:]), p0)
+            t0 = t[rrange, crange] .- dfr.t0
+            h0 = h[rrange, crange] .- dfr.h0
+            model_ref = DimArray(reshape(model1_seasonal(hcat(t0[:], h0[:]), p_ref), size(dh0)), dims(dh0))
+   
+            delta = model_ref .- model0
+            
+            if plots_show
+                f = plot_amplitude_correction(model_ref, model0, delta, mission, p0, p_ref);
+                display(f)
+            end
 
             if !any(isnan.(delta)) # there seem to be rare cases where model1_seasonal returns nans.
-                dh1[mission][At(geotile), rrange, crange] = dh0[:] .+ delta
+                dh1[mission][At(geotile), rrange, crange] = dh0 .+ delta
             end
         end
     end
 end
+
+"""
+    hyps_align_dh!(dh, nobs, params, area_km2; missions2align2=["icesat2", "icesat"])
+
+Align elevation change data between different altimetry missions by calculating and applying weighted offsets.
+
+# Arguments
+- `dh`: Dict of elevation change DimArrays by mission
+- `nobs`: Dict of observation count DimArrays by mission  
+- `params`: Dict of parameter DataFrames by mission
+- `area_km2`: DimArray of area values per geotile
+- `missions2align2`: Reference missions to align others to (default: ["icesat2", "icesat"])
+
+# Returns
+- Modified `dh` with aligned elevation changes
+- Modified `params` with offset parameters
+"""
+function hyps_align_dh!(dh, nobs, params, area_km2; missions2align2=["icesat2", "icesat"])
+    # Get dimensions from first mission
+    ddate = dims(dh[first(keys(dh))], :date)
+    dheight = dims(dh[first(keys(dh))], :height) 
+    dgeotile = dims(dh[first(keys(dh))], :geotile)
+
+    # Initialize area-averaged elevation changes and observation counts
+    area_avg_dh = Dict()
+    nobs_sum = Dict()
+    for mission in keys(dh)
+        area_avg_dh[mission] = fill(NaN, dgeotile, ddate)
+        nobs_sum[mission] = zeros(Int, dgeotile, ddate)
+    end
+
+    # Calculate area-averaged elevation changes per geotile
+    for geotile in dgeotile
+        for mission in keys(dh)
+            area_avg_dh[mission][geotile=At(geotile)] = dh_area_average(dh[mission][geotile=At(geotile)], area_km2[geotile=At(geotile)])
+            nobs_sum[mission][geotile=At(geotile)] = sum(nobs[mission][At(geotile), :, :], dims = :height)
+        end
+    end
+
+    # Align non-reference missions to reference missions
+    missions2align = setdiff(keys(dh), missions2align2)
+    for (i, geotile) in enumerate(dgeotile)
+        for mission in missions2align
+            offset0 = 0.0
+            weight0 = 0
+
+            # Calculate weighted offset from each reference mission
+            for mission_ref in missions2align2
+                offest1 = area_avg_dh[mission][geotile=At(geotile)] .- area_avg_dh[mission_ref][geotile=At(geotile)]
+                index = .!isnan.(offest1)
+
+                if any(index)
+                    # Store offset statistics
+                    params[mission][i, "offset_$mission_ref"] = median(offest1[index])
+                    params[mission][i, "offset_nmad_$mission_ref"] = mean(nmad(offest1[index]))
+                    params[mission][i, "offset_nobs_$mission_ref"] = sum(nobs[mission][geotile=At(geotile)])
+
+                    # I don't think nmad if very relevant here as the data being adjusted can be pretty noisy
+                    # weight1 = 1 / ((params[mission][i, "offset_nmad_$mission_ref"] / (sqrt(params[mission][i, "offset_nobs_$mission_ref"]))) .^ 2)
+                    weight1 = sqrt(params[mission_ref][i, "offset_nobs_$mission_ref"] + params[mission][i, "offset_nobs_$mission_ref"])
+                    offset0 += params[mission][i, "offset_$mission_ref"] * weight1
+                    weight0 += weight1
+                end
+            end
+
+            # Apply weighted average offset
+            if weight0 > 0
+                params[mission][i, "offset"] = offset0 / weight0
+
+                # NOTE: offset is subtracted from height anomalies
+                dh[mission][geotile=At(geotile)] .-= params[mission][i, "offset"]
+            end
+        end
+    end
+
+    return dh, params
+end
+
 
 """
     hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
@@ -447,7 +547,7 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
 
     lon = mean.(getindex.(geotiles.extent, :X))
     lat = mean.(getindex.(geotiles.extent, :Y))
-    ll = [(a, b) for (a, b) in zip(lon, lat)]
+    ll = tuple.(lon, lat)
 
     for mission in keys(dh1)
         # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><
@@ -459,7 +559,7 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
         dh0_median = getindex.(params[mission][:, :param_m1], 1) .+ params[mission][:, :dh0]
         
         # copy dh as it gets morphed inside of parallel loop
-        dh2 = copy(dh1[mission])
+        dh2 = deepcopy(dh1[mission])
 
         for geotile in (dims(dh1[mission], :geotile))
             #for geotile in dims(dh1[mission], :geotile)
@@ -587,7 +687,7 @@ function hyps_fill_updown!(dh1, geotiles; mask = :glacier)
 
         Threads.@threads for geotile in dgeotile
 
-            # fill with median of nearest neighbors if not data
+            # fill with median of nearest neighbors if no data
             k = findfirst(geotiles.id .== geotile)
             if isnothing(mask)
                 valid = geotiles[k, "area_km2"] .> 0
@@ -864,89 +964,6 @@ function read_hock2019(; datadir=setpaths().hock_2019)
     end
 
     return (; dm_gt)
-end
-
-"""
-    plot_height_time(dh1; geotile, fig_suffix, fig_folder, figure_suffix, mask=:glacier, mission, showplots=false)
-
-Create a visualization of elevation change data across height and time dimensions.
-
-# Arguments
-- `dh1`: DimArray containing elevation change data
-- `geotile`: Geotile information containing ID and area data
-- `fig_suffix`: Suffix for the figure filename
-- `fig_folder`: Directory where figures will be saved
-- `figure_suffix`: Additional suffix for the figure filename
-- `mask`: Type of area mask to use (default: `:glacier`)
-- `mission`: Mission identifier for the data source
-- `showplots`: Whether to display plots in addition to saving them (default: false)
-
-# Description
-Generates a two-panel figure with:
-1. A heatmap of elevation change data across time (x-axis) and elevation (y-axis)
-2. A bar chart showing area distribution by elevation
-Both panels share the same x-axis scale for direct comparison.
-"""
-function plot_height_time(dh1; geotile, fig_suffix, fig_folder, figure_suffix, mask=:glacier, mission, showplots=false)
-    height = dims(dh1, :height)
-    valid = geotile["$(mask)_area_km2"] .> 0
-    crange, = validrange(geotile["$(mask)_area_km2"] .> 0)
-
-    # find valid range for entire mission so that all filled geotiles cover the same date range
-    rrange, = validrange(vec(any(.!isnan.(dh1), dims=(1, 3))))
-
-    # i need to plot twice, once to get colorbar and once to align x-axis.. makie does not yet support catigorical axis.. but coming soon
-    color = Plots.cgrad(:balance, rev=true);
-    clim = (-10, 10)
-
-    fname = joinpath(fig_folder, "height_time_colormap.png")
-    f = Plots.heatmap(rand(10, 10); clim, color, rightmargin=5Plots.mm)
-
-    savefig(f, fname)
-
-    for legend = [false]
-        f = Plots.plot(layout=grid(2, 1, heights=[0.8, 0.2]), link=:x, framestyle=:box, legend=legend)
-
-        Plots.heatmap!(dh1[At(geotile.id), rrange, crange]; subplot=1, legend=false, framestyle=:box, clim, color)
-        Plots.xlabel!("")
-        Plots.ylabel!("")
-
-        Plots.bar!(val(height[crange]), geotile["$(mask)_area_km2"][crange], subplot=2, legend=false, framestyle=:box, link=:x)
-        Plots.ylabel!("area [km²]", subplot=2)
-        Plots.xlabel!("height [m]")
-
-        if legend
-            fname = joinpath(fig_folder, "$(figure_suffix)_$(mission)_$(geotile.id)_binned_$(fig_suffix)_colorbar.png")
-        else
-            fname = joinpath(fig_folder, "$(figure_suffix)_$(mission)_$(geotile.id)_binned_$(fig_suffix).png")
-        end
-        savefig(f, fname)
-        showplots && display(f)
-    end
-end
-
-"""
-    plot_height_time(dh1::Dict; geotile, fig_suffix, fig_folder, figure_suffix, mask=:glacier, showplots=false)
-
-Generate height-time plots for all missions in the provided dictionary.
-
-# Arguments
-- `dh1`: Dictionary of elevation change DimArrays by mission
-- `geotile`: Geotile information containing ID and area data
-- `fig_suffix`: Suffix for the figure filename
-- `fig_folder`: Directory where figures will be saved
-- `figure_suffix`: Additional suffix for the figure filename
-- `mask`: Type of area mask to use (default: `:glacier`)
-- `showplots`: Whether to display plots in addition to saving them (default: false)
-
-# Description
-Iterates through all missions in the dictionary and calls the single-mission version
-of plot_height_time for each one, generating separate figures for each mission.
-"""
-function plot_height_time(dh1::Dict; geotile, fig_suffix, fig_folder, figure_suffix, mask=:glacier, showplots=false)
-    for mission in keys(dh1)
-        plot_height_time(dh1[mission]; geotile, fig_suffix, fig_folder, figure_suffix, mask, mission, showplots)
-    end
 end
 
 """
@@ -1255,9 +1272,9 @@ function binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_m
     end
     
     if amplitude_correct
-        binned_filled_file = joinpath(binned_folder, "$(runid)_filled_ac_p$(paramater_set).jld2")
+        binned_filled_file = joinpath(binned_folder, "$(runid)_filled_ac_p$(paramater_set)_aligned.jld2")
     else
-        binned_filled_file = joinpath(binned_folder, "$(runid)_filled_p$(paramater_set).jld2")
+        binned_filled_file = joinpath(binned_folder, "$(runid)_filled_p$(paramater_set)_aligned.jld2")
     end
 
     figure_suffix = splitpath(binned_filled_file)
@@ -1591,7 +1608,7 @@ function discharge2smb(glaciers; discharge2smb_max_latitude=-60, discharge2smb_e
 end
 
 """
-    dh2dv(dh, geotiles) -> dv
+    dh2dv(dh, area_km2) -> dv
 
 Convert elevation change (dh) to volume change (dv) using area information from geotiles.
 
@@ -1607,20 +1624,36 @@ This function calculates volume change by multiplying elevation change by the co
 area for each geotile and height bin, then summing across all height bins. The result is 
 converted from km³ to Gt by dividing by 1000.
 """
-function dh2dv(dh, geotiles)
-    dv = fill(NaN, dims(dh[:, :, 1]))
-    index_date = vec(any(.!isnan.(dh[1, :, :]), dims=:height))
-    
-    for geotile in eachrow(geotiles)
-        #geotile = eachrow(geotiles)[560]
-        index_height = geotile.area_km2 .> 0
-        if !any(index_height)
-            dv[At(geotile.id), :] .= 0
-        else
-            area = (geotile.area_km2[index_height] * ones(1, sum(index_date)))'
-            dv[At(geotile.id), index_date] = sum((dh[At(geotile.id), index_date, index_height] .* area ./ 1000); dims=:height)
-        end
+function dh2dv(dh, area_km2)
+
+    dv = fill(NaN, dims(dh, :date))
+    if all(isnan.(dh))
+        dv[:] .= NaN
+    else
+        (index_date, index_height) = validrange(.!isnan.(dh))
+  
+        foo = @d (dh[index_date, index_height] .* (area_km2[index_height] ./ 1000))
+        dv[index_date] = vec(sum(foo; dims=:height))
     end
 
     return dv
+end
+
+
+function dh_area_average(dh, area0)
+
+    ddate = dims(dh, :date);
+    dh_area_avg = fill(NaN, dims(dh, :date))
+
+    if !all(isnan.(dh))
+        for date in ddate
+            dh0 = dh[date = At(date)]
+            valid0 = .!isnan.(dh0)
+            if any(valid0)
+                dh_area_avg[At(date)] = sum(dh0[valid0] .* (area0[valid0])) / sum(area0[valid0])
+            end
+        end
+    end
+
+    return dh_area_avg
 end

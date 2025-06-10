@@ -43,7 +43,7 @@ begin
     geotile_summary_file = joinpath(paths[:project_dir], "gardner2025_geotile_summary.nc")
     glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
 
-    reference_run = "binned/2deg/glacier_dh_best_meanmadnorm5_v01_filled_ac_p2_synthesized.jld2"
+    reference_run = "binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized.jld2"
     reference_period = (DateTime(2000, 1, 1), DateTime(2000, 12, 31))
 
     project_id = ["v01"]
@@ -51,7 +51,7 @@ begin
     dem_id = ["best", "cop30_v2"]
     curvature_correct = [false, true]
     amplitude_correct = [true]
-    binning_method = ["median", "meanmadnorm5", "meanmadnorm3"]
+    binning_method = ["median", "nmad5", "nmad3"]
     paramater_set = [1, 2, 3, 4]
     binned_folder = ["/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"]
 
@@ -89,7 +89,7 @@ end
 @time begin #[10 min]
     sm = "glacier"
     binned_synthesized_dv_files = replace.(path2runs,".jld2" => "_gembfit_dv.jld2")
-    binned_synthesized_dv_ref= replace("binned/2deg/glacier_dh_best_meanmadnorm5_v01_filled_ac_p2_synthesized.jld2",".jld2" => "_gembfit_dv.jld2")
+    binned_synthesized_dv_ref= replace("binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized.jld2",".jld2" => "_gembfit_dv.jld2")
     # only data with a matching surface mask can be downscaled
     binned_synthesized_dv_files = filter(x -> occursin("$(sm)_dh", x), binned_synthesized_dv_files)
     index_ref = findfirst(occursin.(binned_synthesized_dv_ref, binned_synthesized_dv_files));

@@ -1212,7 +1212,7 @@ end
 
 
 """
-    madnorm(x)
+    nmad(x)
 
 Calculate the normalized median absolute deviation (MAD) of values in x.
 
@@ -1223,11 +1223,11 @@ Calculate the normalized median absolute deviation (MAD) of values in x.
 - Vector of normalized deviations, where each value represents the number of 
   standard deviations from the median (using MAD scaled by 1.4826)
 """
-function madnorm(x)
+function nmad(x)
     consistent_estimator = 1.4826 #mad to sigma conversion factor
     x_abs = abs.(x .- median(x))
-    x_madnorm = x_abs ./ (median(x_abs) .* consistent_estimator)
-    return x_madnorm
+    x_nmad = x_abs ./ (median(x_abs) .* consistent_estimator)
+    return x_nmad
 end
 
 """
@@ -2740,7 +2740,7 @@ function track_offset(
         end
 
         if i < interations
-            valid[valid] = madnorm(delta) .< iter_thresh
+            valid[valid] = nmad(delta) .< iter_thresh
         else
             mad_offset = mad(delta)
             mad_ref = mad(dh[valid])
@@ -3888,21 +3888,21 @@ Create a binning function based on the specified method.
 
 # Arguments
 - `binning_method::String`: Method to use for binning data. Options:
-  - "meanmadnorm3": Mean of values with MAD normalization < 3
-  - "meanmadnorm5": Mean of values with MAD normalization < 5
-  - "meanmadnorm10": Mean of values with MAD normalization < 10
+  - "nmad3": Mean of values with MAD normalization < 3
+  - "nmad5": Mean of values with MAD normalization < 5
+  - "nmad10": Mean of values with MAD normalization < 10
   - "median": Median of all values
 
 # Returns
 - Function that implements the specified binning method
 """
 function binningfun_define(binning_method)
-    if binning_method == "meanmadnorm3"
-        x -> mean(x[madnorm(x).<3])
-    elseif binning_method == "meanmadnorm5"
-        x -> mean(x[madnorm(x).<5])
-    elseif binning_method == "meanmadnorm10"
-        x -> mean(x[madnorm(x).<10])
+    if binning_method == "nmad3"
+        x -> mean(x[nmad(x).<3])
+    elseif binning_method == "nmad5"
+        x -> mean(x[nmad(x).<5])
+    elseif binning_method == "nmad10"
+        x -> mean(x[nmad(x).<10])
     elseif binning_method == "median"
         x -> median(x)
     else
@@ -4772,3 +4772,18 @@ end
 unit_convert = Dict()
 unit_convert["m3 s^-1"] = u"m^3/s"
 unit_convert["kg s^-1"] = u"kg/s"
+
+
+function mission_proper_name(mission)
+    if mission == "icesat2"
+        return "ICESat-2"
+    elseif mission == "icesat"
+        return "ICESat"
+    elseif mission == "gedi"
+        return "GEDI"
+    elseif mission == "hugonnet"
+        return "ASTER/WorldView"
+    else
+        return mission
+    end
+end

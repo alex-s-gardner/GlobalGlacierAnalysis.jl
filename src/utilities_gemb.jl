@@ -498,7 +498,7 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
     ddate_gemb = dims(smb, :date)
     dgeotile = dims(smb, :geotile)
 
-    volume2mass = GlobalGlacierAnalysis.δice / 1000
+    volume2mass = δice / 1000
 
     if .!isnothing(examine_model_fits)
         geotile_ref = examine_model_fits
@@ -515,7 +515,7 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
     index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
     index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
 
-    decyear = GlobalGlacierAnalysis.decimalyear.(ddate_gemb[index_gemb])
+    decyear = decimalyear.(ddate_gemb[index_gemb])
     Δdecyear = decyear .- mean(decyear)
 
     # loop for each geotile
@@ -545,7 +545,7 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
         for geotile = eachrow(geotiles[gindex, :])
 
             # total discharge D in Gt/yr converted to km3/yr
-            index = GlobalGlacierAnalysis.within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
+            index = within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
 
             if any(index)
                 discharge_km3yr += sum(discharge[index, :discharge_gtyr]) ./ volume2mass
@@ -614,7 +614,7 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
 
                 # ----------------- Objective function definition -[this should be passed as a kwarg]- ----------------
                 # fit a model to the residuals... use the amplitude of the residuals as a weighting of the objective function
-                fit1 = curve_fit(model3, Δdecyear, res, GlobalGlacierAnalysis.p3)
+                fit1 = curve_fit(model3, Δdecyear, res, p3)
                 mad1 = sqrt(mean(res .^ 2)) + (2*abs(fit1.param[4])) 
                 # --------------------------------------------------------------
 

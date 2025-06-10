@@ -187,10 +187,12 @@ Get the land elevation trend correction for each mission.
 - DimensionalArray with trend values (m/yr) for each mission
 """
 function mission_land_trend()
-    missions = ["icesat", "icesat2", "gedi", "hugonnet"]
-    dmission = Dim{:mission}(missions)
+    missions0 = ["icesat", "icesat2", "gedi", "hugonnet"]
+    dmission = Dim{:mission}(missions0)
     mission_trend_myr = fill(0.0, dmission)
     mission_trend_myr[At(["gedi"])] .= -0.144
 
     return mission_trend_myr
 end
+
+geotiles_golden_test = ["lat[+30+32]lon[+078+080]", "lat[+60+62]lon[-142-140]", "lat[+62+64]lon[-052-050]", "lat[-68-66]lon[-070-068]", "lat[-44-42]lon[-074-072]", "lat[-34-32]lon[-070-068]"]

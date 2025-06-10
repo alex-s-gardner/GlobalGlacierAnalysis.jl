@@ -25,6 +25,7 @@ begin
     force_remake_discharge = false; # these files are not altimetry dependent
     force_remake_geotile_groups = false; # these files are not altimetry dependent
 end
+
 # LOAD PACKAGES,SET PATHS AND PARAMETERS
 begin
     import GlobalGlacierAnalysis as GGA
@@ -51,7 +52,6 @@ begin
     using Arrow
     using Loess
     using DataInterpolations
-    include("utilities_synthesis.jl")
 
     paths = GGA.pathlocal
     geotile_width = 2;
@@ -63,9 +63,9 @@ begin
     dem_id=["best", "cop30_v2"]
     curvature_correct=[false, true]
     amplitude_correct=[true]
-    binning_method = ["median","meanmadnorm5", "meanmadnorm3"]
+    binning_method = ["median","nmad5", "nmad3"]
     paramater_set=[1, 2, 3, 4]
-    binned_folder=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg")
+    binned_folder=["/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"]
 
     filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2023_820_40_racmo_grid_lwt_e97_0.jld2"
     filename_gemb_geotile = replace(filename_gemb_combined, ".jld2" => "_geotile.jld2")
@@ -144,6 +144,7 @@ Processes each glacier inventory to calculate area-elevation distributions:
 
 Note: This calculation is computationally intensive (~37 minutes per inventory)
 """
+
 for sm in surface_mask 
     begin
         # Set the glacier ID attribute name based on RGI version
@@ -198,6 +199,7 @@ Parameters:
 - Supports "hypsometry" or "area" downscaling methods
 - Applies discharge estimation only for glaciers with non-zero area
 """
+
 if .!isfile(globaldischarge_fn) || force_remake_discharge # Load RGI6 glacier hypsometry data from previously generated file glacier_geotile_hyps_fn = joinpath(paths.data_dir, "GlacierOutlines/rgi60/rgi60_Global.gpkg")
     sm = "glacier"
     
@@ -280,7 +282,7 @@ end
 
 
 
-path2geotile_synthesis_error = geotile_synthesis_error(; 
+path2geotile_synthesis_error = GGA.geotile_synthesis_error(; 
     path2runs, 
     outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2", 
     force_remake_before,
@@ -303,7 +305,8 @@ Synthesize elevation change data from multiple altimetry missions into a unified
 - `missions2include`: Array of mission names to include in the synthesis
 - `force_remake_before`: Date threshold for forcing remake of existing files
 """
-geotile_synthesize_runs(;
+
+GGA.geotile_synthesize_runs(;
     path2runs,
     path2geotile_synthesis_error, 
     missions2include=["hugonnet" "gedi" "icesat" "icesat2"],
@@ -326,6 +329,7 @@ This function:
 
 Returns dictionaries of geotiles and glaciers indexed by surface mask.
 """
+
 begin
     # Update paths to point to synthesized data
     path2runs = replace.(path2runs, "aligned.jld2" => "synthesized.jld2")
@@ -362,7 +366,6 @@ begin
 end
 
 
-
 """
     Group geotiles based on glacier overlap
 
@@ -379,6 +382,7 @@ The function:
 
 The grouping is only recalculated if the output file doesn't exist or if forced.
 """
+
 if !isfile(geotile_groups_fn) || force_remake_geotile_groups
 #@time begin
     # Filter for large glaciers (>100 km2) that may cross tile boundaries
@@ -398,8 +402,6 @@ if !isfile(geotile_groups_fn) || force_remake_geotile_groups
     GeoDataFrames.write(geotile_groups_fn, geotiles0[:,[:geometry, :id, :group]]; crs=GFT.EPSG(4326))
 end
 
-
-
 """
     Calibrate GEMB model to altimetry data
 
@@ -415,6 +417,7 @@ This function calibrates the Glacier Energy and Mass Balance (GEMB) model to mat
 
 The calibration is only performed if output files don't exist or if forced by date.
 """
+
 begin
     # load gemb data
     # Note: GEMB volume change is for a single surface mask... this is a hack has making gemb dv for multiple surface masks is onerious... that said, because GEMB data is calibrated to altimetry that uses different surface masks.. this is mostly a non-issue
@@ -432,8 +435,8 @@ begin
     end
 
     @showprogress desc="Finding optimal GEMB fits to altimetry data..." Threads.@threads for binned_synthesized_file in path2runs
-        synthesized_gemb_fit = replace(binned_synthesized_file,  ".jld2" => "_gemb_fit.arrow")
 
+        synthesized_gemb_fit = replace(binned_synthesized_file,  ".jld2" => "_gemb_fit.arrow")
 
         if !(isfile(synthesized_gemb_fit)) || !isnothing(force_remake_before)
 

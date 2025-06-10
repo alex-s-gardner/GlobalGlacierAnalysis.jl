@@ -1,0 +1,650 @@
+"""
+    plot_curvature(bin_center, dh_obs, dh_cor, nrow, mission, geotile)
+
+Create a visualization showing the relationship between surface curvature and height anomalies.
+
+# Arguments
+- `bin_center`: Array of curvature bin centers [cm⁻¹]
+- `dh_obs`: Array of observed height anomalies [m]
+- `dh_cor`: Array of modeled height anomalies [m]
+- `nrow`: Array of observation counts per bin
+- `mission`: Mission identifier string
+- `geotile`: Geotile object containing location information
+
+# Returns
+- A Makie Figure object containing:
+  - Top panel: Height anomalies vs curvature showing observations, model fit, and corrected values
+  - Bottom panel: Histogram of observation counts per curvature bin
+
+# Description
+Creates a two-panel plot showing how height anomalies vary with surface curvature. The top panel
+displays raw observations, the model fit, and corrected values. The bottom panel shows the
+distribution of observations across curvature bins.
+"""
+function plot_curvature(bin_center, dh_obs, dh_cor, nrow; title = "")
+    mm = 3.7795275590551176
+    figure_width = 183mm
+    
+    valid = .!ismissing.(dh_obs)
+    valid_range, = validrange(valid)
+   
+
+    f = Figure(size=(figure_width, figure_width * 2/3))
+
+    ax1 = CairoMakie.Axis(f[1:4, 1]; title, ylabel="height anomaly [m]")
+    ax2 = CairoMakie.Axis(f[5:6, 1], ylabel="count [×1000]", xlabel="curvature [cm⁻¹]")
+
+    hidexdecorations!(ax1; grid=false, minorgrid=false)
+
+    plot!(ax1, bin_center[valid], dh_obs[valid]; label="observation")
+    lines!(ax1, bin_center[valid_range], dh_cor[valid_range]; label="model")
+    plot!(ax1, bin_center[valid], dh_obs[valid] .- dh_cor[valid]; label="corrected")
+    barplot!(ax2, bin_center[valid], nrow[valid] / 1000)
+    axislegend(ax1, framevisible=false, position=:lt)
+
+    return f
+end
+
+## ---------------------------- elevation-time matrix plotting ----------------------------
+"""
+    plot_elevation_time(dh0; colorrange=(-20, 20))
+
+Create a heatmap visualization of elevation changes over time.
+
+# Arguments
+- `dh0`: A dimensional array containing elevation change data with time and elevation dimensions
+- `colorrange`: Tuple specifying the color scale range for the heatmap (default: (-20, 20))
+
+# Returns
+- A Makie heatmap plot object showing elevation anomalies over time
+
+# Description
+This function creates a heatmap where the x-axis represents height anomaly [m] and displays
+elevation changes using a balanced color scheme. Only valid (non-NaN) data points are plotted.
+"""
+function plot_elevation_time(dh0; colorrange=(-20, 20))
+    (valid_rows, valid_cols) = GGA.validrange(.!isnan.(dh0))
+
+    p = heatmap(
+        dh0[valid_rows, valid_cols];
+        colormap=Makie.Reverse(:balance), 
+        colorrange,
+        label=dh0.refdims[1][1]
+    )
+
+    p.axis.xlabel = "height anomaly [m]" 
+    p.axis.ylabel = ""
+
+    p.axis.xticklabel = Year.(p.axis.xtick)
+    return p
+end
+
+"""
+    plot_elevation_time!(ax, dh0; colorrange=(-20, 20))
+
+Create a heatmap visualization of elevation changes over time on an existing axis.
+
+# Arguments
+- `ax`: The axis object to plot on
+- `dh0`: A dimensional array containing elevation change data with time and elevation dimensions
+- `colorrange`: Tuple specifying the color scale range for the heatmap (default: (-20, 20))
+
+# Returns
+- The modified axis object with the heatmap plot
+
+# Description
+This function creates a heatmap on an existing axis where the x-axis represents height anomaly [m] 
+and displays elevation changes using a balanced color scheme. Only valid (non-NaN) data points are plotted.
+This is the in-place version of `plot_elevation_time()` for use in multi-panel figures.
+"""
+function plot_elevation_time!(ax, dh0; colorrange = (-20,20), xaxis_label = true, yaxis_label = true)
+    (valid_rows, valid_cols) = GGA.validrange(.!isnan.(dh0))
+
+    if length(dh0.refdims) > 0
+        label=dh0.refdims[1][1]
+    else
+        label=""
+    end
+    ax = heatmap!(ax,
+        dh0[valid_rows, valid_cols];
+        colormap=Makie.Reverse(:balance), 
+        colorrange,
+        label,
+    )
+
+    ax.xlabel = "height anomaly [m]" 
+    ax.ylabel = ""
+
+    return ax
+end
+
+"""
+    plot_elevation_time_multimission(dh, geotile2plot; colorrange=(-20, 20))
+
+Create a multi-panel figure showing elevation changes over time for multiple altimetry missions.
+
+# Arguments
+- `dh`: Dictionary containing elevation change data for different missions/datasets
+- `geotile2plot`: String identifier for the specific geotile to visualize
+- `colorrange`: Tuple specifying the color scale range for all heatmaps (default: (-20, 20))
+
+# Returns
+- A Figure object containing heatmap subplots for each mission with a shared colorbar
+
+# Description
+This function creates a multi-panel visualization where each subplot shows elevation changes
+over time for a different altimetry mission or dataset. The subplots are arranged in a 2-column
+grid layout, with each mission labeled at the top of its respective panel. A shared colorbar
+on the right side shows the height anomaly scale in meters.
+"""
+function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=true, colorbar_label="height anomaly [m]")
+   
+    mm = 3.7795275590551176
+    figure_width = 183mm
+
+    missions = mission_proper_name.(collect(keys(dh)))
+    dheight = dims(dh[first(keys(dh))], :height)
+    Δheight = val(dheight)[2] - val(dheight)[1]
+
+    f = Figure(size=(figure_width * 1.5, figure_width))
+
+    # initialize axes
+    ax = map(1:length(dh)) do i
+        r = div(i + 1, 2)
+        c = mod(i, 2) + 1
+        CairoMakie.Axis(f[r, c])
+    end
+
+    height_min = Inf
+    height_max = 0
+
+    for (i, k) in enumerate(keys(dh))
+        r = div(i + 1, 2)
+        c = mod(i, 2) + 1
+
+        date_range, height_range = validrange(.!isnan.(dh[k]))
+        height_min = min(height_min, minimum(parent(dheight[height_range])))
+        height_max = max(height_max, maximum(parent(dheight[height_range])))
+
+        plot_elevation_time!(ax[i], dh[k]; colorrange)
+
+        ax[i].title = "$(missions[i])"
+
+        #Label(f[r, c, Top()], "$(missions[i]) - height anomaly [m]";
+        #    valign=:bottom,
+        #    padding=(0, 0, 5, 0))
+
+        if (i != 1) && linkaxes
+            linkyaxes!(ax[1], ax[i])
+            linkxaxes!(ax[1], ax[i])
+        end
+        if r == 1
+            ax[i].xticklabelsvisible = false
+            ax[i].xticksvisible = false
+        end
+
+        if c == 2
+            ax[i].yticklabelsvisible = false
+            ax[i].yticksvisible = false
+        end
+
+        if c == 1
+            ax[i].ylabel = "elevation [m]"
+        end
+    end
+
+    height_min = max(0.0, (floor(height_min / Δheight) * Δheight) - Δheight)
+    height_max = ceil(height_max / Δheight) * Δheight .+ Δheight
+
+    for (i, k) in enumerate(keys(dh))
+        ylims!(ax[i], (height_min, height_max))
+    end
+
+    Colorbar(f[3, 1:2], f.content[1].scene.plots[1], vertical=false, label=colorbar_label, flipaxis=false)
+
+    return f
+end
+
+function plot_hypsometry!(f, area_km2)
+    # ----------- plot hypsometry ------------
+    ax13 = CairoMakie.Axis(f[1, 3]);
+    dheight = dims(area_km2, :height)
+    Δheight = val(dheight)[2] - val(dheight)[1]
+
+    # can't get linkyaxes to work so doing manually
+    # linkyaxes!(CairoMakie.Axis(f[1, 1]), ax); 
+    ylims!(ax13, f.content[1, 1].yaxis.attributes.limits.val)
+   
+    pts0 = Point2f.(collect(area_km2), parent(val(dheight)))
+    pts = similar(pts0, (length(pts0) * 2)+2)
+
+    # set starting and ending points to zero area
+    pts[1] = Point2f(0, dheight[1])
+    pts[end] = Point2f(0, dheight[end])
+
+    for i in eachindex(pts0)
+        n = i * 2
+        pts[n] = pts0[i]
+        if i < length(pts0)
+            pts[n+1] = (pts0[i+1][1], pts0[i][2])
+        else
+            pts[n+1] = pts0[i]
+        end
+    end
+
+    poly!(ax13, pts, color=:skyblue2, strokecolor=:black, strokewidth=1)
+    xlims!(ax13, (0, ceil(maximum(area_km2)*1.05 / Δheight) * Δheight))
+    #ax13.xtickformat = "{:.2f}km²"
+    ax13.ygridvisible = false
+    ax13.xgridvisible = false
+    ax13.yticklabelsvisible = false
+    #ax13.xlabel = "area [km²]"
+    ax13.title = "area [km²]"
+    hidespines!(ax13, :t, :r);
+    ax13.yticksvisible = false
+
+    return f
+end
+
+function plot_area_average_height_anomaly!(f, dh0, area_km2, cmap=:thermal)
+    # ----------- area average height anomaly  ------------
+    ax23 = CairoMakie.Axis(f[2, 3], yaxisposition=:right)
+    
+    clrs = Makie.resample_cmap(cmap, length(keys(dh0))+1)
+    for (i, mission) in enumerate(keys(dh0))
+        #    mission = "icesat2"
+        y = dh_area_average(dh0[mission], area_km2)
+        lines!(ax23, collect(val(dims(dh0[mission], :date))), collect(y), label=mission_proper_name(mission), color=clrs[i])
+    end
+    ax23.ylabel = "height anomaly [m]"
+    
+    axislegend(ax23, position=:rt, framevisible=false, patchsize=(20.0f0, 1.0f0), padding=(1.0f0, 1.0f0, 1.0f0, 1.0f0), labelsize=12)
+
+    colgap!(f.layout, 10)
+    rowgap!(f.layout, 10)
+    #hidespines!(ax23, :t, :r)
+    return f
+end
+
+function plot_elevation_time_multimission_geotiles(
+    dh,
+    geotiles2plot;
+    area_km2 = nothing,
+    colorrange=(-20, 20), 
+    label = nothing, 
+    colorbar_label = "height anomaly [m]",
+    hypsometry = false, 
+    area_averaged = false, 
+    plots_show = false, 
+    plots_save = false, 
+    plot_save_path_prefix = "",
+    plot_save_format = ".png"
+    )
+
+    if !isnothing(geotiles2plot)
+        for geotile2plot in geotiles2plot
+            dh0 = Dict(mission => dh[mission][geotile=At(geotile2plot)] for mission in keys(dh))
+            for mission in keys(dh)
+                if all(isnan.(dh0[mission]))
+                    delete!(dh0, mission)
+                end
+            end
+            
+            f = plot_elevation_time_multimission(dh0; colorrange, colorbar_label)
+            
+            if hypsometry
+                f = GGA.plot_hypsometry!(f, area_km2[geotile=At(geotile2plot)])
+            end
+
+            if area_averaged
+                f = GGA.plot_area_average_height_anomaly!(f, dh0, area_km2[geotile=At(geotile2plot)])
+            end
+
+            isnothing(label) ? nothing : Label(f[0, 1:2], label)
+
+            plots_show ? display(f) : nothing
+
+            if plots_save
+                fname = plot_save_path_prefix * "_$(geotile2plot)$(plot_save_format)"
+                println(fname)
+                CairoMakie.save(fname, f)
+            end
+        end
+    end
+end
+
+function plot_amplitude_correction(model_ref, model0, delta, mission, p0, p_ref)
+
+    mission =mission_proper_names(mission)
+
+    max_dh = ceil(Int, max(maximum(abs.(model_ref)), maximum(abs.(model0))))
+    colorrange = (-max_dh, max_dh)
+    f = Figure(size=(2000, 600))
+    ax = map(1:2:6) do i
+        CairoMakie.Axis(f[1, i])
+    end
+
+    hm = [heatmap!(ax[i], dh; colorrange) for (i, dh) in enumerate([model_ref, model0, delta])]
+
+    CairoMakie.Axis(f[1, 1], title="ICESat-2 height anomaly [m]")
+    CairoMakie.Axis(f[1, 3], title="$mission height anomaly [m]")
+    CairoMakie.Axis(f[1, 5], title="delta height anomaly [m]")
+
+    Colorbar(f[1, 2], hm[2])
+    Colorbar(f[1, 4], hm[3])
+    Colorbar(f[1, 6], hm[1])
+
+    label_text = "$(mission) amplitude correction [parameters: old = $(round.(p0, sigdigits=2)), new = $(round.(p_ref, sigdigits=2))]"
+    Label(f[0, :], label_text; fontsize=20)
+
+    colgap!(f.layout, 10)
+    rowgap!(f.layout, 10)
+    return f
+end
+
+
+
+"""
+    plot_multiregion_dvdm(regions; kwargs...) -> Figure, Vector, Vector
+
+Create a multi-region plot of glacier mass change time series with stacked regions.
+
+This function visualizes mass change time series for multiple glacier regions, stacking them
+vertically with appropriate offsets to avoid overlap. It supports plotting multiple variables
+with error bounds and customizable styling.
+
+# Arguments
+- `regions`: Dictionary containing mass change data for different regions and variables
+
+# Keyword Arguments
+- `variables=["dm", "dm_altim"]`: Variables to plot (last variable is plotted on top)
+- `units="Gt"`: Units for mass change (e.g., "Gt", "m", "m w.e.")
+- `rgi_regions=setdiff(collect(dims(runs_rgi["dm_altim"], :rgi)), [13, 14, 15, 99])`: RGI regions to include
+- `showlines=false`: Whether to show grid lines
+- `fontsize=15`: Font size for plot text
+- `cmap=:Dark2_4`: Color map for regions
+- `region_order=nothing`: Custom ordering of regions (default: sorted by total mass change)
+- `ylims=nothing`: Custom y-axis limits
+- `title=nothing`: Plot title
+- `palette=nothing`: Custom color palette
+- `delta_offset=nothing`: Vertical offset between regions (default depends on units)
+- `all_error_bounds=false`: Whether to show error bounds for all variables
+- `daterange=DateTime(2000,1,1):Month(1):DateTime(2025,1,1)`: Date range to plot
+- `numbersinylabel=false`: Whether to include numeric values in y-axis labels
+
+# Returns
+- `f`: The Makie Figure object
+- `region_order`: Vector of region IDs in the order they were plotted
+- `ylims`: The y-axis limits used in the plot
+"""
+function plot_multiregion_dvdm(
+    regions=regions;
+    variables=["dm", "dm_altim"], # last variable is plotted last
+    units="Gt",
+    rgi_regions=setdiff(collect(dims(runs_rgi["dm_altim"], :rgi)), [13, 14, 15, 99]),
+    showlines=false,
+    fontsize=15,
+    cmap=:Dark2_4,
+    region_order=nothing,
+    ylims=nothing,
+    title=nothing,
+    palette=nothing,
+    delta_offset=nothing,
+    all_error_bounds=false,
+    daterange=DateTime(2000, 1, 1):Month(1):DateTime(2025, 1, 1),
+    numbersinylabel=false,)
+
+    drgi = Dim{:rgi}(rgi_regions)
+    dvarname = Dim{:varname}(variables)
+
+    if isnothing(delta_offset)
+        if (units .== "m") || (units .== "m w.e.")
+            delta_offset = -10
+        else
+            delta_offset = -100
+        end
+    end
+
+    total_mass_change = zeros(drgi)
+
+    #total mass change of feature variable (i.e. last variable in variables)
+    first_valid = findfirst(.!isnan.(regions[dvarname[end]][At(drgi[1]), minimum(daterange)..maximum(daterange), At(false)]))
+    last_valid = findlast(.!isnan.(regions[dvarname[end]][At(drgi[1]), minimum(daterange)..maximum(daterange), At(false)]))
+
+    if isempty(first_valid)
+        error("No valid data for $dvarname[end] in $daterange")
+    end
+
+    for rgi in drgi
+        a = regions[dvarname[end]][At(rgi), minimum(daterange)..maximum(daterange), At(false)][first_valid]
+        b = regions[dvarname[end]][At(rgi), minimum(daterange)..maximum(daterange), At(false)][last_valid]
+        total_mass_change[At(rgi)] = b - a
+    end
+
+    if isnothing(region_order)
+        region_order = drgi[sortperm(collect(total_mass_change[:]); rev=true)]
+    end
+
+    total_mass_change = total_mass_change[At(rgi_regions)]
+
+    # make plots
+    xtick_delta = 5
+    years = unique(year.(daterange))
+
+    yticks = zeros(length(rgi_regions))
+    xticks = (floor(Int64, minimum(years) ./ xtick_delta)*xtick_delta):xtick_delta:(ceil(Int64, maximum(years) ./ xtick_delta)*xtick_delta)
+
+    xlims = (xticks.start, xticks.stop)
+
+    # backgroundcolor=RGBf(0.98, 0.98, 0.98)
+    f = CairoMakie.Figure(; size=(500, 750), fontsize)
+
+    # initialize
+    n = length(rgi_regions)
+    (n == 1) ? (n = 2) : (n = n)
+
+    if isnothing(palette)
+        palette = (; color=Makie.resample_cmap(cmap, n))
+    end
+
+    y2ticks = zeros(n)
+    y2ticklabels = fill("", n)
+    y2ticklabelcolor = palette.color
+
+    yticklabels = rginum2label.(region_order)
+
+    if numbersinylabel
+        yticklabels = ["$(rginum2label(id)) $(rginum2enclosed_alphanumerics[id])" for id in region_order]
+    end
+
+    # this is a hack... axes need to be defined early or things break
+    ax1 = CairoMakie.Axis(f[1, 1];
+        #title,
+        palette,
+        xticks=WilkinsonTicks(5),
+        yticklabelrotation=0 / (360 / (2 * pi)),
+        ygridcolor=:black,
+        ygridwidth=0.5,
+        yticks=((1:n) / n, string.((1:n) / n)),
+        yticklabelcolor=y2ticklabelcolor,
+    )
+
+    if .!isnothing(title)
+        ax1.title = title
+        ax1.titlecolor = RGBf(0.85, 0.85, 0.85) / 2
+    end
+
+    ax2 = CairoMakie.Axis(f[1, 1];
+        yaxisposition=:right,
+        yticks=((1:n) / n, string.((1:n) / n)),
+        yticklabelcolor=y2ticklabelcolor,
+    )
+
+    CairoMakie.xlims!(ax1, xlims...)
+
+    ymin = Inf
+    ymax = -Inf
+
+    region_offsets = zeros(region_order)
+
+    # calculate offsets 
+    varname = dvarname[end]
+    valid_index = .!isnan.(regions[varname][At(region_order[1]), minimum(daterange)..maximum(daterange), At(false)])
+    last = zeros(sum(valid_index))
+
+    for rgi in region_order
+        mid0 = regions[varname][At(rgi), minimum(daterange)..maximum(daterange), At(false)][valid_index]
+        region_offsets[At(rgi)] = floor(min(minimum((last .- (mid0 .- mid0[1]))), 0) / delta_offset) * delta_offset .+ delta_offset .- mid0[1]
+
+        last = mid0 .+ region_offsets[At(rgi)]
+    end
+
+    # plot error bounds for
+    endi = length(dvarname)
+    if all_error_bounds
+        starti = 1
+    else
+        starti = length(dvarname)
+    end
+
+    for varname in dvarname[starti:endi]
+        valid_index = .!isnan.(regions[varname][At(region_order[1]), minimum(daterange)..maximum(daterange), At(false)])
+        last = zeros(sum(valid_index))
+
+        for rgi in region_order
+
+            mid0 = regions[varname][At(rgi), minimum(daterange)..maximum(daterange), At(false)][valid_index]
+
+            if all(isnan.(mid0))
+                continue
+            end
+
+            mid = mid0 .+ region_offsets[At(rgi)]
+            low = mid .- regions[varname][At(rgi), minimum(daterange)..maximum(daterange), At(true)][valid_index]
+            high = mid .+ regions[varname][At(rgi), minimum(daterange)..maximum(daterange), At(true)][valid_index]
+
+            CairoMakie.band!(ax1, collect(decimalyear.(dims(mid0, :date))), collect(low), collect(high); color=(:grey, 0.4))
+
+            ymin = min(ymin, minimum(low))
+            ymax = max(ymax, maximum(high))
+
+        end
+    end
+
+    # plot lines over error bounds
+    for varname in dvarname
+        #varname = "dm_altim"
+        valid_index = .!isnan.(regions[varname][At(region_order[1]), minimum(daterange)..maximum(daterange), At(false)])
+        last = zeros(sum(valid_index))
+
+        for (i, rgi) in enumerate(region_order)
+
+            #rgi = region_order[1]
+            mid0 = regions[varname][At(rgi), minimum(daterange)..maximum(daterange), At(false)][valid_index] .+ region_offsets[At(rgi)]
+
+            if all(isnan.(mid0))
+                continue
+            end
+
+            if varname == dvarname[end]
+                ln = CairoMakie.lines!(ax1, collect(decimalyear.(dims(mid0, :date))), collect(mid0))
+
+                y2ticklabels[i] = string(round(Int64, (mid0[end] - mid0[1]))) * " $(units)"
+                yticks[i] = mid0[1]
+                y2ticks[i] = mid0[end]
+                y2ticklabelcolor[i] = ln.color.val
+            else
+                ln = CairoMakie.lines!(ax1, collect(decimalyear.(dims(mid0, :date))), collect(mid0); color=(:black, 0.3))
+            end
+
+        end
+    end
+
+    if isnothing(ylims)
+        ylims = [ymin, ymax]
+    end
+
+    CairoMakie.ylims!(ax1, minimum(ylims), maximum(ylims))
+    CairoMakie.reset_limits!(ax1) # this is needed to be able to retrive limits
+
+    minorgridspacing = -delta_offset / 5
+    ylim = round.(Int, ax1.yaxis.attributes.limits.val ./ minorgridspacing) .* minorgridspacing
+    #yticks = collect(region_offsets[At(collect(region_order))])
+
+    ax1.yticks = (yticks, yticklabels)
+    ax1.yticklabelcolor = y2ticklabelcolor
+    ax1.ygridvisible = showlines
+
+    #!showlines && CairoMakie.hidexdecorations!(ax1,)
+    try
+        ax2.yticks = (y2ticks, y2ticklabels)
+    catch e
+        printstyled("NOTE: if you end up here there is a bug with CairoMakie in which a cryptic error is thrown when the ytick positions exceed the yaxis limits\n"; color=:red)
+        rethrow(e)
+    end
+
+
+    ax2.yticklabelcolor = y2ticklabelcolor
+
+    foo = ax1.yaxis.attributes.limits.val
+    CairoMakie.ylims!(ax2, ylims)
+    CairoMakie.ylims!(ax2, ylims)
+
+    minorgridspacing = -(delta_offset / 5)
+
+    ax2.yminorticks = ylim[1]:minorgridspacing:ylim[2]
+
+    !showlines && CairoMakie.hidespines!(ax1, :t, :r, :l)
+    CairoMakie.hidespines!(ax2)
+    ax2.yminorticksvisible = false
+    ax2.yminorgridvisible = showlines
+    ax2.yticksvisible = false
+    ax2.ygridvisible = false
+
+    CairoMakie.hidexdecorations!(ax2)
+
+    xtickcolor = RGBf(0.85, 0.85, 0.85)
+    ax1.xaxisposition = :bottom
+    ax1.xgridvisible = true
+    ax1.xgridcolor = xtickcolor
+    ax1.xticklabelcolor = xtickcolor ./ 2
+    ax1.xticks = (Float64.(xticks), string.(xticks))
+    ax1.xtickcolor = xtickcolor
+    ax1.xlabelvisible = true
+    ax1.yticksvisible = false
+    ax1.xticksvisible = true
+    ax1.bottomspinecolor = xtickcolor
+
+    CairoMakie.ylims!(f.content[1], ylims)
+
+    return f, region_order, ylims
+end
+
+
+"""
+    show_error_bar_table(regional_results; cols2display = 3)
+
+Display a formatted table of regional results in the console, organized in sections.
+
+Prints the regional results DataFrame in multiple sections, with each section showing a subset
+of columns. The first two columns (typically region identifiers) are always displayed, followed
+by `cols2display` data columns in each section. Section headers are printed in yellow and
+contain the name of the first column in that section.
+
+# Arguments
+- `regional_results`: DataFrame containing regional data to be displayed
+- `cols2display`: Number of data columns to show in each section (default: 3)
+"""
+function show_error_bar_table(regional_results; cols2display=3)
+    # dump table to console
+    colnames = names(regional_results)
+    last_set = ceil(Int, (length(colnames) - 2) / (cols2display + 1) - 1)
+    for i = 0:last_set
+        printstyled("\n------------------------------------------------------- $(colnames[3 + (4 * i)])-------------------------------------------------------\n", color=:yellow)
+        if (i == last_set) && (length(colnames) > (last_set + 4))
+            show(regional_results[:, [1:2; (3 .+ (4*i)):end]], allrows=true, allcols=true)
+        else
+            show(regional_results[:, [1:2; (3:(2+cols2display)) .+ (4 * i)]], allrows=true, allcols=true)
+        end
+    end
+end

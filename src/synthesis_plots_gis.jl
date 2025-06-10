@@ -30,14 +30,14 @@ begin
     using DataFrames
 
 
-    reference_run = "binned/2deg/glacier_dh_best_meanmadnorm5_v01_filled_ac_p2_synthesized.jld2"
+    reference_run = "binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized.jld2"
 
     paths = GGA.pathlocal
 end
 
 # export trends and amplitudes for plotting of reference_run only
 begin     
-    path2reference = joinpath(paths.data_dir, reference_run)
+    path2reference = joinpath(paths[:data_dir], reference_run)
     binned_synthesized_dv_file = replace(path2reference, ".jld2" => "_gembfit_dv.jld2")
    
     geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")

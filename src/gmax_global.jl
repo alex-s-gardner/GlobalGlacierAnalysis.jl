@@ -26,6 +26,7 @@ begin
     using FileIO
     using DataFrames
     using CairoMakie
+    using Unitful
 
     dates4trend = [DateTime(2000, 3, 1), DateTime(2024, 12, 15)]
 
@@ -42,7 +43,6 @@ begin
     rivers_paths = GGA.allfiles(paths[:river]; fn_endswith="MERIT_Hydro_v07_Basins_v01.shp", fn_startswith="riv_pfaf")
     glacier_rivers_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
-    dates4trend = (Date(2000,1,1), Date(2024,10,1))
     SECONDS_PER_DAY = 86400
 end
 
@@ -59,7 +59,7 @@ This function:
 
 Returns a GeoDataFrame with river segments and their glacier runoff contribution metrics.
 """
-@time begin
+#@time begin
     # load data from netcdf files
     glacier_flux_nc = NCDataset(glacier_summary_riverflux_file)
     river_flux_nc = NCDataset(glacier_rivers_land_flux_path)
@@ -87,10 +87,6 @@ Returns a GeoDataFrame with river segments and their glacier runoff contribution
     glacier_Ti = dims(glacier_runoff, :Ti)
     river_Ti = dims(river_flux, :Ti)
 
-    glacier_index = (glacier_Ti .>= minimum(dates4trend)) .& (glacier_Ti .<= maximum(dates4trend))
-    river_index = (river_Ti .>= minimum(dates4trend)) .& (river_Ti .<= maximum(dates4trend))
-
-
     #TODO: WHY DOES RUNOFF NOT GO TO ZERO? This needs further investigation... 
     # COMID = 81020092 
 
@@ -108,6 +104,7 @@ Returns a GeoDataFrame with river segments and their glacier runoff contribution
     glacier_max = mapslices(maximum, glacier_monthly; dims=:Month)
     glacier_max = dropdims(glacier_max; dims=:Month)
 
+    # set runoff outside of the peak runoff period to zero
     ti_month = month.(dims(glacier_runoff, :Ti))
     dt = 2;
     for comid in dims(glacier_monthly, :COMID)
@@ -121,11 +118,7 @@ Returns a GeoDataFrame with river segments and their glacier runoff contribution
     end
 
     # calcualte the fraction of flux that is from glacier runoff
-    glacier_fraction = @d glacier_runoff[findall(glacier_index), :] ./ (glacier_runoff[findall(glacier_index), :] .+ river_flux[findall(river_index), :])
-    # calcualte the fraction of flux that is from glacier runoff
-    glacier_fraction = @d glacier_runoff[findall(glacier_index), :] ./ (glacier_runoff[findall(glacier_index), :] .+ river_flux[findall(river_index), :])
-    # calcualte the fraction of flux that is from glacier runoff
-    glacier_fraction = @d glacier_runoff[findall(glacier_index), :] ./ (glacier_runoff[findall(glacier_index), :] .+ river_flux[findall(river_index), :])
+    glacier_fraction = @d glacier_runoff ./ (glacier_runoff .+ river_flux)
     
     glacier_fraction[isnan.(glacier_fraction)] .= 0
     glacier_fraction = round.(Int8, glacier_fraction.*100)
@@ -157,6 +150,54 @@ Returns a GeoDataFrame with river segments and their glacier runoff contribution
     rivers = rivers[:, Not("NextDownID", "up1", "glacier_table_row", "RGIId")]
     sort!(rivers, :COMID)
     @assert collect(dims(gmax_maximum , :COMID)) == rivers.COMID
+
+
+    # There is a stong trend in Alaskan late summer river flux that is driving a trend in 
+    # river_length with gmax > 50%... I was unable to find any evidence for why this is the 
+    # case. I'm leaving this for now, but it may be worth investigating further.
+
+    # find the year with the maximum length of river segments with gmax > 50%
+     
+    gmax_cutoff = 50
+    glacier_fraction_year = groupby(glacier_fraction, Ti => year)
+    dyears = dims(glacier_fraction_year, :Ti);
+    river_length_annual = zeros(dyears)
+    for yr in dyears
+        river_length_annual[At(yr)] = sum(rivers.lengthkm[vec(any(glacier_fraction_year[At(yr)] .>= gmax_cutoff, dims= 1))])
+    end
+
+    # identify those rivers with gmax > 50%
+    river_gmax_gt_50 = zeros(dims(glacier_fraction, :COMID))
+    for yr in dyears
+        river_gmax_gt_50 .+= vec(any(glacier_fraction_year[At(yr)] .>= gmax_cutoff, dims= 1))
+    end
+
+
+    river_flux_monthly = groupby(river_flux, Ti => Bins(month, 8:9))
+
+    begin
+        min_count = 1
+        max_count = 11
+        index_gmax = (river_gmax_gt_50 .>= min_count) .& (river_gmax_gt_50 .<= max_count)
+
+        pts = GO.centroid.(rivers.geometry)
+        ext = GGA.extent2rectangle(Extent(X = (-140, -120), Y = (50, 60)))
+        index_spatial = GO.intersects.(pts, Ref(ext)) .& index_gmax
+
+        index = index_spatial .& index_gmax
+        plot(rivers[index, :geometry])
+
+    
+
+        dmonth = dims(river_flux_monthly, :Ti)
+        i = 1;
+        p = lines(vec(sum(river_flux_monthly[At(dmonth[i])][:, index], dims = :COMID)); label = "$(dmonth[i])");
+        for i in 2:length(river_flux_monthly)
+            lines!(vec(sum(river_flux_monthly[At(dmonth[i])][:, index], dims = :COMID)); label = "$(dmonth[i])"); p
+        end; 
+        axislegend(); p
+    end
+
 
     # add the glacier fraction maximum to the rivers dataframe
     rivers[!, :runoff_max_avg] = ustrip.(vec(parent(glacier_max)))

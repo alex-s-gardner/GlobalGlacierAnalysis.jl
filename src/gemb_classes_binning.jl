@@ -37,7 +37,7 @@ begin
     using NaNStatistics
 
     # run parameters 
-    force_remake = true; # set force_remake == true to redo all steps from scratch 
+    force_remake = false; # set force_remake == true to redo all steps from scratch 
     project_id = :v01;
     geotile_width = 2;
     binning_method = "mean";
@@ -90,8 +90,8 @@ begin
     filename_gemb_geotile_filled_extra_extrap_dv = replace(filename_gemb_geotile, ".jld2" => "_filled_extra_extrap_dv.jld2")
 
     # funtion used for binning data
-    if binning_method == "meanmadnorm3"
-        binfun::Function = binfun(x) = mean(x[GGA.madnorm(x).<3])
+    if binning_method == "nmad3"
+        binfun::Function = binfun(x) = mean(x[GGA.nmad(x).<3])
     elseif binning_method == "median"
         binfun::Function = binfun(x) = median(x)
     elseif binning_method == "mean"
