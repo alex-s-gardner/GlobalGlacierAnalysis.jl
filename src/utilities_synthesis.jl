@@ -82,16 +82,8 @@ function geotile_synthesis_error(;
         end
         
         for mission in missions
-            #mission = "gedi"
 
             @showprogress dt = 1 desc = "Calculating standard deviation (error) across runs for $(mission) ..." Threads.@threads for geotile in dgeotile
-                #geotile = dgeotile[510]
-
-                # !!! I THINK THIS IS FIXED NOW !!!!
-                # TODO: There is an issue where some missions (ICESat2) has different hight range than the other missions... this cuases issues with non-rectangular error matrix
-                # See this example
-                # heatmap(dh_err["hugonnet"][At("lat[-28-26]lon[-070-068]"),:,:])
-                # heatmap!(dh_err["icesat2"][At("lat[-28-26]lon[-070-068]"),:,:])
 
                 valid1 = dropdims(any(.!isnan.(dh_all[mission][:, At(geotile), :, :]), dims=:file), dims=:file)
 
@@ -145,6 +137,7 @@ function geotile_synthesize_runs(;
     path2runs,
     path2geotile_synthesis_error,
     missions2include=["hugonnet", "gedi", "icesat", "icesat2"],
+    geotile2plot = nothing,
     showplots=false,
     force_remake_before=nothing
 )
@@ -155,6 +148,7 @@ function geotile_synthesize_runs(;
 
     # convert error to weights
     w = copy(dh_err)
+
     for mission in missions
         #w0 = w[mission];
         w[mission] = 1 ./ (dh_err[mission] .^ 2)
@@ -171,13 +165,11 @@ function geotile_synthesize_runs(;
     end
 
     @showprogress dt = 1 desc = "Synthesizing runs ..." Threads.@threads for binned_aligned_file in path2runs
-        #binned_aligned_file = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_b1km_dh_best_cc_meanmadnorm3_v01_filled_ac_p1_aligned.jld2"    
+        #binned_aligned_file = path2runs[1]   
 
         if showplots
             file_parts = splitpath(binned_aligned_file)
-            binned_folder = joinpath(file_parts[1:findfirst(file_parts .== "2deg")])
-
-            fig_folder = joinpath(binned_folder, "figures")
+            fig_folder = pathlocal[:figures];
             figure_suffix = replace(file_parts[end], ".jld2" => "")
             binned_synthesized_file = replace(binned_aligned_file, "aligned.jld2" => "synthesized.jld2")
             params = binned_filled_fileparts(binned_aligned_file)
@@ -203,7 +195,7 @@ function geotile_synthesize_runs(;
             #heatmap!(dh2dv(dh["gedi"], geotiles["glacier_b1km"])[510:511,:])
 
             if showplots
-                p = plot_height_time(dh; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="final", fig_folder, figure_suffix, mask=params.surface_mask, showplots)
+                f = plot_elevation_time_multimission(dh, geotile2plot; colorrange=(-20, 20))
             end
 
             dh_synth = fill(0.0, dims(dh[missions[1]]))
@@ -232,7 +224,7 @@ function geotile_synthesize_runs(;
             #if plot_dh_as_function_of_time_and_elevation
             if showplots
                 # load geotiles
-                p = plot_height_time(dh_synth; geotile=geotiles[dh_time_elevation_idx, :], fig_suffix="raw", fig_folder, figure_suffix, mask=params.surface_mask, mission="synthesis", showplots)
+                f = plot_elevation_time(dh_synth[geotile=At(geotile2plot)]; colorrange=(-20, 20))
             end
 
             save(binned_synthesized_file, Dict("dh_hyps" => dh_synth, "dh_hyps_err" => dh_synth_err))

@@ -55,7 +55,7 @@ This script processes and analyzes glacier mass change data at regional scales.
 
     # to include in uncertainty
     paths = GGA.pathlocal
-    reference_run = "binned/2deg/glacier_dh_best_meanmadnorm5_v01_filled_ac_p2_synthesized.jld2"
+    reference_run = "binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized.jld2"
     glacier_flux_path = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
 
     project_id = ["v01"]
@@ -63,7 +63,7 @@ This script processes and analyzes glacier mass change data at regional scales.
     dem_id = ["best", "cop30_v2"]
     curvature_correct = [false, true]
     amplitude_correct = [true]
-    binning_method = ["median", "meanmadnorm5", "meanmadnorm3"]
+    binning_method = ["median", "nmad5", "nmad3"]
     paramater_set = [1, 2, 3, 4]
     binned_folder = ["/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"]
 

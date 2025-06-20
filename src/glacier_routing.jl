@@ -44,7 +44,6 @@ begin
     using DataFrames
     using NCDatasets
     using Dates
-    using NetCDF
     using LsqFit
     using Interpolations
     using Arrow

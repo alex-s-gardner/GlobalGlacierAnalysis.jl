@@ -24,7 +24,6 @@ module GlobalGlacierAnalysis
    using Extents
    using Interpolations
    using StaticArrays
-   using NetCDF
    using BinStatistics
    using FastGeoProjections
    using GeoTiles
@@ -98,5 +97,6 @@ module GlobalGlacierAnalysis
    include("utilities_postprocessing.jl")
    include("utilities_synthesis.jl")
    include("utilities_plotting.jl")
+   include("utilities_main.jl")
    # include("/home/gardnera/Documents/GitHub/GlobalGlacierAnalysis.jl/src/STRTreesAbstractTreesExt.jl")
 end

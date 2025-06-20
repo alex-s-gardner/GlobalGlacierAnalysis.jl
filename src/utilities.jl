@@ -694,7 +694,7 @@ function geotile_id(extent)
 end
 
 """
-    geotile_extent(geotile_id::String) -> NamedTuple
+    geotile_extent(geotile_id::String) -> Extent
 
 Extract geographic extent from a geotile ID string.
 
@@ -711,10 +711,21 @@ function geotile_extent(geotile_id)
     min_x = parse(Int, geotile_id[16:19])
     max_x = parse(Int, geotile_id[20:23])
 
-    return (min_x=min_x, min_y=min_y, max_x=max_x, max_y=max_y)
+    return Extent(X=(min_x, max_x), Y=(min_y, max_y))
 end
 
 
+function geotile2rectangle(geotile_id)
+    min_y = parse(Int, geotile_id[5:7])
+    max_y = parse(Int, geotile_id[8:10])
+
+    min_x = parse(Int, geotile_id[16:19])
+    max_x = parse(Int, geotile_id[20:23])
+
+    rectangle = GeoInterface.Wrappers.Polygon([[(min_x, min_y), (min_x, max_y), (max_x, max_y), (max_x, min_y), (min_x, min_y)]])
+    
+    return rectangle
+end
 """
     geotile_utm!(df::DataFrame; height=nothing) -> (DataFrame, String)
 
@@ -2562,11 +2573,13 @@ function dh_ll2aa(lon, lat, dhdlon, dhdlat)
         return along, across
     end
 end
+
 """
     geotile_extract_mask(
         geotile_id::String,
         geotile_dir::String;
-        vars::Vector{Symbol}=[:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean],
+        masks::Vector{Symbol}=[:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean],
+        masks_highres::Vector{Symbol}=[:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km], # or nothing
         geotile_ext::String=".arrow",
         job_id="",
         force_remake=false
@@ -2579,7 +2592,7 @@ Extract mask data for a specific geotile and save as an Arrow file.
 - `geotile_dir::String`: Directory containing geotile files
 
 # Keywords
-- `vars::Vector{Symbol}`: Mask variables to extract (default: [:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean])
+- `masks::Vector{Symbol}`: Mask variables to extract (default: [:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean])
 - `geotile_ext::String`: File extension of geotile files (default: ".arrow")
 - `job_id::String`: Identifier for logging purposes (default: "")
 - `force_remake::Bool`: Whether to regenerate existing files (default: false)
@@ -2590,7 +2603,8 @@ Nothing, but creates a mask file for the geotile with extracted data
 function geotile_extract_mask(
     geotile_id::String,
     geotile_dir::String;
-    vars::Vector{Symbol}=[:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean],
+    masks::Vector{Symbol}=[:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean],
+    masks_highres::Vector{Symbol}=[:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km], # or nothing
     geotile_ext::String=".arrow",
     job_id="",
     force_remake=false
@@ -2604,7 +2618,7 @@ function geotile_extract_mask(
     elseif isfile(path2geotile)
         t1 = time()
 
-        df0 = DataFrame(Arrow.Table(path2geotile))[!, [:longitude, :latitude]]
+        df0 = select!(DataFrame(Arrow.Table(path2geotile)), [:longitude, :latitude])
         #vlength = length.(df0.longitude)
 
         #lon = vcat(df0.longitude...)
@@ -2615,24 +2629,35 @@ function geotile_extract_mask(
             return
         end
 
-        df = itslive_extract(df0.longitude, df0.latitude, vars, path2param=pathlocal.itslive_parameters)
+        mask0 = itslive_extract(df0.longitude, df0.latitude, unique(masks), path2param=pathlocal.itslive_parameters)
 
-        #df = DataFrame()
-        #for v in vars
-        #    df[!, v] = [Array{eltype(df0[!, v])}(undef, l) for l in vlength]
-        #end
+        if !isnothing(masks_highres)
 
-        # start = 1
-        # for row = eachrow(df)
-        #     stop = length(row[vars[1]]) + start - 1
-        #     for v in vars
-        #         row[v] = df0[!, v][start:stop]
-        #     end
-        #     start = stop + 1
-        # end
+            for highres_mask in masks_highres
+                # handle to shapefiles 
+                # [!!! this needs to be done inside of the thread or you will get a segfault !!!]
+                if highres_mask == :land
+                    shp = Symbol("$(:water)_shp")
+                    fn_shp = pathlocal[shp]
+                    feature = Shapefile.Handle(fn_shp)
+                    invert = true
+
+                    shp = Symbol("$(:landice)_shp")
+                    fn_shp = pathlocal[shp]
+                    excludefeature = Shapefile.Handle(fn_shp)
+                else
+                    shp = Symbol("$(highres_mask)_shp")
+                    fn_shp = pathlocal[shp]
+                    feature = Shapefile.Handle(fn_shp)
+                    invert = false
+                    excludefeature = nothing
+                end
+                mask0 = highres_mask!(mask0, df0, geotile_extent(geotile_id), feature, invert, excludefeature, highres_mask)
+            end
+        end
 
         tmp = tempname(dirname(outfile))
-        Arrow.write(tmp, df::DataFrame)
+        Arrow.write(tmp, mask0::DataFrame)
         mv(tmp, outfile; force=true)
 
         total_time = round((time() - t1) / 60, digits=2)
@@ -2644,7 +2669,7 @@ function geotile_extract_mask(
 end
 
 """
-    geotile_extract_mask(geotiles::DataFrame, geotile_dir::String; vars, job_id, force_remake) -> Nothing
+    geotile_extract_mask(geotiles::DataFrame, geotile_dir::String; masks, masks_highres, job_id, force_remake) -> Nothing
 
 Extract mask data for multiple geotiles and save as Arrow files.
 
@@ -2653,27 +2678,29 @@ Extract mask data for multiple geotiles and save as Arrow files.
 - `geotile_dir::String`: Directory containing geotile files
 
 # Keywords
-- `vars::Vector{Symbol}=[:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean]`: Mask variables to extract
+- `masks::Vector{Symbol}=[:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean]`: Mask variables to extract
+- `masks_highres::Vector{Symbol}=[:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean]`: High-resolution mask variables to extract (or nothing)
 - `job_id::String=""`: Identifier for logging purposes
 - `force_remake::Bool=false`: Whether to regenerate existing files
 
 # Returns
 Nothing, but creates mask files for each geotile
 """
+
 function geotile_extract_mask(
     geotiles::DataFrame,
     geotile_dir::String;
-    vars::Vector{Symbol}=[:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean],
+    masks::Vector{Symbol}=[:floatingice, :glacierice, :inlandwater, :land, :landice, :ocean],
+    masks_highres::Vector{Symbol}=[:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km], # or nothing
     job_id="",
     force_remake=false
 )
 
     #asyncmap(eachrow(geotiles); ntasks = 4) do geotile
-    @showprogress dt = 10 desc = "extracting masks for $job_id geotiles..." for geotile in eachrow(geotiles)
-        geotile_extract_mask(geotile.id, geotile_dir; vars=vars, job_id=job_id, force_remake=force_remake)
+    @showprogress dt = 10 desc = "extracting masks for $job_id geotiles..." Threads.@threads for geotile in eachrow(geotiles)
+        geotile_extract_mask(geotile.id, geotile_dir; masks, masks_highres,job_id, force_remake)
     end
 end
-
 
 """
     _offset_design_matrix(dhdx, dhdy, p)
@@ -3516,12 +3543,14 @@ function geotiles_w_mask(geotile_width; resolution = (X=.001, Y= .001), remake =
         geotiles = project_geotiles(; geotile_width);
         masks = [:glacier, :landice, :floating]
 
-        for mask in masks
+        Threads.@threads for mask in masks
             sym = Symbol("$(mask)_shp");
             feature = Shapefile.Handle(pathlocal[sym])
 
             sym = Symbol("$(mask)_frac")
             geotiles[!,sym] = zeros(nrow(geotiles))
+
+            # Threads causes issues 
             for geotile in eachrow(geotiles)
                 mask = mask_rasterize(feature, geotile.extent, resolution; target_crs=EPSG(4326), source_crs=EPSG(4326), boundary = :center);
                 geotile[sym] = sum(mask) / length(mask)
@@ -3781,12 +3810,12 @@ end
 
 
 """
-    highres_mask(geotile, feature, invert, excludefeature) -> (mask, area_m2)
+    highres_mask(extent, feature, invert, excludefeature) -> (mask, area_m2)
 
 Create a high-resolution binary mask from vector features for a geotile.
 
 # Arguments
-- `geotile`: Geotile object with extent information
+- `extent`: Extent object with extent information
 - `feature`: Vector feature to rasterize into a mask
 - `invert`: Boolean indicating whether to invert the mask
 - `excludefeature`: Optional feature to exclude from the mask (can be nothing)
@@ -3795,13 +3824,13 @@ Create a high-resolution binary mask from vector features for a geotile.
 - `mask`: Binary raster mask at ~30m resolution
 - `area_m2`: Matrix of cell areas in square meters
 """
-function highres_mask(geotile, feature, invert, excludefeature)
+function highres_mask(extent, feature, invert, excludefeature)
     # update mask with high-resolution vector files
     grid_resolution = 0.00027 # ~30m
 
-    x_mask = X(geotile.extent.X[1]:grid_resolution:geotile.extent.X[2],
+    x_mask = X(extent.X[1]:grid_resolution:extent.X[2],
         sampling=DimensionalData.Intervals(DimensionalData.Start()))
-    y_mask = Y(geotile.extent.Y[1]:grid_resolution:geotile.extent.Y[2],
+    y_mask = Y(extent.Y[1]:grid_resolution:extent.Y[2],
         sampling=DimensionalData.Intervals(DimensionalData.Start()))
 
     mask1 = Raster(zeros(UInt8, y_mask, x_mask))
@@ -3833,14 +3862,14 @@ end
 
 
 """
-    highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, surface_mask) -> DataFrame
+    highres_mask!(masks0, altim, extent, feature, invert, excludefeature, surface_mask) -> DataFrame
 
 Apply a high-resolution binary mask to points within a geotile and update a DataFrame column.
 
 # Arguments
 - `masks0::DataFrame`: DataFrame to update with mask values
 - `altim`: Object containing longitude and latitude coordinates
-- `geotile`: Geotile object with extent information
+- `extent`: Extent object with extent information
 - `feature`: Vector feature to rasterize into a mask
 - `invert::Bool`: Whether to invert the mask
 - `excludefeature`: Optional feature to exclude from the mask (can be nothing)
@@ -3849,32 +3878,30 @@ Apply a high-resolution binary mask to points within a geotile and update a Data
 # Returns
 - Updated DataFrame with the surface_mask column populated
 """
-function highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, surface_mask)
-    mask1, _ = highres_mask(geotile, feature, invert, excludefeature)
-    
-    grid_resolution = 0.00027 # ~30m
+function highres_mask!(masks0, altim, extent, feature, invert, excludefeature, surface_mask)
+    mask1, _ = highres_mask(extent, feature, invert, excludefeature)
 
-    x_mask = X(geotile.extent.X[1]:grid_resolution:geotile.extent.X[2],
-        sampling=DimensionalData.Intervals(DimensionalData.Start()))
-    y_mask = Y(geotile.extent.Y[1]:grid_resolution:geotile.extent.Y[2],
-        sampling=DimensionalData.Intervals(DimensionalData.Start()))
-
-    valid = within.(Ref(geotile.extent), altim.longitude, altim.latitude)
+    valid = within.(Ref(extent), altim.longitude, altim.latitude)
     masks0[!, surface_mask] .= false
 
     fast_index = true
-    if fast_index # fast index is 15x faster than Rasters
+    if fast_index # fast index is 6x faster than Rasters [v0.14.2] with identical output
+        grid_resolution = val(dims(mask1, :X).val.span) # ~30m
+
+        x_mask = X(extent.X[1]:grid_resolution:extent.X[2],
+            sampling=DimensionalData.Intervals(DimensionalData.Start()))
+        y_mask = Y(extent.Y[1]:grid_resolution:extent.Y[2],
+            sampling=DimensionalData.Intervals(DimensionalData.Start()))
+
         c = floor.(Int64, (altim.longitude[valid] .- first(x_mask)) ./ step(x_mask)) .+ 1
         r = floor.(Int64, (altim.latitude[valid] .- first(y_mask)) ./ step(y_mask)) .+ 1
         pts3 = [CartesianIndex(a, b) for (a, b) in zip(r, c)]
         masks0[valid, surface_mask] .= mask1[pts3]
     else
         #NOTE: 67% of time is taken here for large number of points.
-        pts1 = GeoInterface.PointTuple.([((Y=y, X=x)) for (x, y) in
-                                         zip(altim.longitude[valid], altim.latitude[valid])])
-        pts2 = extract(mask1, pts1, atol=grid_resolution / 2, index=true, geometry=false)
-        masks0[:, surface_mask][valid] = getindex.(pts2, 2)
-        pts3 = CartesianIndex.(getindex.(pts2, 1))
+        pts1 = GeoInterface.Point.(tuple.(altim.longitude[valid], altim.latitude[valid]))
+        pts2 = Rasters.extract(mask1, pts1, atol=grid_resolution / 2, index=true, geometry=false)
+        masks0[:, surface_mask][valid] = coalesce.(getindex.(pts2, 2), false)
     end
 
     return masks0
@@ -4786,4 +4813,18 @@ function mission_proper_name(mission)
     else
         return mission
     end
+end
+
+
+function overlap_range(x1, x2)
+    x_min = max(minimum(x1), minimum(x2))
+    x_max = min(maximum(x1), maximum(x2))
+
+    ind1 = (x1 .>= x_min) .& (x1 .<= x_max)
+    range_overlap1 = findfirst(ind1):findlast(ind1)
+
+    ind2 = (x2 .>= x_min) .& (x2 .<= x_max)
+    range_overlap2 = findfirst(ind2):findlast(ind2)
+
+    return range_overlap1, range_overlap2
 end

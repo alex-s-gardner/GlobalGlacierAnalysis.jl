@@ -504,7 +504,7 @@ function hyps_align_dh!(dh, nobs, params, area_km2; missions2align2=["icesat2", 
                     weight1 = sqrt(params[mission_ref][i, "offset_nobs_$mission_ref"] + params[mission][i, "offset_nobs_$mission_ref"])
                     offset0 += params[mission][i, "offset_$mission_ref"] * weight1
                     weight0 += weight1
-                end
+                end   
             end
 
             # Apply weighted average offset
@@ -545,9 +545,9 @@ For each mission and geotile:
 """
 function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
 
-    lon = mean.(getindex.(geotiles.extent, :X))
-    lat = mean.(getindex.(geotiles.extent, :Y))
-    ll = tuple.(lon, lat)
+    geotile_rectangles = extent2rectangle.(geotiles.extent)
+    lonlat = GO.centroid.(geotile_rectangles)
+    mission_specs = project_products(; project_id=:v01)
 
     for mission in keys(dh1)
         # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><
@@ -561,7 +561,13 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
         # copy dh as it gets morphed inside of parallel loop
         dh2 = deepcopy(dh1[mission])
 
-        for geotile in (dims(dh1[mission], :geotile))
+        # rectangle of valid mission bounds
+        mission_extent = (X = mission_specs[Symbol(mission)].longitude_limits, Y = mission_specs[Symbol(mission)].latitude_limits);
+        mission_rectangle = extent2rectangle(mission_extent)
+
+        within_mission_rectangles = GO.intersects.(geotile_rectangles, Ref(mission_rectangle))
+
+        for geotile in (dims(dh1[mission], :geotile)[within_mission_rectangles])
             #for geotile in dims(dh1[mission], :geotile)
             # <><><><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><>
             #geotile = first(dims(dh1[mission], :geotile)[empty_geotiles])
@@ -589,7 +595,7 @@ function hyps_fill_empty!(dh1, params, geotiles; mask = :glacier)
             if all(isnan.(dh0))
 
                 # find distance between goetiles
-                dist2geotile = haversine.(Ref(ll[k]), ll, 6371000)
+                dist2geotile = haversine.(Ref(lonlat[k]), lonlat, 6371000)
 
                 # find closest X valid geotiles
                 nnearest = 5;
@@ -1286,30 +1292,6 @@ function binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_m
 end
 
 """
-    binned_aligned_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
-
-Generate filepath for aligned binned elevation change data.
-
-# Arguments
-- `binned_folder`: Path to the binned folder
-- `surface_mask`: Type of surface mask applied (e.g., "ice", "land")
-- `dem_id`: Identifier for the DEM used
-- `binning_method`: Method used for binning data
-- `project_id`: Project identifier
-- `curvature_correct`: Boolean indicating if curvature correction was applied
-- `amplitude_correct`: Boolean indicating if amplitude correction was applied
-- `paramater_set`: Parameter set identifier used for filling
-
-# Returns
-- `binned_aligned_file`: Full filepath to the aligned binned data file
-"""
-function binned_aligned_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
-    binned_filled_file, _ = binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
-    binned_aligned_file = replace(binned_filled_file, ".jld2" => "_aligned.jld2")
-    return binned_aligned_file
-end
-
-"""
     binned_synthesized_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, paramater_set)
 
 Generate filepath for synthesized binned elevation change data.
@@ -1657,3 +1639,5 @@ function dh_area_average(dh, area0)
 
     return dh_area_avg
 end
+
+

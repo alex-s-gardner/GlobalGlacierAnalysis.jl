@@ -1,4 +1,57 @@
 """
+    plot_unbinned_height_anomalies(datetime, dh; title="")
+
+Create a visualization of raw height anomalies and their monthly medians over time.
+
+# Arguments
+- `datetime`: Array of DateTime values representing measurement times
+- `dh`: Array of height anomaly measurements [m]
+- `title`: Optional title for the plot (default: "")
+
+# Returns
+- A Makie Figure object containing:
+  - Top panel: Height anomalies with monthly medians, scaled to show detail
+  - Bottom panel: Same data with expanded y-axis to show full range of values
+
+# Description
+Creates a two-panel plot showing height anomaly measurements over time. The top panel
+uses a y-axis scaled to the 95th percentile of anomalies, while the bottom panel
+shows the full range. Both panels include raw measurements and monthly median values.
+"""
+function plot_unbinned_height_anomalies(datetime, dh; title="")
+    mm = 3.7795275590551176
+    figure_width = 183mm
+
+    sample_rate = ceil(Int, length(dh) / 1E6)
+
+    df = binstats(DataFrame(Ti=decimalyear.(datetime), dh=dh), :Ti, decimalyear.(minimum(datetime):Month(1):maximum(datetime)), :dh, col_function=[median])
+
+    f = Figure(size=(figure_width, figure_width * 2 / 3))
+
+    ymax = quantile(abs.(dh[1:sample_rate:end]), 0.99)
+    ax1 = CairoMakie.Axis(f[1:2, 1]; title, ylabel="height anomaly [m]")
+    CairoMakie.scatter!(ax1, datetime[1:sample_rate:end], dh[1:sample_rate:end]; color=(:skyblue2, 0.2), label="raw dh")
+    # add zero line
+    CairoMakie.lines!(ax1, [minimum(datetime), maximum(datetime)], [0., 0.]; color=:snow4, linewidth=0.5)
+    # add monthly medians
+    CairoMakie.lines!(ax1, convert.(typeof(minimum(datetime)), decimalyear2datetime.(df.Ti)), df.dh_median; color=:black, label="monthly median")
+    CairoMakie.ylims!(ax1, (-ymax, ymax))
+    axislegend(ax1, position=:rt) # orientation=:horizontal, fontsize=10
+
+    ax2 = CairoMakie.Axis(f[3, 1]; ylabel="height anomaly [m]")
+    CairoMakie.scatter!(ax2, datetime[1:sample_rate:end], dh[1:sample_rate:end]; color=:skyblue2, label="raw")
+    # add zero line
+    CairoMakie.lines!(ax2, [minimum(datetime), maximum(datetime)], [0., 0.]; color=(:snow4, 0.2), linewidth=0.5)
+    # add monthly medians
+    CairoMakie.lines!(ax2, convert.(typeof(datetime[1]), decimalyear2datetime.(df.Ti)), df.dh_median; color=:black, label="monthly median")
+
+    ymax = ceil(Int, maximum(abs.(df.dh_median)) / 5) * 5 + 5
+    CairoMakie.ylims!(ax2, (-ymax, ymax))
+
+    return f
+end
+
+"""
     plot_curvature(bin_center, dh_obs, dh_cor, nrow, mission, geotile)
 
 Create a visualization showing the relationship between surface curvature and height anomalies.
@@ -45,6 +98,10 @@ function plot_curvature(bin_center, dh_obs, dh_cor, nrow; title = "")
     return f
 end
 
+
+
+
+
 ## ---------------------------- elevation-time matrix plotting ----------------------------
 """
     plot_elevation_time(dh0; colorrange=(-20, 20))
@@ -65,18 +122,17 @@ elevation changes using a balanced color scheme. Only valid (non-NaN) data point
 function plot_elevation_time(dh0; colorrange=(-20, 20))
     (valid_rows, valid_cols) = GGA.validrange(.!isnan.(dh0))
 
-    p = heatmap(
+    f = Figure()
+    ax = CairoMakie.Axis(f[1, 1], ylabel="height anomaly [m]")
+    heatmap!(ax,
         dh0[valid_rows, valid_cols];
         colormap=Makie.Reverse(:balance), 
         colorrange,
         label=dh0.refdims[1][1]
     )
 
-    p.axis.xlabel = "height anomaly [m]" 
-    p.axis.ylabel = ""
-
-    p.axis.xticklabel = Year.(p.axis.xtick)
-    return p
+    #p.axis.xticklabel = Year.(p.axis.xaxis.tickvalues)
+    return f
 end
 
 """
@@ -254,11 +310,12 @@ function plot_area_average_height_anomaly!(f, dh0, area_km2, cmap=:thermal)
     for (i, mission) in enumerate(keys(dh0))
         #    mission = "icesat2"
         y = dh_area_average(dh0[mission], area_km2)
-        lines!(ax23, collect(val(dims(dh0[mission], :date))), collect(y), label=mission_proper_name(mission), color=clrs[i])
+        y_median = round(median(y[.!isnan.(y)]), digits=1)
+        lines!(ax23, collect(val(dims(dh0[mission], :date))), collect(y), label="$(mission_proper_name(mission)) [$(y_median)]", color=clrs[i])
     end
     ax23.ylabel = "height anomaly [m]"
     
-    axislegend(ax23, position=:rt, framevisible=false, patchsize=(20.0f0, 1.0f0), padding=(1.0f0, 1.0f0, 1.0f0, 1.0f0), labelsize=12)
+    axislegend(ax23, position=:rt, framevisible=false, patchsize=(20.0f0, 1.0f0), padding=(1.0f0, 1.0f0, 1.0f0, 1.0f0)) # orientation=:horizontal, fontsize=10
 
     colgap!(f.layout, 10)
     rowgap!(f.layout, 10)
@@ -306,7 +363,6 @@ function plot_elevation_time_multimission_geotiles(
 
             if plots_save
                 fname = plot_save_path_prefix * "_$(geotile2plot)$(plot_save_format)"
-                println(fname)
                 CairoMakie.save(fname, f)
             end
         end

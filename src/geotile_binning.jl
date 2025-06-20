@@ -12,63 +12,39 @@ begin
     import GlobalGlacierAnalysis as GGA
     using Dates
         
-    # remake files that were created before this date
-    force_remake_before = Date(2025, 3, 15) # set == nothing to disable
 
     project_id = :v01
-    geotile_width = 2
-
-    gemb_file = "/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2023_820_40_racmo_grid_lwt_e97_0_geotile_filled_d_reg.jld2";
-
-    binned_folder_filtered = GGA.analysis_paths(; geotile_width).binned
-    binned_folder_unfiltered = replace(binned_folder_filtered, "binned" => "binned_unfiltered")
-
-    warnings = false 
-    plots_show = false
-    
-    # run parameters
-    update_geotile = false; # this will load in prevous results to update select geotiles or missions [only touched if force_remake_binning = true]
-    update_geotile_missions = ["icesat2"]
-
-    # run parameters
-    all_permutations_for_glacier_only = true
-    surface_masks = [:glacier, :glacier_rgi7]; #[:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
-    binned_folders = [binned_folder_unfiltered, binned_folder_filtered]
-    dem_ids = [:best, :cop30_v2]
-    binning_methods = ["nmad3", "nmad5", "median", "nmad10"]
-    curvature_corrects = [false,true]
+    geotile_width =2
+    force_remake_before = nothing
+    update_geotile = false # Update select missions from previous results
+    update_geotile_missions = nothing
+    warnings = false
     max_canopy_height = 1
     dh_max = 200
 
-    # filling only parameters
-    filling_paramater_sets = [1, 2, 3, 4]
-    amplitude_corrects = [true]
-    plot_dh_as_function_of_time_and_elevation = false;
     mission_reference_for_amplitude_normalization = "icesat2"
+    all_permutations_for_glacier_only = true
+    surface_masks = [:glacier, :glacier_rgi7] #[:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
+    binned_folders = [GGA.analysis_paths(; geotile_width).binned, replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")];
+    binning_methods = ["nmad3", "nmad5", "median"]
+    dem_ids = [:best, :cop30_v2]
+    curvature_corrects = [true, false]
+
+    paramater_sets = [1, 2, 3, 4]
+    amplitude_corrects = [true]
+    remove_land_surface_trend = GGA.mission_land_trend()
+    regions2replace_with_model = ["rgi19"]
+    mission_replace_with_model = "hugonnet"
+    missions2align2 = ["icesat2", "icesat"]
+
+    process_time_show = false
+    plots_show = false
+    plots_save = false
+    plot_save_format = ".png"
+    geotiles2plot = GGA.geotiles_golden_test
+    single_geotile_test = GGA.geotiles_golden_test[1] # nothing 
 end
         
-
-if false
-    @warn "Test parameter set being used"
-
-    # run parameters
-    all_permutations_for_glacier_only = true
-    surface_masks = [:glacier]; #[:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
-    binned_folders = [binned_folder_filtered]
-    dem_ids = [:best]
-    binning_methods = ["nmad5"]
-    curvature_corrects = [true]
-    max_canopy_height = 1
-    dh_max = 200
-
-    # filling only parameters
-    filling_paramater_sets = [2]
-    amplitude_corrects = [true]
-    plot_dh_as_function_of_time_and_elevation = false;
-    mission_reference_for_amplitude_normalization = "icesat2"
-end
-
-
 # this is to make the curvature correction figure included in the methods section of the paper
 if false
     GGA.geotile_binning(; 
@@ -123,11 +99,12 @@ end
 # - `max_canopy_height`: Maximum canopy height to consider (do not change)
 # - `dh_max`: Maximum elevation difference filter
 
-GGA.geotile_binning(; 
+GGA.geotile_binning(;
     project_id,
     geotile_width,
     warnings,
     plots_show,
+    process_time_show = false,
 
     # run parameters
     force_remake_before,
@@ -147,9 +124,8 @@ GGA.geotile_binning(;
 
     # filter parameters
     dh_max,
+    single_geotile_test, #GGA.geotiles_golden_test[2],
 )
-
-
 
 # Process and fill gaps in binned altimetry data
 #
@@ -178,11 +154,12 @@ GGA.geotile_binning(;
 GGA.geotile_binned_fill(;
     project_id,
     geotile_width,
-    force_remake_before = Date(2026, 6, 5),
-    update_geotile = false, # Update select missions from previous results
-    update_geotile_missions = nothing, # All missions must update if ICESat-2 updates
+    force_remake_before,
+    update_geotile, # Update select missions from previous results
+    update_geotile_missions, # All missions must update if ICESat-2 updates
     mission_reference_for_amplitude_normalization,
     all_permutations_for_glacier_only,
+
     surface_masks,
     binned_folders,
     binning_methods,
@@ -195,11 +172,11 @@ GGA.geotile_binned_fill(;
     regions2replace_with_model = ["rgi19"],
     mission_replace_with_model = "hugonnet",
     missions2align2 = ["icesat2", "icesat"],
-    show_times = false,
+    process_time_show = false,
 
-    plots_show = false,
+    plots_show,
     plots_save = false,
     plot_save_format = ".png",
-    geotiles2plot = GGA.geotiles_golden_test[2:2],
-    single_geotile_test=nothing, #GGA.geotiles_golden_test[2],
+    geotiles2plot = GGA.geotiles_golden_test,
+    single_geotile_test=nothing #GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
 )

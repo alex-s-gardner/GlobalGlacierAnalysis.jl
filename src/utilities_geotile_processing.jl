@@ -85,6 +85,7 @@ function geotile_binning(;
     geotile_width = 2,
     warnings = false,
     plots_show = false,
+    process_time_show = false,
 
     # run parameters
     force_remake_before = nothing,
@@ -105,6 +106,8 @@ function geotile_binning(;
 
     # filter parameters
     dh_max=200,
+
+    single_geotile_test=nothing,
     )
 
     paths = project_paths(; project_id)
@@ -114,7 +117,14 @@ function geotile_binning(;
     geotiles = geotiles_w_mask(geotile_width)
 
     # filter geotiles
-    geotiles = geotiles[(geotiles.glacier_frac.>0.0), :]
+    if isnothing(single_geotile_test)
+        geotiles = geotiles[(geotiles.glacier_frac.>0.0), :]
+    else
+        @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!"
+        ind = findfirst(geotiles.id .== single_geotile_test)
+        geotiles = geotiles[ind:ind, :]
+        plots_show = true
+    end
 
     if !isnothing(geotiles2update)
         index = [findfirst(geotiles.id .== gt) for gt in geotiles2update]
@@ -152,6 +162,10 @@ function geotile_binning(;
 
     # Threads is throwing errors due to reading of JLD2 files, Threads is implimented at
     # lower level with reasonable performance
+
+    # perfomance could be improved considerably if data was saved per geotile, this would allow 
+    # the raw data only be read in once per geotile... this would be complicated to implement
+    # as it would require all i
     @showprogress desc = "Binning hypsometric elevation change data ..." for param in params
 
         fig_folder = pathlocal[:figures]
@@ -164,42 +178,18 @@ function geotile_binning(;
             end
         end
 
-        # funtion used for binning data
-        binningfun = binningfun_define(param.binning_method)
-    
         binned_file = binned_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct)
 
-        # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><>
-        # binningfun(x) = mean(x[nmad(x).<10])
-        # <><><><><><><><><><><><><><><><><><><><><><<><><><><><><><><><><><><><><><><><>
-        if !isfile(binned_file) || !isnothing(force_remake_before)
+        if !isfile(binned_file) || !isnothing(force_remake_before) || !isnothing(single_geotile_test)
 
             println("binning:$binned_file")
+            t_start = time()
 
-            if isfile(binned_file) && !isnothing(force_remake_before)
+            if isfile(binned_file) && !isnothing(force_remake_before) && isnothing(single_geotile_test)
                 if Dates.unix2datetime(mtime(binned_file)) > force_remake_before
                     @warn "Skipping $(binned_file) because it was created after $force_remake_before"
                     continue
                 end
-            end
-
-            # open shapefiles
-            if param.surface_mask == :land
-                shp = Symbol("$(:water)_shp")
-                fn_shp = pathlocal[shp]
-                feature = Shapefile.Handle(fn_shp)
-                invert = true
-
-                shp = Symbol("$(:landice)_shp")
-                fn_shp = pathlocal[shp]
-                excludefeature = Shapefile.Handle(fn_shp)
-            else
-                shp = Symbol("$(param.surface_mask)_shp")
-                fn_shp = pathlocal[shp]
-                feature = Shapefile.Handle(fn_shp)
-                invert = false
-
-                excludefeature = nothing
             end
 
             # 6.2 hours for all glaciers, all missions/datasets on 96 threads
@@ -212,7 +202,7 @@ function geotile_binning(;
                 dh_hyps = FileIO.load(binned_file, "dh_hyps")
                 nobs_hyps = FileIO.load(binned_file, "nobs_hyps")
                 curvature_hyps = FileIO.load(binned_file, "curvature_hyps")
-                missions = update_geotile_missions;
+                missions = String.(update_geotile_missions);
             else
                 dh_hyps = Dict();
                 nobs_hyps = Dict();
@@ -242,33 +232,24 @@ function geotile_binning(;
                 # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
                 
                 product = products[Symbol(mission)];
+                mission_geotile_folder = paths[Symbol(mission)].geotile
 
+                # special case for unfiltered hugonnet data
+                # this is a hack for including 2 folders that contain hugonnet data (filtered and unfiltered)
+                if Base.contains(param.binned_folder, "unfiltered") && (mission == "hugonnet")
+                    mission_geotile_folder = replace(mission_geotile_folder, "/2deg" => "/2deg_unfiltered")
+                    mission_suffix = "-unfiltered"
+                else
+                    mission_suffix = ""
+                end
+                
                 #idx = (geotiles.rgi9 .> 0) .& (geotiles.glacier_frac .> 0.1)
                 Threads.@threads for geotile in eachrow(geotiles)
-
-                    # <><><><><><><><><><><><><><><><> FOR TESTING <><><><><><><><><><><><><><><><><><>
-                    #for geotile in eachrow(geotiles[idx,:])
-                    # geotile = geotiles[findfirst((geotiles.rgi2 .> 0.) .& (geotiles.glacier_frac .> 0.1)),:];
-                    #geotile = geotiles[findfirst(geotiles.id .== "lat[+28+30]lon[+082+084]"), :]
-
-                    #geotile = geotiles[findfirst(geotiles.id .== "lat[-72-70]lon[+160+162]"), :]
-                    #geotile = geotiles[findfirst(geotiles.id .== "lat[+44+46]lon[+006+008]"), :]; # used for curvature figure with mission ="icesat"
-
-                    # <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+                #for geotile in eachrow(geotiles)
+                    t0 = time()
 
                     if geotile.glacier_frac == 0.0
                         continue
-                    end
-    
-                    t1 = time();
-
-                    mission_geotile_folder = paths[Symbol(mission)].geotile 
-
-                    # special case for unfiltered hugonnet data
-
-                    # this is a hack for including 2 folders that contain hugonnet data (filtered and unfiltered)
-                    if Base.contains(param.binned_folder, "unfiltered") && (mission == "hugonnet")
-                        mission_geotile_folder = replace(mission_geotile_folder, "/2deg" => "/2deg_unfiltered")
                     end
 
                     path2altim = joinpath(mission_geotile_folder, geotile.id * ".arrow");
@@ -279,43 +260,51 @@ function geotile_binning(;
 
                     altim = select!(DataFrame(Arrow.Table(path2altim)), [:longitude, :latitude, :datetime, :height, :quality]);
 
+                    if process_time_show 
+                        t1 = time()
+                        dt = round(Int16, t1 - t0)
+                        println("loaded: $(mission_proper_name(mission)) - $(geotile.id): $(dt)s")
+                    end
+
                     # add height_ref and curvature
                     altim = add_dem_ref!(altim, param.dem_id, geotile, mission_geotile_folder)
-                    
+
+                    if process_time_show 
+                        t2 = time()
+                        dt = round(Int16, t2 - t1);
+                        println("dem ref: $(mission_proper_name(mission)) - $(geotile.id): $(dt)s")
+                    end
+
                     # load masks
                     path2masks = joinpath(mission_geotile_folder, geotile.id * ".masks");
-                    masks0 = select!(DataFrame(Arrow.Table(path2masks)), [:inlandwater, :land, :landice, :ocean]);
+                    masks0 = DataFrame(Arrow.Table(path2masks));
+
+                    if process_time_show 
+                        t3 = time()
+                        dt = round(Int16, t3 - t2);
+                        println("masks: $(mission_proper_name(mission)) - $(geotile.id): $(dt)s")
+                    end
 
                     if nrow(masks0) != nrow(altim)
                         error("masks and altim do not have the same number of rows, try deleting masks and rerunning geotile_mask_extract(): $(path2masks)")
                     end
                     
-                    # add high resolution mask 
-                    masks0 = highres_mask!(masks0, altim, geotile, feature, invert, excludefeature, param.surface_mask)
-                    valid = within.(Ref(geotile.extent), altim.longitude, altim.latitude)
+                    # add high resolution mask
+                    valid = within.(Ref(geotile.extent), altim.longitude, altim.latitude) .& .!isnan.(altim.dh)
 
-                    # quick trouble shoot check by plotting time series for each geotile
-                    if false
-                        valid = masks0.landice .& .!isnan.(altim.dh) 
-                        valid[valid] = (abs.(altim.dh[valid] .- median(altim.dh[valid])) .< dh_max) .& (abs.(altim.dh[valid]) .< dh_max*2)
-                        #valid[valid] = (abs.(altim.dh[valid] .- median(altim.dh[valid])) .< 2000) .& (altim.dh[valid] .!== 0) .& (altim.height_ref[valid] .> 0)
-                        if sum(valid) < 100
-                            #continue
-                        end
-                    
-                        df = binstats(altim[valid, :], [:datetime, :height_ref], 
-                            [date_range], :dh; col_function=[binningfun], missing_bins=false)
-
-                        x = df.datetime
-                        
-                        p = lines(x,df.dh_binningfun; title = geotile.id, linewidth=2)
-                        display(p)
-
-                        gdf = DataFrames.groupby(df, :datetime)
-
-                        #continue 
+                    if process_time_show
+                        t4 = time()
+                        dt = round(Int16, t4 - t3);
+                        println("highres mask: $(mission_proper_name(mission)) - $(geotile.id): $(dt)s")
                     end
 
+                    if plots_show
+                        title = "raw $(mission_proper_name(mission))$(mission_suffix) minus $(param.dem_id) for $(geotile.id) over $(param.surface_mask): median = $(round(median(altim.dh[valid]), digits=1))"
+                        f = GGA.plot_unbinned_height_anomalies(altim.datetime[valid], altim.dh[valid]; title)
+                        display(f)
+                    end
+
+                    # canopy height
                     if minimum(geotile.extent.Y) < -54 || maximum(geotile.extent.Y) > 66
                         canopy = DataFrame(canopyh = zeros(size(altim.latitude))) 
                     else
@@ -327,6 +316,12 @@ function geotile_binning(;
                             canopy = DataFrame(canopyh=zeros(size(altim.latitude)))
                         end
                     end;
+
+                    if process_time_show
+                        t5 = time()
+                        dt = round(Int16, t5 - t4);
+                        println("canopy: $(mission_proper_name(mission)) - $(geotile.id): $(dt)s")
+                    end
 
                     if !any(masks0[:, param.surface_mask])
                         continue
@@ -371,7 +366,7 @@ function geotile_binning(;
                                 catch e
                                     # having issues with edge cases
                                     println(" ##################### ERRORED ##########################")
-                                    println(" ##################### $(mission): $(geotile.id) ########################")
+                                    println(" ##################### $(mission_proper_name(mission)): $(geotile.id) ########################")
                                     println(" ##################### ERRORED ##########################")
                                     rethrow(e)
                                 end
@@ -396,19 +391,19 @@ function geotile_binning(;
                                         curvature_hyps[mission][gt_ind, :model_coef] = fit1.param
                             
                                         if plots_show
-
-                                 
-                                            
                                             dh_cor = model_curvature(bin_center, fit1.param)
-                                            title = "$(mission_proper_name(mission)): $(geotile.id)"
+                                            title = "curvature corrected $(mission_proper_name(mission))$(mission_suffix) minus DEM[$(param.dem_id)]: $(geotile.id)"
                                             f = plot_curvature(bin_center, df.dh_median, dh_cor, df.nrow; title)
 
-                                            fname = joinpath(fig_folder, "$(param.surface_mask)_$(mission)_$(geotile.id)_$(param.dem_id)_curvature.png")
+                                            mission_fn = replace(mission_proper_name(mission), "R/W" => "R-W")
+                                            fname = joinpath(fig_folder, "$(mission_fn)$(mission_suffix)_$(geotile.id)_$(param.dem_id)_curvature.png")
                                             CairoMakie.save(fname, f)
                                             display(f)
-
-                                            println("!!! intentionaly exiting after figure creation !!!")
-                                            return
+                                      
+                                            title = "curvature corrected $(mission_proper_name(mission))$(mission_suffix) minus $(param.dem_id) for $(geotile.id): median = $(round(median(altim.dh[valid]), digits=1))"
+                                            f = GGA.plot_unbinned_height_anomalies(altim.datetime[valid], altim.dh[valid]; title)
+                                            display(f)
+                       
                                         end
                                     end
                                 end
@@ -416,14 +411,17 @@ function geotile_binning(;
                         end
                     end
 
+                    if process_time_show
+                        t6 = time()
+                        dt = round(Int16, t6 - t5);
+                        println("curvature: $(mission_proper_name(mission)) - $(geotile.id): $(dt)s")
+                    end
+                    
                     #################################### FILTER 1 ######################################
                     var_ind = masks0[:, param.surface_mask] .& valid .& .!isnan.(altim.dh) .& (altim.height .!== 0) .& (altim.height_ref .!== 0)
                     if sum(var_ind) < 100
                         continue
                     end
-
-                    # for troubleshooting
-                    plots_show && CairoMakie.plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter,label="glacier")
 
                     var_ind[var_ind] = (abs.(altim.dh[var_ind] .- median(altim.dh[var_ind])) .< dh_max) .& (abs.(altim.dh[var_ind]) .< (dh_max*2))
 
@@ -431,15 +429,29 @@ function geotile_binning(;
                         var_ind = var_ind .& (canopy.canopyh .<= max_canopy_height)
                     end
                     
-                    # for troubleshooting
-                    plots_show && CairoMakie.plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter, label="glacier-filt", ylims = (-300, +300))
+                    if plots_show
+                        title = "filtered [#1] corrected $(mission_proper_name(mission)) minus $(param.dem_id) for $(geotile.id) over $(param.surface_mask): median = $(round(median(altim.dh[var_ind]), digits=1))"
+                        f = GGA.plot_unbinned_height_anomalies(altim.datetime[var_ind], altim.dh[var_ind]; title)
+                        display(f)
+                    end
                     
+                    if process_time_show
+                        t7 = time()
+                        dt = round(Int16, t7 - t6);
+                        println("filter 1: $(mission_proper_name(mission)) - $(geotile.id): $(dt)s")
+                    end
+
                     # this is a hack for including 2 folders that contain hugonnet data (filtered and unfiltered)
                     if product.apply_quality_filter || (Base.contains(param.binned_folder, "unfiltered") && (mission == "hugonnet"))
                         var_ind = var_ind .& altim.quality
 
                         # for troubleshooting 
-                        plots_show && CairoMakie.plot!(altim.datetime[var_ind],altim.dh[var_ind]; seriestype=:scatter, ylims = (-100, +100))
+                        if plots_show
+                            title = "quality > 70 $(mission_proper_name(mission)) minus $(param.dem_id) for $(geotile.id) over $(param.surface_mask): median = $(round(median(altim.dh[valid]), digits=1))"
+                            f = GGA.plot_unbinned_height_anomalies(altim.datetime[valid], altim.dh[valid]; title)
+                            display(f)
+                        end
+
                     end
                     ####################################################################################
 
@@ -457,6 +469,12 @@ function geotile_binning(;
                         dims_edges=("decimalyear" => decyear_range, "height_ref" => height_range),
                         binfunction=binningfun_define(param.binning_method))
 
+                    if process_time_show
+                        t8 = time()
+                        dt = round(Int16, t8 - t7);
+                        println("binned: $(mission_proper_name(mission)) - $(geotile.id): $(dt)s")
+                    end
+
                     if isnothing(var0)
                         continue
                     end
@@ -471,12 +489,27 @@ function geotile_binning(;
                         throw(e)
                     end
 
-                    t2 = time()
-                    dt = round(Int16, t2 - t1);
-                    println("binned: $(mission) - $(geotile.id): $(dt)s")
+                    if plots_show
+                        f = plot_elevation_time(dh_hyps[mission][At(geotile.id), :, :]; colorrange=(-20, 20))
+                        f.content[1].title = "$(mission_proper_name(mission)) minus DEM[$(param.dem_id)] over $(param.surface_mask): $(geotile.id)"
+                        Colorbar(f[1, 2], f.content[1].scene.plots[1], vertical=true, label="height anomaly [m]")
+                        display(f)
+                    end
+
+                    if process_time_show
+                        t9 = time()
+                        dt = round(Int16, t9 - t8);
+                        println("saved: $(mission_proper_name(mission)) - $(geotile.id): $(dt)s")
+                    end
+
+                    dt = round(Int16, time() - t0)
+                    println("Total time: $(mission_proper_name(mission)) - $(geotile.id): $(dt)s")
                 end
             end
-            save(binned_file, Dict("dh_hyps" => dh_hyps, "nobs_hyps" => nobs_hyps, "curvature_hyps" => curvature_hyps));
+            if isnothing(single_geotile_test)
+                save(binned_file, Dict("dh_hyps" => dh_hyps, "nobs_hyps" => nobs_hyps, "curvature_hyps" => curvature_hyps));
+                println("binning complete: $binned_file: $(round(Int16, (time() - t_start)/60))m")
+            end
         end
     end
 end
@@ -505,7 +538,7 @@ end
         plots_show=false,
         plots_save=false,
         plot_save_format=".png",
-        show_times=false,
+        process_time_show=false,
         geotiles2plot="lat[+28+30]lon[+082+084]",
         single_geotile_test=nothing,
     )
@@ -534,7 +567,7 @@ Process and fill gaps in binned altimetry data.
 - `plots_show`: Display diagnostic plots
 - `plots_save`: Save diagnostic plots
 - `plot_save_format`: Format for saved plots
-- `show_times`: Display processing times
+- `process_time_show`: Display processing times
 - `geotiles2plot`: Geotiles to include in plots
 - `single_geotile_test`: Test single geotile processing
 
@@ -564,7 +597,7 @@ function geotile_binned_fill(;
     plots_show=false,
     plots_save=false,
     plot_save_format = ".png",
-    show_times=false,
+    process_time_show=false,
     geotiles2plot="lat[+28+30]lon[+082+084]",
     single_geotile_test = nothing,
 )
@@ -609,7 +642,7 @@ function geotile_binned_fill(;
     # usings threads here cuases the memory usage to explode, Threads is implimented at
     # lower level with reasonable performance
     @showprogress desc = "Filling hypsometric elevation change data ..." for param in params
-        show_times ? t1 = time() : nothing
+        process_time_show ? t1 = time() : nothing
         fig_folder = pathlocal[:figures]
  
         if occursin("binned_unfiltered", param.binned_folder)
@@ -660,15 +693,12 @@ function geotile_binned_fill(;
              end
         end
 
-        if all(skip)
-            continue
-        end
 
         # load binned data that is the same for all paramater sets
         dh11 = FileIO.load(binned_file, "dh_hyps")
 
-        show_times ? t2 = time() : nothing
-        show_times && printstyled("dh_hyps loaded: $(round(Int16, t2 - t1))s\n", color=:green)
+        process_time_show ? t2 = time() : nothing
+        process_time_show && printstyled("dh_hyps loaded: $(round(Int16, t2 - t1))s\n", color=:green)
 
         if .!any(.!isnan.(dh11["hugonnet"]))
             println("NOT DATA: $binned_file")
@@ -677,8 +707,8 @@ function geotile_binned_fill(;
 
         nobs11 = FileIO.load(binned_file, "nobs_hyps")
 
-        show_times ? t3 = time() : nothing
-        show_times && printstyled("nobs_hyps loaded: $(round(Int16, t3 - t2))s\n", color=:green)
+        process_time_show ? t3 = time() : nothing
+        process_time_show && printstyled("nobs_hyps loaded: $(round(Int16, t3 - t2))s\n", color=:green)
 
 
         #Threads.@threads for paramater_set in paramater_sets
@@ -686,7 +716,7 @@ function geotile_binned_fill(;
         for paramater_set in paramater_sets
              for amplitude_correct = amplitude_corrects
 
-                show_times ? t4 = time() : nothing
+                process_time_show ? t4 = time() : nothing
 
                 dh1 = deepcopy(dh11)
                 nobs1 = deepcopy(nobs11)
@@ -706,11 +736,10 @@ function geotile_binned_fill(;
                         end
                     end
 
-                    display(dh1)
                 end
 
-                show_times ? t5 = time() : nothing
-                show_times && printstyled("deepcopy of dh1 and nobs1: $(round(Int16, t5 - t4))s\n", color=:green)
+                process_time_show ? t5 = time() : nothing
+                process_time_show && printstyled("deepcopy of dh1 and nobs1: $(round(Int16, t5 - t4))s\n", color=:green)
 
                 param_filling = binned_filling_parameters[paramater_set]
 
@@ -718,9 +747,9 @@ function geotile_binned_fill(;
 
                 binned_filled_file, figure_suffix = binned_filled_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct, amplitude_correct, paramater_set)
 
-                if !isnothing(force_remake_before) || !isfile(binned_filled_file)
+                if !isnothing(force_remake_before) || !isfile(binned_filled_file) || !isnothing(single_geotile_test)
 
-                    if isfile(binned_filled_file) && !isnothing(force_remake_before)
+                    if isfile(binned_filled_file) && !isnothing(force_remake_before) && isnothing(single_geotile_test)
                         if Dates.unix2datetime(mtime(binned_file)) > force_remake_before
                             continue
                         end
@@ -740,10 +769,10 @@ function geotile_binned_fill(;
                     gt = collect(dims(dh1[first(keys(dh1))], :geotile))
                     gt_ind = [findfirst(geotiles.id .== g0) for g0 in gt]
                     geotiles = geotiles[gt_ind, :]
-                    area_km2 = DimArray((reduce(hcat, geotiles[:, "glacier_area_km2"])'), (dims(dh1[first(keys(dh1))], :geotile), dims(dh1[first(keys(dh1))], :height)))
+                    area_km2 = DimArray((reduce(hcat, geotiles[:, "$(param.surface_mask)_area_km2"])'), (dims(dh1[first(keys(dh1))], :geotile), dims(dh1[first(keys(dh1))], :height)))
 
-                    show_times ? t6 = time() : nothing
-                    show_times && printstyled("geotiles copied and aligned: $(round(Int16, t6 - t5))s\n", color=:green)
+                    process_time_show ? t6 = time() : nothing
+                    process_time_show && printstyled("geotiles copied and aligned: $(round(Int16, t6 - t5))s\n", color=:green)
 
                     # create a data frame to store model parameters
                     params_fill = Dict()
@@ -770,8 +799,8 @@ function geotile_binned_fill(;
                         end
                     end
 
-                    show_times ? t7 = time() : nothing
-                    show_times && printstyled("params_fill initialized: $(round(Int16, t7 - t6))s\n", color=:green)
+                    process_time_show ? t7 = time() : nothing
+                    process_time_show && printstyled("params_fill initialized: $(round(Int16, t7 - t6))s\n", color=:green)
 
                     # plot raw binned height anomalies
                     if plots_show || plots_save
@@ -819,8 +848,8 @@ function geotile_binned_fill(;
                         end
 
 
-                        show_times ? t8 = time() : nothing
-                        show_times && printstyled("model_fill: $(round(Int16, t8 - t7))s\n", color=:green)
+                        process_time_show ? t8 = time() : nothing
+                        process_time_show && printstyled("model_fill: $(round(Int16, t8 - t7))s\n", color=:green)
                     end
 
                     # make plot of the height to time variogram range ratio
@@ -895,8 +924,8 @@ function geotile_binned_fill(;
                         end
                     end
 
-                    show_times ? t9 = time() : nothing
-                    show_times && printstyled("amplitude_normalize: $(round(Int16, t9 - t8))s\n", color=:green)
+                    process_time_show ? t9 = time() : nothing
+                    process_time_show && printstyled("amplitude_normalize: $(round(Int16, t9 - t8))s\n", color=:green)
 
                     # fill geotiles
                     begin
@@ -906,13 +935,13 @@ function geotile_binned_fill(;
                         # becuase at least on of its 5 closest neighbors have GEDI data
                         dh1 = hyps_fill_empty!(dh1, params_fill, geotiles; mask=param.surface_mask)
 
-                        show_times ? t10 = time() : nothing
-                        show_times && printstyled("hyps_fill_empty: $(round(Int16, t10 - t9))s\n", color=:green)
+                        process_time_show ? t10 = time() : nothing
+                        process_time_show && printstyled("hyps_fill_empty: $(round(Int16, t10 - t9))s\n", color=:green)
 
                         dh1 = hyps_fill_updown!(dh1, geotiles; mask=param.surface_mask)
 
-                        show_times ? t11 = time() : nothing
-                        show_times && printstyled("hyps_fill_updown: $(round(Int16, t11 - t10))s\n", color=:green)
+                        process_time_show ? t11 = time() : nothing
+                        process_time_show && printstyled("hyps_fill_updown: $(round(Int16, t11 - t10))s\n", color=:green)
 
                         if plots_show || plots_save
                             colorbar_label = "extrapolated height anomalies [m]"
@@ -1054,8 +1083,8 @@ function geotile_binned_fill(;
                     if isnothing(single_geotile_test)
                         save(binned_filled_file, Dict("dh_hyps" => dh1, "nobs_hyps" => nobs1, "model_param" => params_fill))
 
-                        show_times ? t12 = time() : nothing
-                        show_times && printstyled("saving binned_filled_file: $(round(Int16, t12 - t11))s\n", color=:green)
+                        process_time_show ? t12 = time() : nothing
+                        process_time_show && printstyled("saving binned_filled_file: $(round(Int16, t12 - t11))s\n", color=:green)
                     end
                 end
             end
@@ -1102,7 +1131,7 @@ function replace_with_model!(dh, nobs, geotiles2replace; mission_replace="hugonn
         for mission in missions2align2
             valid1 = .!isnan.(dh[mission][geotile = At(geotile)])
             if !any(valid1)
-                @warn "No data for $(mission) for geotile: $(geotile), observations not replaced with model"
+                @warn "No data for $(mission_proper_name(mission)) for geotile: $(geotile), observations not replaced with model"
                 return dh
             end
             valid0[At(mission), :, :] = valid1;

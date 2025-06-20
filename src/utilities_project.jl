@@ -1,34 +1,6 @@
 #density of glacier ice
 const δice = 910; #kg m-3
 
-""" 
-    ElevationProduct
-
-Structure defining parameters for an elevation measurement product.
-
-# Fields
-- `mission::Symbol`: Source mission identifier (e.g., :icesat2)
-- `name::Symbol`: Product name (e.g., :ATL06)
-- `version::Int64`: Product version number
-- `id::String`: Short identifier string for the product
-- `error_sigma::Float32`: Standard error estimate in meters
-- `halfwidth::Float32`: Half-width of the kernel used for processing
-- `kernel::Symbol`: Type of kernel used (e.g., :gaussian)
-- `apply_quality_filter::Bool`: Whether to apply quality filtering
-- `coregister::Bool`: Whether to apply coregistration
-"""
-@kwdef struct ElevationProduct
-    mission::Symbol
-    name::Symbol
-    version::Int64
-    id::String       
-    error_sigma::Float32
-    halfwidth::Float32
-    kernel::Symbol
-    apply_quality_filter::Bool
-    coregister::Bool
-end
-
 
 """
     project_products(; project_id = :v01)
@@ -44,13 +16,13 @@ Get the elevation products configuration for a specific project.
 function project_products(; project_id = :v01)
     if project_id == :v01
         product = (
-            icesat2=ElevationProduct(mission=:icesat2, name=:ATL06, version=6, id="I206", error_sigma=0.1, halfwidth=11 / 4, kernel=:gaussian, apply_quality_filter=false, coregister=true),
+            icesat2=(mission=:icesat2, name=:ATL06, version=6, id="I206", error_sigma=0.1, halfwidth=11 / 4, kernel=:gaussian, apply_quality_filter=false, coregister=true, latitude_limits=[-88, 88], longitude_limits=[-180, 180]),
 
-            icesat=ElevationProduct(mission=:icesat, name=:GLAH06, version=34, id="I106", error_sigma=0.1, halfwidth=35 / 4, kernel=:gaussian, apply_quality_filter=false, coregister=true),
+            icesat=(mission=:icesat, name=:GLAH06, version=34, id="I106", error_sigma=0.1, halfwidth=35 / 4, kernel=:gaussian, apply_quality_filter=false, coregister=true, latitude_limits=[-86, 86], longitude_limits=[-180, 180]),
 
-            gedi=ElevationProduct(mission=:gedi, name=:GEDI02_A, version=2, id="G02A", error_sigma=0.1, halfwidth=22 / 4, kernel=:gaussian, apply_quality_filter=false, coregister=true),
+            gedi=(mission=:gedi, name=:GEDI02_A, version=2, id="G02A", error_sigma=0.1, halfwidth=22 / 4, kernel=:gaussian, apply_quality_filter=false, coregister=true, latitude_limits=[-83, 83], longitude_limits=[-180, 180]),
 
-            hugonnet=ElevationProduct(mission=:hugonnet, name=:HSTACK, version=1, id="HS01", error_sigma=5, halfwidth=100 / 2, kernel=:gaussian, apply_quality_filter=false, coregister=true)
+            hugonnet=(mission=:hugonnet, name=:HSTACK, version=1, id="HS01", error_sigma=5, halfwidth=100 / 2, kernel=:gaussian, apply_quality_filter=false, coregister=true, latitude_limits=[-90, 90], longitude_limits=[-180, 180])
         )
     end
     return product

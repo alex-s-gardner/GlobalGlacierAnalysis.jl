@@ -18,7 +18,7 @@ GEMB model outputs to match altimetry observations.
 begin
     using Dates
     using ProgressMeter
-    force_remake_before = Date(2025,3,21);
+    force_remake_before = Date(2025,6,17);
 
     # set force_remake == true to redo all steps from scratch
     force_remake_hypsometry = false; # these files are not altimetry dependent
@@ -27,7 +27,7 @@ begin
 end
 
 # LOAD PACKAGES,SET PATHS AND PARAMETERS
-begin
+#begin
     import GlobalGlacierAnalysis as GGA
     using FileIO
     using DimensionalData
@@ -85,7 +85,8 @@ begin
     # only include files that exist
     path2runs = String[]
     for param in params
-        binned_aligned_file = GGA.binned_aligned_filepath(; param...)
+    #param = params[1]
+        binned_aligned_file, _ = GGA.binned_filled_filepath(; param...)
         if isfile(binned_aligned_file)
             push!(path2runs, binned_aligned_file)
         end
@@ -185,7 +186,7 @@ for sm in surface_mask
 end
 
 """
-Process and calculate global glacier discharge data.
+Process and calculate global glacier discharge [aka frontal ablation] data.
 
 This section:
 1. Loads glacier hypsometry data from previously generated files
@@ -493,7 +494,6 @@ begin
         end
     end
 end
-
 
 
 """
