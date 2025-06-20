@@ -59,7 +59,7 @@ This function:
 
 Returns a GeoDataFrame with river segments and their glacier runoff contribution metrics.
 """
-#@time begin
+@time begin
     # load data from netcdf files
     glacier_flux_nc = NCDataset(glacier_summary_riverflux_file)
     river_flux_nc = NCDataset(glacier_rivers_land_flux_path)

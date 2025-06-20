@@ -27,7 +27,7 @@ begin
 end
 
 # LOAD PACKAGES,SET PATHS AND PARAMETERS
-#begin
+begin
     import GlobalGlacierAnalysis as GGA
     using FileIO
     using DimensionalData
