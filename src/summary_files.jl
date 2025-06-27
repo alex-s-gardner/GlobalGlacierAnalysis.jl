@@ -52,12 +52,12 @@ begin
     curvature_correct = [false, true]
     amplitude_correct = [true]
     binning_method = ["median", "nmad5", "nmad3"]
-    paramater_set = [1, 2, 3, 4]
+    fill_param = [1, 2, 3, 4]
     binned_folder = ["/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"]
 
     path2reference = joinpath(paths[:data_dir], reference_run)   
 
-    param_nt = (;project_id, surface_mask, dem_id, curvature_correct, amplitude_correct, binning_method, paramater_set, binned_folder)
+    param_nt = (;project_id, surface_mask, dem_id, curvature_correct, amplitude_correct, binning_method, fill_param, binned_folder)
     params = GGA.ntpermutations(param_nt)
 
     # only include files that exist

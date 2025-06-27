@@ -131,16 +131,16 @@ function hstacks2geotile(geotile, hstacks)
         # extract data
         x = collect(hstacks[sind, :x]) * ones(1, length(hstacks[sind, :y]))
         y = ones(length(hstacks[sind, :x])) * collect(hstacks[sind, :y])'
-
-        proj2geo = Proj.Transformation(hstacks[sind, :ProjString].val, "EPSG:4326")
+        
+        proj2geo = Proj.Transformation(hstacks[sind, :ProjString].val, "EPSG:4326"; ctx=Proj.proj_context_clone())
         lat_lon = proj2geo.(x, y)
 
-        isin = map(x -> GGA.within(geotile.extent, x[2], x[1]), lat_lon)
+        isin = GlobalGlacierAnalysis.within.(Ref(geotile.extent), getindex.(lat_lon, 2), getindex.(lat_lon, 1))
 
         if !any(isin)
             return nothing
         else
-            rrange, crange = GGA.validrange(isin)
+            rrange, crange = GlobalGlacierAnalysis.validrange(isin)
             isin = isin[rrange, crange]
             
             NCDataset(hstacks[sind, :path]) do ds
@@ -213,7 +213,6 @@ function geotile_build_hugonnet(geotile, geotile_dir, hstacks; force_remake=fals
     outfile = joinpath(geotile_dir, geotile[:id] * ".arrow")
     
     if !isfile(outfile) || force_remake
-
         gt = hstacks2geotile(geotile, hstacks)
         t2 = time()
         if !isnothing(gt) && !isempty(gt)
@@ -224,9 +223,10 @@ function geotile_build_hugonnet(geotile, geotile_dir, hstacks; force_remake=fals
             total_time = round((time()-t1)/60, digits = 2);
             save_time = round((time() - t2) / (time() - t1) * 100, digits=0)
             printstyled("    -> Hugonnet $(geotile.id) created: $(total_time) min [$(save_time)% for save] \n"; color=:light_black)
+        else
+            printstyled("    -> Hugonnet data does not overlap with $(geotile.id), skipping \n"; color=:light_red)
         end
     else
         printstyled("\n    -> Hugonnet $(geotile.id) already exists \n"; color=:light_green)
     end
 end
-

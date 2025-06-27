@@ -81,8 +81,8 @@ begin
     paths = GGA.pathlocal
 
     # Derived data paths
-    glacier_lowest_point_path = replace(paths[:glacier_individual_outlines], ".gpkg" => "_lowest_point.gpkg")
-    glacier_routing_path = replace(paths[:glacier_individual_outlines], ".gpkg" => "_routing.arrow")
+    glacier_lowest_point_path = replace(paths[:glacier_individual], ".gpkg" => "_lowest_point.gpkg")
+    glacier_routing_path = replace(paths[:glacier_individual], ".gpkg" => "_routing.arrow")
 
     # River network paths
     # Note: Two options for river data - using corrected or uncorrected data
@@ -144,7 +144,7 @@ The function:
 Only runs if the output file doesn't already exist to avoid redundant processing.
 """
 if !isfile(glacier_lowest_point_path)
-    glaciers = GeoDataFrames.read(paths[:glacier_individual_outlines])
+    glaciers = GeoDataFrames.read(paths[:glacier_individual])
     dem = Raster("/mnt/devon-r2/shared_data/copernicus-dem-30m/DEM.vrt"; lazy=true)
     mes = get_minimum_elevations(dem, glaciers.geom)
     glaciers.min_elev_long = first.(mes)

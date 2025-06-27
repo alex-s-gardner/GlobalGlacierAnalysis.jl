@@ -4,99 +4,99 @@ module GlobalGlacierAnalysis
       using Unitful; @unit Gt "Gt" M 1u"Pg" false
    end
 
-   function __init__()
-      Unitful.register(MyUnits)
-   end
+   using Unitful
+   Unitful.register(MyUnits)
 
+   # import geographic packages
    using Proj
-   using Arrow
-   using DataFrames
    using GeoArrays
    using SpaceLiDAR
+   using Geodesy
+   using FastGeoProjections
+   using Rasters
+   using Shapefile
+   using LibGEOS
+   using GeoInterface
+
+   # file IO
+   using FileIO
+   using Arrow
+   using HTTP
+   using MAT
+   using CSV
+   using NCDatasets
+   using JLD2
+   
+
+   # standard packages
+   using DataFrames
    using Dates
    using Statistics
-   using Geodesy
-   using ImageFiltering
+
+   # plotting packages
+   using ColorSchemes
+   using CairoMakie
+   
+   # other packages
    using OffsetArrays
-   using HTTP
-   using Logging
-   using Printf
+   using ImageFiltering
    using Extents
    using Interpolations
    using StaticArrays
-   using BinStatistics
-   using FastGeoProjections
-   using GeoTiles
+   using Logging
+   using Printf
    using NearestNeighbors
    using Stencils  
    using NonlinearSolve
-
-   using Rasters
-   using MAT
    using ScatteredInterpolation
-   using DimensionalData
    using LsqFit
-   using CSV
-   using NCDatasets
-   using LsqFit
-
    using Distances
    using DataInterpolations
-   using ColorSchemes
-   using CairoMakie
-   using JLD2
    using Distributions
    using Images
    using FlexiJoins
-   using ProgressMeter
    using Loess
-   using Unitful
-   
-   Unitful.register(MyUnits)
-
    using LinearAlgebra
    using Rotations
    using CoordinateTransformations
-   using GeometryBasics 
    using SparseArrays
    using SortTileRecursiveTree
    using AbstractTrees
    using ProgressMeter
    using Random
-
-   using RangeExtractor
-   import DimensionalData as DD
    using LazyGrids
-
-   using LibGEOS
-   using GeoInterface
-   using Shapefile
-   using FileIO
-
-
-   using Infiltrator
-
+   using GeometryBasics
    
+
+   # custom packages create as part of this project
+   using RangeExtractor
+   using GeoTiles
+   using BinStatistics
+
+   # import packages
+   import DimensionalData as DD
    import GeometryOps as GO
    import GeoInterface as GI
    import GeoFormatTypes as GFT
-   import GeometryOpsCore
-   import LibGEOS as LG
    import GeometryOpsCore as GOC
 
-   #include("utilities.jl")
-   include("utilities.jl")
-   include("mapzonal.jl")
+
+   # this is where the local paths are defined
+   include("local_paths.jl")
+
+   # add utilities
    include("utilities_project.jl")
+   include("utilities_build_archive.jl")
    include("utilities_hugonnet.jl")
    include("utilities_gemb.jl")
-   include("modelfit_tree_fast.jl")
-   include("utilities_hyps.jl")
-   include("utilities_geotile_processing.jl")
-   include("utilities_routing.jl")
-   include("utilities_postprocessing.jl")
-   include("utilities_synthesis.jl")
-   include("utilities_plotting.jl")
    include("utilities_main.jl")
-   # include("/home/gardnera/Documents/GitHub/GlobalGlacierAnalysis.jl/src/STRTreesAbstractTreesExt.jl")
+   include("utilities_binning.jl")
+   include("utilities_binning_lowlevel.jl")
+   include("utilities_routing.jl")
+   include("utilities_synthesis.jl")
+   include("utilities_postprocessing.jl")
+   include("utilities.jl")
+   include("utilities_plotting.jl")
+   include("utilities_readers.jl")
+   include("mapzonal.jl")
 end

@@ -50,7 +50,6 @@ function setpaths()
             # ASTER and WorldView elevation data: must be requested from the author: Romain Hugonnet <hugonnet@uw.edu>
             hugonnet_v1_stacks = "/mnt/bylot-r3/data/hugonnet/",
 
-
             # Global Canopy Height data: must be downloaded from ETH
             # Download canopy height data in teminal
             # aria2c -x10 https://share.phys.ethz.ch/~pf/nlangdata/ETH_GlobalCanopyHeight_10m_2020_version1/ETH_GlobalCanopyHeight_10m_2020_version1.tar.gz 
@@ -80,7 +79,9 @@ function setpaths()
             # RGI 6 merged outlines buffered outward by 10km [Optional]
             glacier_b10km_shp="/mnt/bylot-r3/data/vector_files/glacier_b10km.shp",
             # RGI 6 individual outlines combined into a geopackage
-            glacier_individual_outlines="/mnt/bylot-r3/data/GlacierOutlines/rgi60/rgi60_Global.gpkg",
+            glacier_individual="/mnt/bylot-r3/data/GlacierOutlines/rgi60/rgi60_Global.gpkg",
+            # RGI 7 individual outlines combined into a geopackage
+            glacier_rgi7_individual="/mnt/bylot-r3/data/GlacierOutlines/RGI2000-v7.0-G-global-fix/rgi70_Global.gpkg",
             # landice mask: this is a custom mask created by Gardner et al. 2025, please request from the authors: Alex Gardner <alex.s.gardner@jpl.nasa.gov>
             landice_shp="/mnt/bylot-r3/data/vector_files/land_ice.shp",
             # landice mask buffered outward by 1km: this is a custom mask created by Gardner et al. 2025, please request from the authors: Alex Gardner <alex.s.gardner@jpl.nasa.gov>
@@ -123,6 +124,15 @@ function setpaths()
             river_basins = "/mnt/bylot-r3/data/rivers/BasinATLAS_Data_v10.gdb/BasinATLAS_v10_lev02.geojson",
             # Major river basins: https://grdc.bafg.de/products/basin_layers/major_rivers/
             river_major_basins = "/mnt/bylot-r3/data/rivers/GRDC_Major_River_Basins/mrb_basins.json",
+
+            # Kochtitzky NH discharge and terminus retreate 
+            discharge_nh="/mnt/bylot-r3/data/GlacierOutlines/GlacierDischarge/Kochtitzky2022/41467_2022_33231_MOESM4_ESM.csv",
+            discharge_npi="/mnt/bylot-r3/data/GlacierOutlines/GlacierDischarge/Fuerst2023/fuerst_2023_npi_comparison_ice_discharge_v1.0.0.txt",
+            discharge_spi="/mnt/bylot-r3/data/GlacierOutlines/GlacierDischarge/Fuerst2023/fuerst_2023_spi_comparison_ice_discharge_v1.0.0.txt",
+            rgi6_southern_andes = "/mnt/bylot-r3/data/GlacierOutlines/rgi60/17_rgi60_SouthernAndes/17_rgi60_SouthernAndes.shp",
+
+            # discharge data for global discharge analysis [created as part of processing pipeline]
+            discharge_global = "/mnt/bylot-r3/data/GlacierOutlines/GlacierDischarge/global_glacier_discharge.jld2",
         )
 
         return pathlocal

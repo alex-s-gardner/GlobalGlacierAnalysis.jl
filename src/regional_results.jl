@@ -1,38 +1,36 @@
-"""
-    regional_results.jl
-
-This script processes and analyzes glacier mass change data at regional scales.
-
+# regional_results.jl
+#
+# This script processes and analyzes glacier mass change data at regional scales.
+#
 # Main components:
-1. Data aggregation and uncertainty estimation:
-   - Loads multiple model runs and aggregates geotile data into regional time series
-   - Calculates uncertainties from ensemble spread (95% confidence intervals)
-   - Incorporates GRACE satellite data for comparison
-   - Reformats data for consistent plotting and analysis
-
-2. Glacier discharge and mass change analysis:
-   - Processes glacier discharge data by region
-   - Maps discharge points to RGI regions using spatial joins
-   - Identifies endorheic (inland-draining) glaciers
-   - Computes mass change rates for each glacier and region
-
-3. Trend and acceleration analysis:
-   - Fits trends and seasonal cycles to time series
-   - Identifies regions with significant acceleration/deceleration
-   - Calculates mass change under different scenarios (with/without firn air content correction)
-   - Compares altimetry-derived trends with GRACE satellite measurements
-
-4. Visualization and reporting:
-   - Generates multi-region plots of mass change
-   - Calculates statistics on glacier contribution to sea level rise - Analyzes endorheic basin contributions
-   - Reports regional mass change trends with uncertainties
-
+# 1. Data aggregation and uncertainty estimation:
+#    - Loads multiple model runs and aggregates geotile data into regional time series
+#    - Calculates uncertainties from ensemble spread (95% confidence intervals)
+#    - Incorporates GRACE satellite data for comparison
+#    - Reformats data for consistent plotting and analysis
+#
+# 2. Glacier discharge and mass change analysis:
+#    - Processes glacier discharge data by region
+#    - Maps discharge points to RGI regions using spatial joins
+#    - Identifies endorheic (inland-draining) glaciers
+#    - Computes mass change rates for each glacier and region
+#
+# 3. Trend and acceleration analysis:
+#    - Fits trends and seasonal cycles to time series
+#    - Identifies regions with significant acceleration/deceleration
+#    - Calculates mass change under different scenarios (with/without firn air content correction)
+#    - Compares altimetry-derived trends with GRACE satellite measurements
+#
+# 4. Visualization and reporting:
+#    - Generates multi-region plots of mass change
+#    - Calculates statistics on glacier contribution to sea level rise - Analyzes endorheic basin contributions
+#    - Reports regional mass change trends with uncertainties
+#
 # Key outputs:
-- Regional time series of glacier mass change
-- Trend and acceleration estimates with uncertainties
-- Comparison between different measurement techniques
-- Analysis of endorheic vs. ocean-draining glacier contributions
-"""
+# - Regional time series of glacier mass change
+# - Trend and acceleration estimates with uncertainties
+# - Comparison between different measurement techniques
+# - Analysis of endorheic vs. ocean-draining glacier contributions
 
 # NOTE: errors are at the 95% confidence interval from the reference run for this study and 95% confidence interval from GRACE
 @time begin
@@ -64,7 +62,7 @@ This script processes and analyzes glacier mass change data at regional scales.
     curvature_correct = [false, true]
     amplitude_correct = [true]
     binning_method = ["median", "nmad5", "nmad3"]
-    paramater_set = [1, 2, 3, 4]
+    fill_param = [1, 2, 3, 4]
     binned_folder = ["/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"]
 
     discharge_fractional_error = 0.15
@@ -86,13 +84,13 @@ This script processes and analyzes glacier mass change data at regional scales.
 
     path2river_flux = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
-    param_nt = (;project_id, surface_mask, dem_id, curvature_correct, amplitude_correct, binning_method, paramater_set, binned_folder)
+    param_nt = (;project_id, surface_mask, dem_id, curvature_correct, amplitude_correct, binning_method, fill_param, binned_folder)
     params = GGA.ntpermutations(param_nt)
 
     # only include files that exist
     path2runs = String[]
     for param in params
-        binned_aligned_file = GGA.binned_aligned_filepath(; param...)
+        binned_aligned_file, _ = GGA.binned_filled_filepath(; param...)
         if isfile(binned_aligned_file)
             push!(path2runs, binned_aligned_file)
         end
@@ -101,7 +99,7 @@ This script processes and analyzes glacier mass change data at regional scales.
 end
 
 # pre-process data
-@time begin #[10 min]
+#@time begin #[10 min]
     # load discharge for each RGI [<1s]
     discharge_rgi = GGA.discharge_rgi(path2discharge, path2rgi_regions; fractional_error = discharge_fractional_error);
 

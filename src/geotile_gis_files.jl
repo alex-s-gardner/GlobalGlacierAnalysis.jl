@@ -26,7 +26,7 @@ begin
 
     geotiles_file = "geotiles.gpkg"
     if !isfile(geotiles_file)
-        glacier_geom = GeoDataFrames.read(paths[:glacier_individual_outlines])
+        glacier_geom = GeoDataFrames.read(paths[:glacier_individual])
         geotiles = GGA.geotiles_w_mask(geotile_width)
         geotiles[!, :geometry] = GGA.GeoTiles.define(2)[:, :geometry]
         geotiles = geotiles[:, Not([:extent])]

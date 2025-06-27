@@ -184,7 +184,7 @@ function geotile_build_hugonnet(;
         printstyled("building Hugonnet geotiles\n"; color=:blue, bold=true)
         @warn "!!! hugonnet quality flag currently excludes all ArcticDEM data !!!"
 
-        @showprogress dt = 10 desc = "building hugonnet [$(hugonnet_dataset)] geotiles..." for geotile in eachrow(geotiles)
+        @showprogress dt = 10 desc = "building hugonnet [$(hugonnet_dataset)] geotiles..." Threads.@threads for geotile in eachrow(geotiles)
             geotile_build_hugonnet(geotile, geotile_dir, hstacks; force_remake)
         end
     end
@@ -290,7 +290,8 @@ function geotile_dem_extract(;
     geotile_width=2,
     domain=:landice, # :glacier -or- :landice
     missions=(:icesat2, :icesat, :gedi, :hugonnet,), # (:icesat2, :icesat, :gedi, :hugonnet)
-    hugonnet_unfiltered=true, slope=true,
+    hugonnet_unfiltered=true, 
+    slope=true,
     curvature=true,
     dems2extract=[:rema_v2_10m, :cop30_v2, :arcticdem_v4_10m, :nasadem_v1],
     single_geotile_test = nothing,
@@ -499,7 +500,7 @@ function geotile_hyps_extract(;
     masks = [:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km],
     )
 
-    for mask in masks
+    Threads.@threads for mask in masks
 
         runid = "geotile_$(mask)_hyps"
         binned_folder = analysis_paths(; geotile_width).binned
@@ -527,7 +528,7 @@ function geotile_hyps_extract(;
             fn_shp = pathlocal[shp]
             feature = Shapefile.Handle(fn_shp)
 
-            geotiles[!, var_name] = [zeros(size(height_centers)) for r in 1:nrow(geotiles)]
+            geotiles[!, var_name] = [zeros(size(height_center)) for r in 1:nrow(geotiles)]
 
             if mask == :land
                 shp = Symbol("$(:glacier)_shp")
@@ -538,7 +539,9 @@ function geotile_hyps_extract(;
             end
 
             dfr = eachrow(geotiles)
-            Threads.@threads for geotile in dfr[geotiles[!, "$(domain)_frac"].>0]
+
+            # Threads here is causing a seg-fault... likely `feature` needs to be coppied for each thread
+            for geotile in dfr[geotiles[!, "$(domain)_frac"].>0]
                 geotile_binarea!(geotile, ras, feature, height_range; invert, excludefeature, var_name)
             end
             Arrow.write(out_file, geotiles::DataFrame)

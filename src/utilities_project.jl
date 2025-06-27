@@ -168,3 +168,87 @@ function mission_land_trend()
 end
 
 geotiles_golden_test = ["lat[+30+32]lon[+078+080]", "lat[+60+62]lon[-142-140]", "lat[+62+64]lon[-052-050]", "lat[-68-66]lon[-070-068]", "lat[-44-42]lon[-074-072]", "lat[-34-32]lon[-070-068]"]
+
+"""
+    gemb_info(; gemb_run_id=4)
+
+Get GEMB (Glacier Energy and Mass Balance) model configuration for a specific run.
+
+# Arguments
+- `gemb_run_id::Int`: GEMB run identifier (1-4, default: 4)
+
+# Returns
+- Named tuple containing GEMB configuration parameters:
+  - `gemb_folder`: Path(s) to GEMB data folders
+  - `file_uniqueid`: Unique file identifier string
+  - `elevation_delta`: Array of elevation adjustments [m]
+  - `precipitation_scale`: Array of precipitation scaling factors
+  - `filename_gemb_combined`: Output file path for combined data
+
+# Throws
+- `ErrorException`: If gemb_run_id is not recognized
+"""
+function gemb_info(; gemb_run_id = 4)
+    if gemb_run_id == 1
+        gemb_info = (
+            gemb_folder = ["/home/schlegel/Share/GEMBv1/"],
+            file_uniqueid = "rv1_0_19500101_20231231",
+            elevation_delta = [0],
+            precipitation_scale = [1],
+            filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/$file_uniqueid.jld2"
+        )
+    elseif gemb_run_id == 2
+        gemb_info = (
+            gemb_folder = "/home/schlegel/Share/GEMBv1/Alaska_sample/v1/",
+            file_uniqueid = "1979to2023_820_40_racmo_grid_lwt",
+            elevation_delta = [-1000, -750, -500, -250, 0, 250, 500, 750, 1000],
+            precipitation_scale = [0.5, 1, 1.5, 2, 5, 10],
+            filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/$file_uniqueid.jld2"
+        )
+    elseif gemb_run_id == 3
+        gemb_info = (
+            gemb_folder = ["/home/schlegel/Share/GEMBv1/NH_sample/", "/home/schlegel/Share/GEMBv1/SH_sample/"],
+            file_uniqueid = nothing,
+            elevation_delta = [-200, 0, 200, 500, 1000],
+            precipitation_scale = [0.75, 1, 1.25, 1.5, 2],
+            filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2023_820_40_racmo_grid_lwt_e97_0.jld2"
+        )
+    elseif gemb_run_id == 4
+        gemb_info = (
+            gemb_folder = ["/home/schlegel/Share/GEMBv1/NH_sample", "/home/schlegel/Share/GEMBv1/SH_sample"],
+            file_uniqueid = nothing,
+            elevation_delta = [-2000, -500, -200, 0, 200, 500, 1000, 2000],
+            precipitation_scale = [0.25, 0.75, 1, 1.25, 1.5, 2, 3, 4],
+            filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2024_820_40_racmo_grid_lwt_e97_0.jld2"
+        )
+    else
+        error("unrecognized gemb_run_id: $gemb_run_id")
+    end
+
+    return gemb_info
+end
+
+
+# Manual override for specific geotile groups
+# This handles cases where large glaciers cross multiple tiles but should be treated separately
+# NOTE: groupings are only updated if force_remake == true
+function geotile_groups_forced() 
+    out = [
+        ["lat[+62+64]lon[-148-146]"],
+        ["lat[+62+64]lon[-146-144]"],
+        ["lat[+60+62]lon[-138-136]"],
+        ["lat[+58+60]lon[-138-136]"],
+        ["lat[+58+60]lon[-136-134]"],
+        ["lat[+58+60]lon[-134-132]"],
+        ["lat[+56+58]lon[-134-132]"],
+        ["lat[+78+80]lon[-084-082]"],
+        ["lat[-52-50]lon[-074-072]"],
+        ["lat[+56+58]lon[-130-128]"],
+        ["lat[-74-72]lon[-080-078]", "lat[-74-72]lon[-078-076]"],
+        ["lat[+78+80]lon[+010+012]", "lat[+78+80]lon[+012+014]", "lat[+78+80]lon[+014+016]"],
+        ["lat[+76+78]lon[+062+064]", "lat[+76+78]lon[+064+066]", "lat[+76+78]lon[+066+068]", "lat[+76+78]lon[+068+070]", "lat[+74+76]lon[+062+064]", "lat[+74+76]lon[+064+066]", "lat[+74+76]lon[+066+068]", "lat[+74+76]lon[+066+068]"]
+    ]
+    return out
+end
+
+plot_order = Dict("missions" => ["hugonnet", "icesat", "gedi", "icesat2"], "synthesis" => ["hugonnet", "ICESat & ICESat 2", "gedi", "Synthesis"])

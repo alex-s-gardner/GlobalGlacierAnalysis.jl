@@ -1,19 +1,18 @@
-"""
-    gemb_classes_binning.jl
+#    gemb_classes_binning.jl
+#
+#Process GEMB (Glacier Energy and Mass Balance) model output for global glacier analysis.
 
-Process GEMB (Glacier Energy and Mass Balance) model output for global glacier analysis.
+# This script:
+# 1. Loads and combines raw GEMB output from multiple simulations
+# 2. Organizes data into geotiles with consistent spatial and temporal dimensions
+# 3. Fills data gaps through interpolation and extrapolation across elevation bands
+# 4. Extends model results to cover additional precipitation scaling factors
+# 5. Extrapolates data temporally using climatological means
 
-This script:
-1. Loads and combines raw GEMB output from multiple simulations
-2. Organizes data into geotiles with consistent spatial and temporal dimensions
-3. Fills data gaps through interpolation and extrapolation across elevation bands
-4. Extends model results to cover additional precipitation scaling factors
-5. Extrapolates data temporally using climatological means
+# The processed data is saved at multiple stages to enable efficient reuse and analysis.
+# GEMB output is in units of meters ice equivalent (m i.e.) assuming an ice density of 910 kg/m³.
 
-The processed data is saved at multiple stages to enable efficient reuse and analysis.
-GEMB output is in units of meters ice equivalent (m i.e.) assuming an ice density of 910 kg/m³.
-"""
-begin
+#begin
 begin
     import GlobalGlacierAnalysis as GGA
     using Arrow
@@ -25,7 +24,6 @@ begin
     using DimensionalData
     using Statistics
     using Dates
-    using Plots
     using JLD2
     using FileIO
     using MAT
@@ -37,12 +35,26 @@ begin
     using NaNStatistics
 
     # run parameters 
-    force_remake = false; # set force_remake == true to redo all steps from scratch 
+    force_remake_before = DateTime(2025, 6, 23, 9, 0, 0)
     project_id = :v01;
     geotile_width = 2;
     binning_method = "mean";
     surface_mask = :glacier
     geotile_buffer = 50000 # distance in meters outside of geotiles to look for data
+    showplots = false;
+    gemb_run_id=4;
+
+     # exclude derived variables of smb and runoff (these are calculated later to ensure mass conservation after interpolation)
+    vars = ["latitude", "longitude", "date", "fac", "acc", "refreeze", "height", "melt", "rain", "ec"]
+
+    # min gemb coverage 
+    min_gemb_coverage =  0.75
+
+    @warn "IT TAKES SEVERAL DAYS, POSSIBLY A WEEK, TO PREPROCESS ALL GEMB DATA"
+end
+
+begin
+    gembinfo = GGA.gemb_info(; gemb_run_id=4)
 
     # define date and hight binning ranges 
     date_range, date_center = GGA.project_date_bins()
@@ -57,51 +69,16 @@ begin
 
     #Δheight simulates changing model elevation to increase / decrease melt, this is done in the regional Δvolume calculation
     height_bin_interval = height_center[2] - height_center[1]
-    dΔheight = Dim{:Δheight}(-3000:height_bin_interval:3000) 
+    dΔheight = Dim{:Δheight}(-2000:height_bin_interval:2000) 
 
-    # exclude derived variables of smb and runoff (these are calculated later to ensure mass conservation after interpolation)
-    vars = ["latitude", "longitude", "date", "fac", "acc", "refreeze", "height", "melt", "rain", "ec"]
 
-    if  false
-        gemb_folder = ["/home/schlegel/Share/GEMBv1/"];
-        file_uniqueid = "rv1_0_19500101_20231231"
-        elevation_delta = [0]
-        precipitation_scale = [1]
-        filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/$file_uniqueid.jld2"
-
-    elseif false
-        gemb_folder = "/home/schlegel/Share/GEMBv1/Alaska_sample/v1/"
-        file_uniqueid = "1979to2023_820_40_racmo_grid_lwt"
-        elevation_delta = [-1000, -750 ,-500, -250, 0, 250, 500, 750, 1000]
-        precipitation_scale = [0.5, 1, 1.5, 2, 5, 10]
-        filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/$file_uniqueid.jld2"
-    else
-        gemb_folder = ["/home/schlegel/Share/GEMBv1/NH_sample/", "/home/schlegel/Share/GEMBv1/SH_sample/"]
-        file_uniqueid = nothing
-        elevation_delta = [-200, 0, 200, 500, 1000]
-        precipitation_scale = [.75 1 1.25 1.5 2]
-        filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2023_820_40_racmo_grid_lwt_e97_0.jld2"
-
-    end
-
-    filename_gemb_geotile = replace(filename_gemb_combined, ".jld2" => "_geotile.jld2")
+    filename_gemb_geotile = replace(gembinfo.filename_gemb_combined, ".jld2" => "_geotile.jld2")
     filename_gemb_geotile_filled_dv = replace(filename_gemb_geotile, ".jld2" => "_filled_dv.jld2")
     filename_gemb_geotile_filled_extra_dv = replace(filename_gemb_geotile, ".jld2" => "_filled_extra_dv.jld2")
     filename_gemb_geotile_filled_extra_extrap_dv = replace(filename_gemb_geotile, ".jld2" => "_filled_extra_extrap_dv.jld2")
 
-    # funtion used for binning data
-    if binning_method == "nmad3"
-        binfun::Function = binfun(x) = mean(x[GGA.nmad(x).<3])
-    elseif binning_method == "median"
-        binfun::Function = binfun(x) = median(x)
-    elseif binning_method == "mean"
-        binfun::Function = binfun(x) = mean(x)
-    else
-        error("unrecognized binning method")
-    end
-
-    showplots = false;
-
+    binfun = GGA.binningfun_define(binning_method)::Function
+    
     # load geotile definitions with corresponding hypsometry
     geotiles = GGA.geotiles_mask_hyps(surface_mask, geotile_width)
 
@@ -116,33 +93,29 @@ begin
         generic_area_name = "area_km2"
         rename!(geotiles, original_area_name => generic_area_name)
     end
-
-    # min gemb coverage =  0.5
-    min_gemb_coverage =  0.75
 end;
 
-
-"""
-    Merge GEMB model data from multiple files into a single combined file.
-    
-    This function processes GEMB (Glacier Energy and Mass Balance) model data by:
-    1. Collecting all relevant .mat files from specified folders
-    2. Reading and combining data across different elevation delta and precipitation scale classes
-    3. Standardizing longitude values to -180 to 180 range
-    4. Merging all simulations into a single dictionary with consistent structure
-    5. Saving the combined data to a JLD2 file
-    
-    The process takes approximately 3 minutes to complete for the full dataset.
-"""
+# Merge GEMB model data from multiple files into a single combined file.
+# 
+# This function processes GEMB (Glacier Energy and Mass Balance) model data by:
+# 1. Collecting all relevant .mat files from specified folders
+# 2. Reading and combining data across different elevation delta and precipitation scale classes
+# 3. Standardizing longitude values to -180 to 180 range
+# 4. Merging all simulations into a single dictionary with consistent structure
+# 5. Saving the combined data to a JLD2 file
+# 
+# The process takes approximately 3 minutes to complete for the full dataset.
 # Takes ~3 minutes to run for all data.
-if .!(isfile(filename_gemb_combined)) || force_remake
 
+if isfile(gembinfo.filename_gemb_combined) && ((Dates.unix2datetime(mtime(gembinfo.filename_gemb_combined)) > force_remake_before) || isnothing(force_remake_before))
+    printstyled("\n    -> Skipping $(gembinfo.filename_gemb_combined) as it was created after the force_remake_before date: $force_remake_before \n"; color=:light_green)
+else
     println("merging all gemb data into a single file, this will take ~3 min")
 
-    gemb_files = allfiles.(gemb_folder; subfolders=false, fn_endswith=".mat", fn_contains=file_uniqueid)
+    gemb_files = GGA.allfiles.(gembinfo.gemb_folder; subfolders=false, fn_endswith=".mat", fn_contains=gembinfo.file_uniqueid)
     gemb_files = vcat(gemb_files...)
 
-    expected_num_files = length(elevation_delta) * length(precipitation_scale) * length(gemb_folder)
+    expected_num_files = length(gembinfo.elevation_delta) * length(gembinfo.precipitation_scale) * length(gembinfo.gemb_folder)
     #if length(gemb_files) !== expected_num_files
     #    error("the number of files does not match the number of classes")
     #end
@@ -157,7 +130,7 @@ if .!(isfile(filename_gemb_combined)) || force_remake
         gemb0 = GGA.gemb_read2(gemb_file; vars, datebin_edges)
 
         # no classes
-        if (length(elevation_delta) == 1) .&  (length(precipitation_scale) == 1)
+        if (length(gembinfo.elevation_delta) == 1) .&  (length(gembinfo.precipitation_scale) == 1)
             precip_scale_ind = 1
             elev_delta_ind = 1
         else
@@ -169,13 +142,13 @@ if .!(isfile(filename_gemb_combined)) || force_remake
             elev_delta_ind = parse(Int8, gemb_file[ind2[end]+1 : ind3[1]-1])
         end
 
-        gemb0["elevation_delta"] = elevation_delta[elev_delta_ind]
-        gemb0["precipitation_scale"] = precipitation_scale[precip_scale_ind]
+        gemb0["elevation_delta"] = gembinfo.elevation_delta[elev_delta_ind]
+        gemb0["precipitation_scale"] = gembinfo.precipitation_scale[precip_scale_ind]
 
         push!(gemb, gemb0)
     end
 
-    if (length(elevation_delta) == 1) .&  (length(precipitation_scale) == 1)
+    if (length(gembinfo.elevation_delta) == 1) .&  (length(gembinfo.precipitation_scale) == 1)
         gemb0 = Dict()
         for k in keys(gemb[1])
             if k !== "date"
@@ -223,25 +196,24 @@ if .!(isfile(filename_gemb_combined)) || force_remake
     gemb = merge(foo, gemb0)
 
     # save output
-    save(filename_gemb_combined, gemb);
+    save(gembinfo.filename_gemb_combined, gemb);
 end
 
-
-"""
-    Process GEMB data into geotiles with elevation binning
-
-Takes raw GEMB model output and organizes it into geotiles with consistent spatial,
-temporal and elevation dimensions. For each geotile, data is binned by elevation class
-and precipitation scaling factor. The function continues to buffer around each geotile
-until sufficient data coverage is achieved.
-
-Processing time is approximately 3.5 minutes with multi-threading.
-"""
+# Process GEMB data into geotiles with elevation binning
+#
+# Takes raw GEMB model output and organizes it into geotiles with consistent spatial,
+# temporal and elevation dimensions. For each geotile, data is binned by elevation class
+# and precipitation scaling factor. The function continues to buffer around each geotile
+# until sufficient data coverage is achieved.
+#
+# Processing time is approximately 3.5 minutes with multi-threading.
 # Takes ~3.5 minutes to run
-if .!(isfile(filename_gemb_geotile)) || force_remake
+if isfile(filename_gemb_geotile) && ((Dates.unix2datetime(mtime(filename_gemb_geotile)) > force_remake_before) || isnothing(force_remake_before))
+    printstyled("    -> Skipping $(filename_gemb_geotile) as it was created after the force_remake_before date: $force_remake_before \n"; color=:light_green)
+else
     println("putting gemb data into geotiles, this will take ~3.5 min")
     # combine into geotiles
-    gemb = load(filename_gemb_combined);
+    gemb = load(gembinfo.filename_gemb_combined);
 
     # add elevation_delta to height to get height_effective
     gemb["height_effective"] = gemb["height"] .+ gemb["elevation_delta"]
@@ -331,26 +303,25 @@ if .!(isfile(filename_gemb_geotile)) || force_remake
 end
 
 
-"""
-    fill_gemb_geotiles_add_height_classes(filename_gemb_geotile, force_remake)
 
-Fill gaps in GEMB geotile data and add elevation change (Δheight) classes.
+# Fill gaps in GEMB geotile data and add elevation change (Δheight) classes.
+#
+# This function processes GEMB geotile data by:
+# 1. Filling data gaps across elevation bands using interpolation
+# 2. Extrapolating data to cover additional elevation ranges
+# 3. Creating new datasets with various elevation change scenarios (Δheight)
+# 4. Calculating volume changes for each geotile, precipitation scale, and Δheight
+#
+# The process involves smoothing and extrapolating data across elevation bands,
+# applying physical constraints to ensure realistic values, and converting rates
+# back to cumulative variables. Results are saved at multiple stages.
+#
+# Note: Linear extrapolation over long distances is not ideal and requires
+# running GEMB for a wider range of elevation classes to improve results.
 
-This function processes GEMB geotile data by:
-1. Filling data gaps across elevation bands using interpolation
-2. Extrapolating data to cover additional elevation ranges
-3. Creating new datasets with various elevation change scenarios (Δheight)
-4. Calculating volume changes for each geotile, precipitation scale, and Δheight
-
-The process involves smoothing and extrapolating data across elevation bands,
-applying physical constraints to ensure realistic values, and converting rates
-back to cumulative variables. Results are saved at multiple stages.
-
-# Note
-Linear extrapolation over long distances is not ideal and requires
-running GEMB for a wider range of elevation classes to improve results.
-"""
-if .!(isfile(filename_gemb_geotile_filled_dv)) || force_remake
+if isfile(filename_gemb_geotile_filled_dv) && ((Dates.unix2datetime(mtime(filename_gemb_geotile_filled_dv)) > force_remake_before) || isnothing(force_remake_before))
+    printstyled("    -> Skipping $(filename_gemb_geotile_filled_dv) as it was created after the force_remake_before date: $force_remake_before \n"; color=:light_green)
+else
 
     printstyled("!!!!! FILLING GEMB GEOTILES ADD ADDING ΔHEIGHT CLASSES, THIS WILL TAKE ~4 HRS using 48 threads !!!!!\n", color=:red)
     
@@ -436,7 +407,6 @@ if .!(isfile(filename_gemb_geotile_filled_dv)) || force_remake
                     if all(valid) || !any(valid)
                         continue
                     end
-                
                     
                     if k in ("acc", "refreeze", "melt", "rain", "fac")
                         # only positive rates are valid for these variables
@@ -538,12 +508,15 @@ if .!(isfile(filename_gemb_geotile_filled_dv)) || force_remake
     end
 
     # add height classes and save to disk for each geotile [THIS TAKES 8 HRS]
-    @showprogress desc="Adding Δheight classes [expect 4 on 48 threads]..." Threads.@threads for geotile in dgeotile
+    # TODO: I should look into moving the @threads lower down to minimize memory usage
+    @showprogress desc="Adding Δheight classes [expect 4 hrs on 128 threads & consumes > 900GB of memory]..." Threads.@threads for geotile in dgeotile
     #geotile = first(dgeotile)
         
         filename_gemb_geotile_filled = replace(filename_gemb_geotile, ".jld2" => "_$(geotile)_filled.jld2")
 
-        if !isfile(filename_gemb_geotile_filled) || force_remake
+        if !isfile(filename_gemb_geotile_filled) || (!isnothing(force_remake_before) && Dates.unix2datetime(mtime(filename_gemb_geotile_filled)) < force_remake_before)
+
+            printstyled("    -> Creating $(filename_gemb_geotile_filled) \n"; color=:light_black)
 
             gemb0 = Dict()
             for k in vars
@@ -601,10 +574,10 @@ if .!(isfile(filename_gemb_geotile_filled_dv)) || force_remake
             # AND for geotile2glacier downscaling if the hypsometric method is used
             save(filename_gemb_geotile_filled, gemb_gt)
         else
-            println("direct read from $filename_gemb_geotile_filled")
+            printstyled("    -> Loading from disk $(filename_gemb_geotile_filled_extra) as it was created after the force_remake_before date: $force_remake_before \n"; color=:light_green)
             gemb_gt = load(filename_gemb_geotile_filled)
         end
-
+    
         # create volume change time series for each geotile
         df_index = findfirst(isequal(geotile), geotiles.id)
         area = ones(length(ddate), 1) * hcat(geotiles[df_index, :area_km2])' ./ 1000 # divide by 1000 so that result in km3 (NOTE: vars are in mie)
@@ -625,24 +598,26 @@ if .!(isfile(filename_gemb_geotile_filled_dv)) || force_remake
 end
 
 
-"""
-    add_pscale_classes(filename_gemb_geotile_filled_extra_dv, force_remake)
 
-Add intermediate precipitation scaling classes to GEMB geotile data.
+# rm("/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2024_820_40_racmo_grid_lwt_e97_0_geotile_lat[+76+78]lon[-036-034]_filled_extra.jld2")
 
-This function:
-1. Creates a finer resolution precipitation scaling grid (0.25 to 4.0 in 0.25 increments)
-2. Interpolates existing GEMB data to these new precipitation scaling values
-3. Applies physical constraints to ensure realistic values
-4. Converts rates back to cumulative variables
-5. Calculates volume changes for each geotile, precipitation scale, and elevation change
 
-Processing time is approximately 4 hours using 48 threads.
-"""
+# Add intermediate precipitation scaling classes to GEMB geotile data.
+#
+# This function:
+# 1. Creates a finer resolution precipitation scaling grid (0.25 to 4.0 in 0.25 increments)
+# 2. Interpolates existing GEMB data to these new precipitation scaling values
+# 3. Applies physical constraints to ensure realistic values
+# 4. Converts rates back to cumulative variables
+# 5. Calculates volume changes for each geotile, precipitation scale, and elevation change
+#
+# Processing time is approximately 4 hours using 48 threads.
 # Takes approximately 4 hours to run using 48 threads.
-if !isfile(filename_gemb_geotile_filled_extra_dv) || force_remake
 
-    printstyled("!!!!! ADDING PSCALE CLASSES, THIS WILL TAKE ~4 HRS using 48 threads !!!!!\n", color=:red)
+if isfile(filename_gemb_geotile_filled_extra_dv) && ((Dates.unix2datetime(mtime(filename_gemb_geotile_filled_extra_dv)) > force_remake_before) || isnothing(force_remake_before))
+    printstyled("    -> Skipping $(filename_gemb_geotile_filled_extra_dv) as it was created after the force_remake_before date: $force_remake_before \n"; color=:light_green)
+else
+    printstyled("!!!!!Adding pscale classes [expect > 1 day on 128 threads, consumes > 1000GB of memory] !!!!!\n", color=:red)
         
     dpscale_new = Dim{:pscale}(0.25:0.25:4.0)
 
@@ -654,26 +629,31 @@ if !isfile(filename_gemb_geotile_filled_extra_dv) || force_remake
     dΔheight = dims(gembX[k], :Δheight)
     ddate = dims(gembX[k], :date)
     dgeotile = Dim{:geotile}(geotiles.id)
-
+    dheight = dims(gembX[k], :height)
+    
     # create a DD for volume change results
-    gemb_dv = Dict()
+    gemb_dv = Dict{String, DimArray{Float64, 4}}()
     for k in keys(gembX)
         gemb_dv[k] = fill(NaN, (dgeotile, ddate, dpscale_new, dΔheight))
     end 
 
-    # Threads.@threads is being used lower down... 
-    @showprogress desc = "Adding pscale classes [expect 4 on 48 threads]..."  for geotile in geotiles.id
-
-        println("\n$geotile")
-
+    # @threads is used lower down to minimize memory usage [was killing Devon]
+    @showprogress desc = "Adding pscale classes [expect > 1 day on 128 threads, consumes > 100GB of memory]..."  for geotile in geotiles.id
+    #geotile = first(geotiles.id)
+    
         filename_gemb_geotile_filled = replace(filename_gemb_geotile, ".jld2" => "_$(geotile)_filled.jld2")
         filename_gemb_geotile_filled_extra = replace(filename_gemb_geotile, ".jld2" => "_$(geotile)_filled_extra.jld2")
         
-        if !isfile(filename_gemb_geotile_filled_extra)
+        if !isfile(filename_gemb_geotile_filled_extra) ||  (!isnothing(force_remake_before) && Dates.unix2datetime(mtime(filename_gemb_geotile_filled_extra)) < force_remake_before)
+
+            printstyled("\n    -> Creating $(filename_gemb_geotile_filled_extra) \n"; color=:light_black)
+
             gemb = load(filename_gemb_geotile_filled)
             vars = setdiff(collect(keys(gemb)), ["nobs", "smb", "runoff"]);
     
             gemb_new = Dict()
+
+            # would be better to use @threads here ?
             for k in vars
                 if k in ("acc", "refreeze", "melt", "rain", "fac")
                     allow_negative = false
@@ -710,22 +690,19 @@ if !isfile(filename_gemb_geotile_filled_extra_dv) || force_remake
 
             save(filename_gemb_geotile_filled_extra, gemb_new)
         else
+            printstyled("\n    -> Loading from disk $(filename_gemb_geotile_filled_extra) as it was created after the force_remake_before date: $force_remake_before \n"; color=:light_green)
             gemb_new = load(filename_gemb_geotile_filled_extra)
         end
 
         # create volume change time series for each geotile
         df_index = findfirst(isequal(geotile), geotiles.id)
-        area = ones(length(ddate), 1) * hcat(geotiles[df_index, :area_km2])' ./ 1000 # divide by 1000 so that result in km3 (NOTE: vars are in mie)
-        for k in collect(keys(gemb_new))
-            for pscale in dpscale_new
-            #pscale = first(dpscale)            
-                for Δheight in dΔheight
-                    if k == "nobs"
-                        gemb_dv[k][At(geotile), :, At(pscale), At(Δheight)] =  sum(gemb_new[k][:,:,At(pscale),At(Δheight)], dims = :height);
-                    else
-                        gemb_dv[k][At(geotile), :, At(pscale), At(Δheight)] =  sum(gemb_new[k][:,:,At(pscale),At(Δheight)] .* area , dims = :height);
-                    end
-                end
+        area = DimArray(vec(hcat(geotiles[df_index, :area_km2])' ./ 1000), dheight) # divide by 1000 so that result in km3 (NOTE: vars are in mie)
+        Threads.@threads for k in keys(gemb_new)
+            if k == "nobs"
+                gemb_dv[k][geotile = At(geotile)] =  dropdims(sum(gemb_new[k], dims = :height), dims = :height);
+            else
+                var0 = (@d gemb_new[k] .* area)
+                gemb_dv[k][geotile = At(geotile)] = dropdims(sum(var0, dims = :height), dims = :height);
             end
         end
     end
@@ -734,23 +711,25 @@ if !isfile(filename_gemb_geotile_filled_extra_dv) || force_remake
 end
 
 
-"""
-    extrapolate_gemb_climatology(filename_gemb_geotile_filled_extra_dv, force_remake)
 
-Extrapolate GEMB data beyond the last valid date using monthly climatology.
 
-This function:
-1. Loads volume change time series data for each geotile
-2. Calculates monthly differences between time steps
-3. Computes the mean monthly climatology from available data
-4. Extends the time series beyond the last valid date using this climatology
-5. Ensures continuity by adding the last valid value to the extrapolated differences
-6. Saves the extended dataset to a new file
-
-Processing time is approximately 10 minutes.
-"""
+# Extrapolate GEMB data beyond the last valid date using monthly climatology.
+#
+# This function:
+# 1. Loads volume change time series data for each geotile
+# 2. Calculates monthly differences between time steps
+# 3. Computes the mean monthly climatology from available data
+# 4. Extends the time series beyond the last valid date using this climatology
+# 5. Ensures continuity by adding the last valid value to the extrapolated differences
+# 6. Saves the extended dataset to a new file
+#
+# Processing time is approximately 10 minutes.
 # Takes approximately 10 min to run.
-@time if !isfile(filename_gemb_geotile_filled_extra_extrap_dv) || force_remake
+
+if isfile(filename_gemb_geotile_filled_extra_extrap_dv) && (isnothing(force_remake_before) || Dates.unix2datetime(mtime(filename_gemb_geotile_filled_extra_extrap_dv)) > force_remake_before)
+    printstyled("\n    -> Skipping $(filename_gemb_geotile_filled_extra_extrap_dv) as it was created after the force_remake_before date: $force_remake_before \n"; color=:light_green)
+else
+    printstyled("\n    -> Creating $(filename_gemb_geotile_filled_extra_extrap_dv) \n"; color=:light_black)
     # repeat mean climatology for later years
     gemb_dv = load(filename_gemb_geotile_filled_extra_dv)
 

@@ -38,7 +38,7 @@ function _mapzonal(reducer, operator, x, ::GI.AbstractFeatureCollectionTrait, fc
     _mapzonal(reducer, operator, x, nothing, fc; kw...) # treat this as a table of geometries
 end
 # This handles tables, featurecollections and vectors of geometries.
-function _mapzonal(reducer, operator, x, ::Nothing, data; progress=true, threaded=true, geometrycolumn=nothing, kw...)
+function _mapzonal(reducer, operator, x, ::Nothing, data; progress=false, threaded=true, geometrycolumn=nothing, kw...)
     geoms = _get_geometries(data, geometrycolumn)
     n = length(geoms)
     n == 0 && return []

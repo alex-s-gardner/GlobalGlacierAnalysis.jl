@@ -26,8 +26,7 @@ suffix = ["wgs84_hgt.tif", "egm08_hgt.tif", "num.tif", "swb.tif"];
 for suff in suffix
     suff = first(suffix)
     out_vrt = joinpath(path2folder, replace(suff, ".tif" => ".vrt"))
-    in_tifs =  GGA.searchdir(path2folder, suff);
-    in_tifs = joinpath.(path2folder, in_tifs)
+    in_tifs = GGA.allfiles(path2folder, fn_endswith=suff)
     in_tifs = ArchGDAL.read.(in_tifs)
 
     ArchGDAL.gdalbuildvrt(in_tifs; dest=out_vrt) do vrt

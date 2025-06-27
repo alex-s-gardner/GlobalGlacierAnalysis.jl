@@ -46,7 +46,7 @@ fall within the river basins analyzed in Wimberly 2024 study.
 begin #[70s cold]
     
     # load glacier geometry
-    glaciers = GeoDataFrames.read(paths[:glacier_individual_outlines])
+    glaciers = GeoDataFrames.read(paths[:glacier_individual])
     glaciers[!, :center_pts] = GI.Point.(glaciers.CenLon, glaciers.CenLat)
 
     # load large river basins and subset to those in wimberly 2024

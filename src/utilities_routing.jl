@@ -194,9 +194,9 @@ end
 
 UnitSphericalCap(point, radius) = UnitSphericalCap(GI.trait(point), point, radius)
 
-UnitSphericalCap(::GI.PointTrait, point, radius) = UnitSphericalCap(GeometryOpsCore.Spherical(), GI.PointTrait(), point, radius)
+UnitSphericalCap(::GI.PointTrait, point, radius) = UnitSphericalCap(GOC.Spherical(), GI.PointTrait(), point, radius)
 
-function UnitSphericalCap(m::GeometryOpsCore.Spherical{T}, ::GI.PointTrait, point, radius) where {T}
+function UnitSphericalCap(m::GOC.Spherical{T}, ::GI.PointTrait, point, radius) where {T}
     radius_on_unit_sphere = radius / m.radius
     return UnitSphericalCap(UnitCartesianFromGeographic()(point), radius_on_unit_sphere)
 end

@@ -155,7 +155,7 @@ function gemb_read2(gemb_file; vars = "all", datebin_edges = nothing)
         end
 
         gemb = matopen(gemb_file) do file
-            foo = read.(Ref(file), [varmap[v] for v in vars])
+            foo = MAT.read.(Ref(file), [varmap[v] for v in vars])
             for (i, v) in enumerate(vars)
                 f = foo[i];
                 f[isnan.(f)] .= 0
@@ -771,4 +771,122 @@ function add_pscale_classes(var0, dpscale_new; allow_negative=false)
     end
 
     return gemb_new
+end
+
+
+"""
+    gemb_calibration(path2runs; surface_mask_default="glacier", gemb_run_id, geotile_grouping_min_feature_area_km2=100, single_geotile_test=nothing, force_remake_before)
+
+Calibrate GEMB (Glacier Energy and Mass Balance) model to altimetry data by finding optimal fits for grouped geotiles.
+
+# Arguments
+- `path2runs`: Array of file paths to binned synthesized data files
+- `surface_mask_default`: Default surface mask type (default: "glacier")
+- `gemb_run_id`: GEMB run identifier
+- `geotile_grouping_min_feature_area_km2`: Minimum feature area in km² for geotile grouping (default: 100)
+- `single_geotile_test`: Single geotile ID for testing (default: nothing)
+- `force_remake_before`: Date to force file regeneration (default: nothing)
+
+# Description
+Loads GEMB data and altimetry volume change data, then finds optimal model fits for grouped geotiles.
+Saves calibration results as Arrow files with geometry information.
+"""
+function gemb_calibration(
+    path2runs; 
+    surface_mask_default="glacier", 
+    gemb_run_id, 
+    geotile_width,
+    geotile_grouping_min_feature_area_km2=100, 
+    single_geotile_test=nothing, 
+    force_remake_before
+    )
+    # Load GEMB data
+    # Note: GEMB volume change is for a single surface mask - this is a hack since making GEMB dv for multiple surface masks is onerous
+    # However, since GEMB data is calibrated to altimetry that uses different surface masks, this is mostly a non-issue
+
+    gembinfo = gemb_info(; gemb_run_id)
+    filename_gemb_geotile_filled_dv = replace(gembinfo.filename_gemb_combined, ".jld2" => "_geotile_filled_extra_extrap_dv.jld2")
+
+    # NOTE: Variables are in units of mie
+    smb, fac = load(filename_gemb_geotile_filled_dv, ("smb", "fac"))
+    dgeotile = dims(smb, :geotile)
+
+    params = binned_filled_fileparts.(path2runs)
+    surface_masks = unique(getindex.(params, :surface_mask))
+
+    # Process each surface mask to load aligned geotiles and calculate hypsometry
+    geotiles = Dict()
+    for surface_mask in surface_masks
+        # Load and align geotiles with the synthesized data dimensions
+        geotiles[surface_mask] = _geotile_load_align(;
+            surface_mask="glacier",
+            geotile_width,
+            geotile_order=collect(dgeotile)
+        )
+    end
+    # Add in groups
+    geotiles0 = deepcopy(geotiles[surface_mask_default])
+    geotiles_groups = geotile_grouping(; surface_mask=surface_mask_default, min_area_km2=geotile_grouping_min_feature_area_km2, geotile_width, force_remake_before)
+
+    # Add groups to geotiles
+    _, grp_index = intersectindices(geotiles0.id, geotiles_groups.id)
+    geotiles0[!, :group] = geotiles_groups[grp_index, :group]
+
+    @showprogress desc = "Finding optimal GEMB fits to altimetry data..." Threads.@threads for binned_synthesized_file in path2runs
+
+        synthesized_gemb_fit = replace(binned_synthesized_file, ".jld2" => "_gemb_fit.arrow")
+
+        if isfile(synthesized_gemb_fit) || (isnothing(force_remake_before) || Dates.unix2datetime(mtime(synthesized_gemb_fit)) > force_remake_before)
+            printstyled("    -> Skipping $(synthesized_gemb_fit) because it was created after force_remake_before:$force_remake_before\n"; color=:light_green)
+            continue
+        else
+            t1 = time()
+
+            run_parameters = binned_filled_fileparts(synthesized_gemb_fit)
+            surface_mask = run_parameters.surface_mask
+
+            dh = FileIO.load(binned_synthesized_file, "dh_hyps")
+
+            # Convert elevation change to volume change
+            dv_altim = dh2dv(dh, geotiles[surface_mask])
+
+            if any(all(isnan.(dv_altim), dims=:date))
+                # Keep this error message
+                dgeotile = dims(dv_altim, :geotile)
+                all_nan_geotiles = dgeotile[findall(dropdims(all(isnan.(dv_altim), dims=:date), dims=:date))]
+                printstyled("Geotiles that only contain NaNs:\n"; color=:red)
+                println("$(collect(all_nan_geotiles)))")
+                printstyled("Possible sources of error include:\n"; color=:red)
+                printstyled("  [1] synthesis_error_file was run on a subset of files that do not include the full error range of the data, to fix this you need to delete the existing error file and any synthesis files that were created :\n [2] the wrong surface mask was passed to dh2dv\n"; color=:red)
+                error("geotile volume change contains all NaNs")
+            end
+
+            # Find optimal fit to GEMB data
+            # There are issues with calibrating the SMB model to individual geotiles since glaciers 
+            # can cross multiple geotiles, therefore we calibrate the model for groups of 
+            # distinct geotiles.
+
+            # Using geotiles0 instead of geotiles[surface_mask] is fine here
+            examine_model_fits = nothing #"lat[+76+78]lon[-094-092]"
+            #examine_model_fits = "lat[+30+32]lon[+096+098]"
+            #examine_model_fits = "lat[-50-48]lon[-074-072]"
+            #examine_model_fits = "lat[+58+60]lon[-132-130]"
+            #examine_model_fits = "lat[+52+54]lon[-128-126]"
+
+            if !isnothing(single_geotile_test)
+                @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!"
+                df = gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles0; examine_model_fits=single_geotile_test)
+                return df
+            else
+                df = gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles0; examine_model_fits=single_geotile_test)
+            end
+            df[!, :area_km2] = sum.(geotiles[surface_mask].area_km2)
+            df.mad = df.mad ./ df.area_km2
+            rename!(df, "mad" => "mad_m")
+            df.geometry = extent2rectangle.(df.extent)
+            df = df[:, Not(:extent)]
+            GeoDataFrames.write(synthesized_gemb_fit, df)
+            println("\n $binned_synthesized_file optimal GEMB fit found: $(round(Int,time() -t1))s")
+        end
+    end
 end
