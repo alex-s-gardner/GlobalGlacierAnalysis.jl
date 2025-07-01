@@ -133,9 +133,9 @@ include("gemb_classes_binning.jl")
 
 # binning parameters
 begin
-    force_remake_before = DateTime(2025, 6, 20, 9, 0, 0)
+    force_remake_before = DateTime(2025, 6, 20, 9, 0, 0) 
     update_geotile = true # Update select missions from previous results
-    update_missions = ["hugonnet"]
+    update_missions = nothing #["hugonnet"]
     warnings = false
     max_canopy_height = 1
     dh_max = 200
@@ -143,12 +143,12 @@ begin
     mission_reference_for_amplitude_normalization = "icesat2"
     all_permutations_for_glacier_only = true
     surface_masks = [:glacier, :glacier_rgi7] #[:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
-    binned_folders = [replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")] # [GGA.analysis_paths(; geotile_width).binned, replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")]
+    binned_folders = [replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered"), GGA.analysis_paths(; geotile_width).binned, replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")]
     binning_methods = ["nmad3", "nmad5", "median"]
     dem_ids = [:best, :cop30_v2]
     curvature_corrects = [true, false]
-
     fill_params = [1, 2, 3, 4]
+
     amplitude_corrects = [true]
     remove_land_surface_trend = GGA.mission_land_trend()
     regions2replace_with_model = ["rgi19"]
@@ -195,7 +195,7 @@ GGA.geotile_binning(;
 GGA.geotile_binned_fill(;
     project_id,
     geotile_width,
-    force_remake_before,
+    force_remake_before=DateTime(2025, 7, 1, 1, 0, 0),
     update_missions, # All missions must update if ICESat-2 updates
 
     mission_reference_for_amplitude_normalization,
@@ -216,23 +216,25 @@ GGA.geotile_binned_fill(;
     plots_save,
     plot_save_format,
     geotiles2plot,
+    
     single_geotile_test #GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
 )
 
 # to include in synthesis
 begin
-    surface_masks = ["glacier", "glacier_rgi7"]
-    dem_ids = ["best", "cop30_v2"]
-    curvature_corrects = [false, true]
-    amplitude_corrects = [true]
-    binning_methods = ["median", "nmad3", "nmad5"]
-    fill_params = [1, 2, 3, 4]
-    binned_folders = ["/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"]
     gemb_run_id = 4;
-
     downscale_to_glacier_method = "area"
-
-    path2runs_filled, params = GGA.binned_filled_filepaths(; project_id, surface_masks, dem_ids, curvature_corrects, amplitude_corrects, binning_methods, fill_params, binned_folders, include_existing_files_only=true)
+    path2runs_filled, params = GGA.binned_filled_filepaths(; 
+        project_id, 
+        surface_masks=["glacier", "glacier_rgi7"], 
+        dem_ids=["best", "cop30_v2"], 
+        curvature_corrects=[false, true], 
+        amplitude_corrects=[true], 
+        binning_methods = ["median", "nmad3", "nmad5"],
+        fill_params=[1, 2, 3, 4], 
+        binned_folders=[GGA.analysis_paths(; geotile_width).binned, replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")],
+        include_existing_files_only=true
+    )
 
     path2runs_synthesized = replace.(path2runs_filled, "aligned.jld2" => "synthesized.jld2")
 
@@ -267,6 +269,7 @@ discharge = GGA.global_discharge_filled(;
 # Calibrate GEMB (Glacier Energy and Mass Balance) model to altimetry data by finding optimal fits for grouped geotiles
 GGA.gemb_calibration(
     path2runs_synthesized; 
+    discharge,
     surface_mask_default="glacier", 
     gemb_run_id, 
     geotile_width,

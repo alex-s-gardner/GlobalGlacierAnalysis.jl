@@ -1,7 +1,3 @@
-
-
-
-
 """
     geotile_synthesize(path2runs; error_file, mission_error, update_missions, force_remake_before, missions2include)
 
@@ -40,6 +36,7 @@ function geotile_synthesize(path2runs;
         single_geotile_test,
     )
 
+
     # Synthesize geotile runs across multiple missions
     # This combines elevation change data from different satellite missions into a single dataset
     # for improved spatial coverage and temporal consistency
@@ -47,7 +44,7 @@ function geotile_synthesize(path2runs;
         path2runs,
         dh_err=dh_hyps_error,
         missions2include,
-        force_remake_before
+        force_remake_before = Dates.unix2datetime(mtime(error_file)), # synthesis files need to be update if synthesis_error was updated
     )
 end
 
@@ -116,7 +113,8 @@ function geotile_synthesis_error(;
     outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
     mission_error = fill(0.0, Dim{:mission}(["hugonnet", "gedi", "icesat", "icesat2"])),
     update_missions=nothing,
-    single_geotile_test=nothing, #GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
+    single_geotile_test=nothing, #geotiles_golden_test[1], #geotiles_golden_test[2],
+    geotile_width = 2,
     force_remake_before=nothing,
 )
 
@@ -203,14 +201,16 @@ function geotile_synthesis_error(;
 
             vdate, vheight = validrange(valid1)
 
+            # for some geotiles and some missions there are no valid data so this is needed over using dims
             for date in ddate[vdate]
 
                 for height in dheight[vheight]
                     var0 = dh_all[:, At(geotile), At(date), At(height)]
                     valid2 = .!isnan.(var0)
 
-                    if any(valid2)
-                        dh_all_std[mission][At(geotile), At(date), At(height)] = std(var0[valid2]) + mission_error[At(mission)]
+                    if sum(valid2) > 1 # std returns NaN if there is only one valid data point
+                        std0 = std(var0[valid2]) + mission_error[At(mission)]
+                        dh_all_std[mission][At(geotile), At(date), At(height)] = std0 
                     end
                 end
             end
@@ -220,6 +220,9 @@ function geotile_synthesis_error(;
     dh_hyps_error = dh_all_std
     files_included = path2runs
 
+    @warn "testing"
+    return dh_hyps_error, files_included
+
     if isnothing(single_geotile_test)
         # save the error so that it can be used in the synthesis of individual model runs
         save(outfile, Dict("dh_hyps_error" => dh_hyps_error, "files_included" => files_included))
@@ -228,9 +231,8 @@ function geotile_synthesis_error(;
         surface_masks = unique(getindex.(params, :surface_mask))
         surface_mask = surface_masks[1]
 
-        geotiles = geotiles_mask_hyps(surface_mask, 2)
-        area_km2 = DimArray((reduce(hcat, geotiles[:, "$(surface_mask)_area_km2"])'), (Dim{:geotile}(geotiles.id), dims(dh_hyps_error[first(keys(dh_hyps_error))], :height)))
-
+        area_km2 = _geotile_area_km2(surface_mask, geotile_width)
+       
         outfile_parts = splitpath(outfile)
         plot_save_path_prefix = joinpath(pathlocal[:figures], replace(outfile_parts[end], ".jld2" => ""))
 
@@ -249,8 +251,6 @@ function geotile_synthesis_error(;
             plot_save_format=".png"
         )        
     end
-
-
 
     return (dh_hyps_error, files_included)    
 end
@@ -285,13 +285,20 @@ function geotile_synthesize_runs(;
     dh_err,
     missions2include=["hugonnet", "gedi", "icesat", "icesat2"],
     geotiles2plot = nothing,
-    single_geotile_test=nothing, #GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
-    force_remake_before=nothing
+    single_geotile_test=nothing, #geotiles_golden_test[1], #geotiles_golden_test[2],
+    dh_override = nothing, # used to override the dh_hyps data with a different set of data
+    geotile_width = 2,
+    force_remake_before=nothing,
 )
 
     if !isnothing(single_geotile_test)
-        @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!"
+        @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!\n"
         geotiles2plot = [single_geotile_test]
+    end
+
+    if !isnothing(dh_override)
+        @warn "!!!!!!!!!!!!!! USING dh_override, NOT READING FROM FILE, OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!\n"
+        path2runs = ["no filenames needed"]
     end
 
     missions = missions2include
@@ -326,17 +333,32 @@ function geotile_synthesize_runs(;
         w[mission][isnan.(w[mission])] .= 0
     end
 
-    @showprogress dt = 1 desc = "Synthesizing runs ..." Threads.@threads for binned_aligned_file in path2runs
+    # can not use Threads.@threads here as it will not return values when dh_override != nothing
+    @showprogress dt = 1 desc = "Synthesizing runs ..." for binned_aligned_file in path2runs
         #binned_aligned_file = path2runs[1]   
 
         binned_synthesized_file = replace(binned_aligned_file, "aligned.jld2" => "synthesized.jld2")
 
-        if (isfile(binned_synthesized_file) || (isnothing(force_remake_before) || Dates.unix2datetime(mtime(binned_synthesized_file)) > force_remake_before)) && isnothing(single_geotile_test)
-            printstyled("    -> Skipping $(binned_synthesized_file) because it was created after force_remake_before date: $force_remake_before\n"; color=:light_green)
+        if isfile(binned_synthesized_file) && (isnothing(force_remake_before) || Dates.unix2datetime(mtime(binned_synthesized_file)) > force_remake_before) && isnothing(single_geotile_test) && isnothing(dh_override)
+            printstyled("    -> Skipping $(binned_synthesized_file) because it was created after the latest synthesis_error: $force_remake_before\n"; color=:light_green)
             continue
         else
             t1 = time()
-            dh = FileIO.load(binned_aligned_file, "dh_hyps")
+            
+
+            if !isnothing(dh_override)
+                dh = dh_override
+
+                w00 = deepcopy(w)
+                dgeotile = dims(dh[missions[1]], :geotile)
+
+                for mission in missions
+                    w00[mission] = w00[mission][geotile=At(collect(dgeotile))]
+                end
+            else
+                dh = FileIO.load(binned_aligned_file, "dh_hyps")
+                w00 = deepcopy(w)
+            end
 
             if !isnothing(single_geotile_test)
                 for mission in missions
@@ -346,17 +368,13 @@ function geotile_synthesize_runs(;
                 end
             end
 
-            #heatmap(dh2dv(dh["hugonnet"], geotiles["glacier_b1km"])[510:511,:])
-            #heatmap!(dh2dv(dh["icesat2"], geotiles["glacier_b1km"])[510:511,:])
-            #heatmap!(dh2dv(dh["gedi"], geotiles["glacier_b1km"])[510:511,:])
-
             dh_synth = fill(0.0, dims(dh[missions[1]]))
             w_synth = copy(dh_synth)
 
             for mission in missions
-                w0 = copy(w[mission])
-
+                w0 = w00[mission]
                 var0 = dh[mission]
+
                 nanidx = isnan.(var0)
                 var0[nanidx] .= 0
                 w0[nanidx] .= 0
@@ -374,14 +392,13 @@ function geotile_synthesize_runs(;
             dh_synth_err[isnan.(dh_synth)] .= NaN
 
             #if plot_dh_as_function_of_time_and_elevation
-            if !isempty(geotiles2plot)
+            if !isnothing(geotiles2plot)
 
                 println(binned_aligned_file)
                 param = binned_filled_fileparts(binned_aligned_file)
                 surface_mask =param[:surface_mask]
 
-                geotiles = geotiles_mask_hyps(surface_mask, 2)
-                area_km2 = DimArray((reduce(hcat, geotiles[:, "$(surface_mask)_area_km2"])'), (Dim{:geotile}(geotiles.id), dims(dh[first(keys(dh))], :height)))
+                area_km2 = _geotile_area_km2(surface_mask, geotile_width)
 
                 for mission in missions
                     dh[mission][dh[mission].==0] .= NaN
@@ -425,9 +442,11 @@ function geotile_synthesize_runs(;
                 )
             end
 
-            if isnothing(single_geotile_test)
+            if isnothing(single_geotile_test) && isnothing(dh_override)
                 save(binned_synthesized_file, Dict("dh_hyps" => dh_synth, "dh_hyps_err" => dh_synth_err))
                 println("$binned_aligned_file synthesized: $(round(Int,time() -t1))s")
+            else
+                return dh_synth, dh_synth_err
             end
         end
     end
@@ -716,16 +735,27 @@ function dh2dv(dh, area_km2)
 
     dv = fill(NaN, dims(dh, :date))
     if all(isnan.(dh))
-        dv[:] .= NaN
+        return dv
     else
         (index_date, index_height) = validrange(.!isnan.(dh))
 
         foo = @d (dh[index_date, index_height] .* (area_km2[index_height] ./ 1000))
         dv[index_date] = vec(sum(foo; dims=:height))
+        return dv
     end
+end
 
+function dh2dv_geotile(dh, area_km2)
+
+    dgeotile = dims(dh, :geotile)
+    ddate = dims(dh, :date)
+    dv = fill(NaN, dgeotile, ddate)
+    for geotile in dgeotile
+        dv[geotile = At(geotile)] = dh2dv(dh[geotile = At(geotile)], area_km2[geotile = At(geotile)])
+    end
     return dv
 end
+
 
 """
     geotile2glacier!(glaciers, var0; varname)
@@ -974,6 +1004,7 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge; gemb_run_id, geotile
     # Initialize dictionaries to store geotiles and glaciers for each surface mask
     geotiles = Dict()
     has_glacier = Dict()
+    area_km2 = Dict()
 
     params = binned_filled_fileparts.(path2runs)
     surface_masks = unique(getindex.(params, :surface_mask))
@@ -986,6 +1017,8 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge; gemb_run_id, geotile
             geotile_width,
             geotile_order=collect(dgeotile)
         )
+
+        area_km2[surface_mask] = _geotile_area_km2(surface_mask, geotile_width)
 
         # Calculate glacier hypsometry for the aligned geotiles
         glaciers0 = geotile_hypsometry(
@@ -1048,8 +1081,8 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge; gemb_run_id, geotile
                 fit_index = findfirst(isequal(geotile.id), gemb_fit.id)
                 geotile.pscale = gemb_fit[fit_index, :pscale]
                 geotile.Δheight = gemb_fit[fit_index, :Δheight]
-                area_km2 = sum(geotile.area_km2)
-                geotile.mie2cubickm = area_km2 / 1000  # Convert meters ice equivalent to cubic kilometers
+                area_km20 = sum(geotile.area_km2)
+                geotile.mie2cubickm = area_km20 / 1000  # Convert meters ice equivalent to cubic kilometers
 
                 # include discharge average over total glacier area [i.e. save in units of mie]
                 index = within.(Ref(geotile.extent), discharge.longitude, discharge.latitude)
@@ -1061,12 +1094,13 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge; gemb_run_id, geotile
             colmetadata!(geotiles0, "discharge", "units", "km3 [i.e.]", style=:note)
 
             # Process each variable
+
             for varname in varnames
 
                 # Special handling for height change data
                 if varname == "dv_altim"
                     dh = load(binned_synthesized_file, "dh_hyps")
-                    var0 = dh2dv(dh, geotiles0)
+                    var0 = dh2dv_geotile(dh, area_km2[surface_mask])
                 else
                     var0 = load(filename_gemb_geotile_filled_dv, varname)
                 end
@@ -1149,3 +1183,5 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge; gemb_run_id, geotile
         end
     end
 end
+
+

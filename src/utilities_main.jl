@@ -525,26 +525,35 @@ function geotile_hyps_extract(;
                 invert = false
             end
 
-            fn_shp = pathlocal[shp]
-            feature = Shapefile.Handle(fn_shp)
-
             geotiles[!, var_name] = [zeros(size(height_center)) for r in 1:nrow(geotiles)]
+
+            fn_shp = GGA.pathlocal[shp]
 
             if mask == :land
                 shp = Symbol("$(:glacier)_shp")
-                fn_shp = pathlocal[shp]
-                excludefeature = Shapefile.Handle(fn_shp)
+                fn_shp_ex = pathlocal[shp]
+            else
+                fn_shp_ex = nothing
+                excludefeature = nothing
+            end
+
+            feature = Shapefile.Handle(fn_shp)
+            if !isnothing(fn_shp_ex)
+                excludefeature = Shapefile.Handle(fn_shp_ex)
             else
                 excludefeature = nothing
             end
 
-            dfr = eachrow(geotiles)
+            # using Threads here does not improve performance
+            for geotile in eachrow(geotiles)[geotiles[!, "$(domain)_frac"].>0]
 
-            # Threads here is causing a seg-fault... likely `feature` needs to be coppied for each thread
-            for geotile in dfr[geotiles[!, "$(domain)_frac"].>0]
-                geotile_binarea!(geotile, ras, feature, height_range; invert, excludefeature, var_name)
+                GGA.geotile_binarea!(geotile, ras, feature, height_range; invert, excludefeature, var_name)
             end
-            Arrow.write(out_file, geotiles::DataFrame)
+
+            Arrow.write(out_file, select!(geotiles, Not(:geometry))::DataFrame)
+
+            # file can not be written with geometry column
+            Arrow.write(out_file, select!(geotiles, Not(:geometry))::DataFrame)
         end
     end
 end

@@ -597,6 +597,7 @@ function geotile_binned_fill(;
     process_time_show=false,
     geotiles2plot=["lat[+28+30]lon[+082+084]"],
     single_geotile_test = nothing,
+    subsample_fraction = nothing, # used to investigate solution sensitivity to subsampling (e.g. 0.1 will subsample 10% of the data)
 )
 
     # do a little input checking
@@ -621,11 +622,18 @@ function geotile_binned_fill(;
         error("can not update mission_reference_for_amplitude_normalization [$(mission_reference_for_amplitude_normalization)] without updating all other missions")
     end
 
+    if .!isnothing(subsample_fraction) && !isnothing(update_missions)
+        error("subsampling should not be used with update_missions: set `update_missions = nothing`")
+    end
+
+    if .!isnothing(subsample_fraction) && isnothing(single_geotile_test)
+        @warn "!!!!!!!!!!!!!! SUBSAMLING ALL GEOTILES, OUTPUT WILL NOT BE SAVED TO FILE !!!!!!!!!!!!!!"
+    end
+
     if .!isnothing(single_geotile_test)
         @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!"
         geotiles2plot = [single_geotile_test]
     end
-    
 
     # load geotiles
     geotiles0 = Dict()
@@ -651,7 +659,6 @@ function geotile_binned_fill(;
 
         binned_file = binned_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct)
 
-          
         if !isfile(binned_file)
             @warn "binned_file does not exist, skipping: $binned_file"
             continue
@@ -682,11 +689,11 @@ function geotile_binned_fill(;
         for fill_param in fill_params
              for amplitude_correct = amplitude_corrects
 
-                   # paths to files
+                # paths to files
                 binned_filled_file, _ = binned_filled_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct, amplitude_correct, fill_param)
 
                 if isfile(binned_filled_file) && !isnothing(force_remake_before) && isnothing(single_geotile_test)
-                    if Dates.unix2datetime(mtime(binned_file)) > force_remake_before
+                    if Dates.unix2datetime(mtime(binned_filled_file)) > force_remake_before
                         printstyled("\n    -> Skipping $(binned_filled_file) as it was created after the force_remake_before date: $force_remake_before \n"; color=:light_green)
                         continue
                     end
@@ -715,8 +722,9 @@ function geotile_binned_fill(;
 
                 # align geotile dataframe with DimArrays
                 geotiles = deepcopy(geotiles0[param.surface_mask])
-                area_km2 = DimArray((reduce(hcat, geotiles[:, "$(param.surface_mask)_area_km2"])'), (Dim{:geotile}(geotiles.id), dims(dh1[first(keys(dh1))], :height)))
-                geotile_extent = DimArray(geotiles[:, "extent"], Dim{:geotile}(geotiles.id))
+                
+                area_km2 = _geotile_area_km2(param.surface_mask, geotile_width)
+                geotile_extent = _geotile_extent(param.surface_mask, geotile_width)
 
                 # filter geotiles to those that need some replacing with model
                 keep = falses(nrow(geotiles))
@@ -735,7 +743,7 @@ function geotile_binned_fill(;
                     n = length(dims(dh1[mission], :geotile))
 
                     params_fill[mission] = DataFrame(
-                        geotile=val(dims(dh1[mission], :geotile)), 
+                        geotile=collect(dims(dh1[mission], :geotile)), 
                         nobs_raw=zeros(n), nbins_raw=zeros(n), 
                         nobs_final=zeros(n), nbins_filt1=zeros(n), 
                         param_m1=[fill(NaN, size(p1)) for i in 1:n], 
@@ -770,6 +778,15 @@ function geotile_binned_fill(;
                         ind = findfirst(dims(dh1[k], :geotile) .== single_geotile_test)
                         dh1[k] = dh1[k][ind:ind, :, :]
                         nobs1[k] = nobs1[k][ind:ind, :, :]
+                    end
+                end
+
+                
+                if .!isnothing(subsample_fraction)
+                    for k in keys(dh1)
+                        rand_index = rand(dims(dh1[k])) .> subsample_fraction
+                        dh1[k][rand_index] .= NaN
+                        nobs1[k][rand_index] .= 0
                     end
                 end
 
@@ -899,31 +916,7 @@ function geotile_binned_fill(;
                 
                 # correct for any erronious trends found over land
                 begin
-                    dgeotile = dims(dh1[first(keys(dh1))], :geotile)
-                    dheight = dims(dh1[first(keys(dh1))], :height)
-                    
-                    for mission in missions2update
-                        if !isnothing(remove_land_surface_trend) && (remove_land_surface_trend[At(mission)] != 0)
-                            ddate = dims(dh1[mission], :date)
-                            decyear = decimalyear.(ddate)
-
-                            # center date arround mission center date
-                            valid1 = .!isnan.(dh1[mission])
-                            if !any(valid1)
-                                continue
-                            end
-                            
-                            _, date_range, _ = validrange(valid1)
-                            mid_date = mean(decyear[date_range])
-                            delta = (decyear .- mid_date) .* remove_land_surface_trend[At(mission)]
-
-                            for geotile in dgeotile
-                                for height in dheight
-                                    dh1[mission][geotile=At(geotile), height=At(height)] .-= delta
-                                end
-                            end
-                        end
-                    end
+                    hyps_remove_land_surface_trend!(dh1; missions2update, remove_land_surface_trend)
 
                     if plots_show || plots_save
                         colorbar_label = "land surface trend corrected height anomalies"
@@ -998,11 +991,13 @@ function geotile_binned_fill(;
                 end
 
                 # save filled geotiles
-                if isnothing(single_geotile_test)
+                if isnothing(single_geotile_test) && isnothing(subsample_fraction)
                     save(binned_filled_file, Dict("dh_hyps" => dh1, "nobs_hyps" => nobs1, "model_param" => params_fill))
 
                     process_time_show ? t12 = time() : nothing
                     process_time_show && printstyled("saving binned_filled_file: $(round(Int16, t12 - t11))s\n", color=:green)
+                else
+                    return dh1, nobs1, params_fill
                 end
             end
         end

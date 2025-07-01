@@ -472,7 +472,7 @@ end
 
 
 """
-    gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_model_fits = nothing)
+    gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; single_geotile_test = nothing)
 
 Calibrate the SMB model to grouped geotiles to handle glaciers that cross multiple geotiles.
 
@@ -482,12 +482,12 @@ Calibrate the SMB model to grouped geotiles to handle glaciers that cross multip
 - `fac`: Firn air content data
 - `discharge`: Discharge data
 - `geotiles`: DataFrame containing geotile information
-- `examine_model_fits`: Optional geotile ID to examine model fits for debugging 
+- `single_geotile_test`: Optional geotile ID to examine model fits for debugging 
 
 # Returns
 DataFrame with calibrated parameters for each geotile: id, extent, pscale, Δheight, and mad
 """
-function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_model_fits = nothing)
+function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; single_geotile_test = nothing)
 
     # there are issues with calibrating the smb model to individual geotiles as glaciers
     # can cross multiple geotiles. To tackle this issue we to disconected geotile groups
@@ -500,8 +500,8 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
 
     volume2mass = δice / 1000
 
-    if .!isnothing(examine_model_fits)
-        geotile_ref = examine_model_fits
+    if .!isnothing(single_geotile_test)
+        geotile_ref = single_geotile_test
     else
         geotile_ref = dgeotile[1]
     end
@@ -524,9 +524,9 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
     geotiles[!, :Δheight] .= 0.0;
     geotiles[!, :mad] .= 0.0;
 
-    if .!isnothing(examine_model_fits)
+    if .!isnothing(single_geotile_test)
         verbose = true
-        ind = geotiles.id .== examine_model_fits;
+        ind = geotiles.id .== single_geotile_test;
         geotiles = geotiles[geotiles.group .== geotiles[ind, :group], :]
     else
         verbose = false
@@ -643,7 +643,7 @@ function gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; examine_m
             display(f)
 
             f2 = Figure(size=(1000, 1000))
-            p2 = f2[1, 1] = CairoMakie.Axis(f2, title="best fit for $examine_model_fits [pscale = $pscale0, Δheight = $Δheight0, mad = $(round(mad0; digits=2))]", xlabel="year", ylabel="km3")
+            p2 = f2[1, 1] = CairoMakie.Axis(f2, title="best fit for $single_geotile_test [pscale = $pscale0, Δheight = $Δheight0, mad = $(round(mad0; digits=2))]", xlabel="year", ylabel="km3")
 
             CairoMakie.lines!(best_smb; label="smb")
             CairoMakie.lines!(best_fac; label="fac")
@@ -793,7 +793,8 @@ Saves calibration results as Arrow files with geometry information.
 """
 function gemb_calibration(
     path2runs; 
-    surface_mask_default="glacier", 
+    surface_mask_default="glacier",
+    discharge = nothing,
     gemb_run_id, 
     geotile_width,
     geotile_grouping_min_feature_area_km2=100, 
@@ -816,13 +817,16 @@ function gemb_calibration(
 
     # Process each surface mask to load aligned geotiles and calculate hypsometry
     geotiles = Dict()
+    area_km2 = Dict()
     for surface_mask in surface_masks
         # Load and align geotiles with the synthesized data dimensions
         geotiles[surface_mask] = _geotile_load_align(;
-            surface_mask="glacier",
+            surface_mask,
             geotile_width,
             geotile_order=collect(dgeotile)
         )
+
+        area_km2[surface_mask] = _geotile_area_km2(surface_mask, geotile_width)
     end
     # Add in groups
     geotiles0 = deepcopy(geotiles[surface_mask_default])
@@ -848,7 +852,7 @@ function gemb_calibration(
             dh = FileIO.load(binned_synthesized_file, "dh_hyps")
 
             # Convert elevation change to volume change
-            dv_altim = dh2dv(dh, geotiles[surface_mask])
+            dv_altim = dh2dv_geotile(dh, area_km2[surface_mask_default])
 
             if any(all(isnan.(dv_altim), dims=:date))
                 # Keep this error message
@@ -858,6 +862,7 @@ function gemb_calibration(
                 println("$(collect(all_nan_geotiles)))")
                 printstyled("Possible sources of error include:\n"; color=:red)
                 printstyled("  [1] synthesis_error_file was run on a subset of files that do not include the full error range of the data, to fix this you need to delete the existing error file and any synthesis files that were created :\n [2] the wrong surface mask was passed to dh2dv\n"; color=:red)
+
                 error("geotile volume change contains all NaNs")
             end
 
@@ -866,19 +871,12 @@ function gemb_calibration(
             # can cross multiple geotiles, therefore we calibrate the model for groups of 
             # distinct geotiles.
 
-            # Using geotiles0 instead of geotiles[surface_mask] is fine here
-            examine_model_fits = nothing #"lat[+76+78]lon[-094-092]"
-            #examine_model_fits = "lat[+30+32]lon[+096+098]"
-            #examine_model_fits = "lat[-50-48]lon[-074-072]"
-            #examine_model_fits = "lat[+58+60]lon[-132-130]"
-            #examine_model_fits = "lat[+52+54]lon[-128-126]"
-
             if !isnothing(single_geotile_test)
                 @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!"
-                df = gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles0; examine_model_fits=single_geotile_test)
+                df = gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles0; single_geotile_test)
                 return df
             else
-                df = gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles0; examine_model_fits=single_geotile_test)
+                df = gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles0; single_geotile_test)
             end
             df[!, :area_km2] = sum.(geotiles[surface_mask].area_km2)
             df.mad = df.mad ./ df.area_km2

@@ -1597,7 +1597,7 @@ end
 function trim_files(path2runs, geotile_ids)
     @showprogress desc="Trimming data to only include geotiles with glacier coverage... !! WARNING DATA WILL BE OVERWRITTEN !!"  for path2file in path2runs
         f = load(path2file)::Dict{String, Any}
-        dgeotile = dims(f["dh_hyps"]["hugonnet"], :geotile)
+        dgeotile = dims(f[first(keys(f))]["hugonnet"], :geotile)
 
         if length(dgeotile) != length(geotile_ids)
             @warn "Geotile dimensions do not match, removing excess geotiles: $(path2file)"
@@ -1639,5 +1639,28 @@ function _geotile_load_align(; surface_mask="glacier", geotile_width=2, geotile_
 
         geotiles0 = geotiles0[gt_index, :]
     end
+end
+
+
+
+function _geotile_area_km2(surface_mask, geotile_width)
+    _, height_center = project_height_bins()
+    geotiles = geotiles_mask_hyps(surface_mask, geotile_width)
+
+    dheight = Dim{:height}(height_center)
+    dgeotile = Dim{:geotile}(geotiles.id)
+    
+    area_km2 = DimArray((reduce(hcat, geotiles[:, "$(surface_mask)_area_km2"])'), (dgeotile, dheight))
+    return area_km2
+end
+
+
+function _geotile_extent(surface_mask, geotile_width)
+
+    geotiles = geotiles_mask_hyps(surface_mask, geotile_width)
+    dgeotile = Dim{:geotile}(geotiles.id)
+    
+    extent = DimArray(geotiles[:, "extent"], dgeotile)
+    return extent
 end
 

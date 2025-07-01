@@ -82,7 +82,7 @@ function plot_curvature(bin_center, dh_obs, dh_cor, nrow; title = "")
     valid_range, = validrange(valid)
    
 
-    f = Figure(size=(figure_width, figure_width * 2/3))
+    f = Figure(size=(figure_width * 1.5, figure_width))
 
     ax1 = CairoMakie.Axis(f[1:4, 1]; title, ylabel="height anomaly [m]")
     ax2 = CairoMakie.Axis(f[5:6, 1], ylabel="count [×1000]", xlabel="curvature [cm⁻¹]")
@@ -113,11 +113,12 @@ Create a heatmap visualization of elevation changes over time.
 - `colorrange`: Tuple specifying the color scale range for the heatmap (default: (-20, 20))
 
 # Returns
-- A Makie heatmap plot object showing elevation anomalies over time
+- A Makie Figure object containing the elevation-time heatmap
 
 # Description
-This function creates a heatmap where the x-axis represents height anomaly [m] and displays
-elevation changes using a balanced color scheme. Only valid (non-NaN) data points are plotted.
+This function creates a heatmap where the x-axis represents time and y-axis represents elevation,
+displaying elevation changes using a balanced color scheme. Only valid (non-NaN) data points are plotted.
+The heatmap shows height anomalies [m] over time with elevation bins on the vertical axis.
 """
 function plot_elevation_time(dh0; colorrange=(-20, 20))
     (valid_rows, valid_cols) = validrange(.!isnan.(dh0))
@@ -136,7 +137,7 @@ function plot_elevation_time(dh0; colorrange=(-20, 20))
 end
 
 """
-    plot_elevation_time!(ax, dh0; colorrange=(-20, 20))
+    plot_elevation_time!(ax, dh0; colorrange=(-20, 20), xaxis_label=true, yaxis_label=true)
 
 Create a heatmap visualization of elevation changes over time on an existing axis.
 
@@ -144,13 +145,15 @@ Create a heatmap visualization of elevation changes over time on an existing axi
 - `ax`: The axis object to plot on
 - `dh0`: A dimensional array containing elevation change data with time and elevation dimensions
 - `colorrange`: Tuple specifying the color scale range for the heatmap (default: (-20, 20))
+- `xaxis_label`: Boolean to show x-axis label (default: true)
+- `yaxis_label`: Boolean to show y-axis label (default: true)
 
 # Returns
 - The modified axis object with the heatmap plot
 
 # Description
-This function creates a heatmap on an existing axis where the x-axis represents height anomaly [m] 
-and displays elevation changes using a balanced color scheme. Only valid (non-NaN) data points are plotted.
+This function creates a heatmap on an existing axis where the x-axis represents time and y-axis represents
+elevation, displaying elevation changes using a balanced color scheme. Only valid (non-NaN) data points are plotted.
 This is the in-place version of `plot_elevation_time()` for use in multi-panel figures.
 """
 function plot_elevation_time!(ax, dh0; colorrange = (-20,20), xaxis_label = true, yaxis_label = true)
@@ -167,22 +170,21 @@ function plot_elevation_time!(ax, dh0; colorrange = (-20,20), xaxis_label = true
         colorrange,
         label,
     )
-
-    ax.xlabel = "height anomaly [m]" 
-    ax.ylabel = ""
-
     return ax
 end
 
 """
-    plot_elevation_time_multimission(dh, geotile2plot; colorrange=(-20, 20))
+    plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=true, colorbar_label="height anomaly", mission_order=nothing, xtickspacing=5)
 
 Create a multi-panel figure showing elevation changes over time for multiple altimetry missions.
 
 # Arguments
 - `dh`: Dictionary containing elevation change data for different missions/datasets
-- `geotile2plot`: String identifier for the specific geotile to visualize
 - `colorrange`: Tuple specifying the color scale range for all heatmaps (default: (-20, 20))
+- `linkaxes`: Boolean to link x and y axes across subplots (default: true)
+- `colorbar_label`: Label for the shared colorbar (default: "height anomaly")
+- `mission_order`: Vector specifying the order of missions to display (default: nothing, uses all missions)
+- `xtickspacing`: Spacing between x-axis ticks (default: 5)
 
 # Returns
 - A Figure object containing heatmap subplots for each mission with a shared colorbar
@@ -193,7 +195,7 @@ over time for a different altimetry mission or dataset. The subplots are arrange
 grid layout, with each mission labeled at the top of its respective panel. A shared colorbar
 on the right side shows the height anomaly scale in meters.
 """
-function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=true, colorbar_label="height anomaly", mission_order = nothing)
+function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=true, colorbar_label="height anomaly", mission_order = nothing, xtickspacing = 5)
    
     mm = 3.7795275590551176
     figure_width = 183mm
@@ -201,6 +203,15 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
     missions = mission_proper_name.(collect(keys(dh)))
     dheight = dims(dh[first(keys(dh))], :height)
     Δheight = val(dheight)[2] - val(dheight)[1]
+    ddate = dims(dh[first(keys(dh))], :date)
+    
+    valid = falses(size(dh[first(keys(dh))]))
+    for mission in keys(dh)
+        valid = valid .| .!isnan.(dh[mission])
+    end
+    date_range, = validrange(valid)
+
+    xlims = (floor(Int, minimum(ddate[date_range] ./ xtickspacing)) * xtickspacing, ceil(Int, maximum(ddate[date_range] ./ xtickspacing)) * xtickspacing)
 
     f = Figure(size=(figure_width * 1.5, figure_width))
 
@@ -208,7 +219,6 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
         mission_order = collect(keys(dh))
     end
 
-    
     height_min = Inf
     height_max = 0
     ax = []
@@ -223,7 +233,8 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
             continue
         end
 
-        _, height_range= validrange(.!isnan.(dh[mission]))
+        valid = .!isnan.(dh[mission])
+        _, height_range = validrange(valid)
         height_min = min(height_min, minimum(parent(dheight[height_range])))
         height_max = max(height_max, maximum(parent(dheight[height_range])))
 
@@ -245,13 +256,17 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
         end
 
         if c == 2
+            ax[i].ylabelvisible = false
             ax[i].yticklabelsvisible = false
             ax[i].yticksvisible = false
         end
 
-        if c == 1
-            ax[i].ylabel = "elevation [m]"
-        end
+        ax[i].ylabel = "elevation"
+        ax[i].ytickformat = values -> ["$(round(Int,value))m" for value in values]
+
+
+        ax[i].xticks = xlims[1]:xtickspacing:xlims[2]-xtickspacing
+        xlims!(ax[i], xlims)
     end
 
     height_min = max(0.0, (floor(height_min / Δheight) * Δheight) - Δheight)
@@ -261,21 +276,35 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
         ylims!(ax[i], (height_min, height_max))
     end
 
-    Colorbar(f[3, 1:2], f.content[1].scene.plots[1], vertical=false, label=colorbar_label, flipaxis=false, tickformat=values -> ["$(value)m" for value in values])
+    Colorbar(f[3, 1:2], f.content[1].scene.plots[1], vertical=false, label=colorbar_label, flipaxis=false, tickformat=values -> ["$(round(Int,value))m" for value in values])
 
     return f
 end
 
-function plot_hypsometry!(f, area_km2)
-    # ----------- plot hypsometry ------------
-    ax13 = CairoMakie.Axis(f[1, 3], ytickformat=values -> ["$(value)km²" for value in values], title="glacier area")
+"""
+    plot_hypsometry!(ax, area_km2)
+
+Plot glacier area-elevation distribution (hypsometry) on a given axis.
+
+# Arguments
+- `ax`: Makie axis to plot on
+- `area_km2`: Area data for each elevation bin [km²]
+
+# Returns
+- Modified axis with hypsometry plot
+
+# Description
+Creates a polygon plot showing the distribution of glacier area across elevation bins.
+The plot displays area on the x-axis and elevation on the y-axis with a skyblue fill
+and black outline.
+"""
+function plot_hypsometry!(ax, area_km2)
+    ax.xtickformat=values -> ["$(round(Int,value))km²" for value in values]
+    ax.title="glacier area-elevation distribution"
+
     dheight = dims(area_km2, :height)
     Δheight = val(dheight)[2] - val(dheight)[1]
 
-    # can't get linkyaxes to work so doing manually
-    # linkyaxes!(CairoMakie.Axis(f[1, 1]), ax); 
-    ylims!(ax13, f.content[1, 1].yaxis.attributes.limits.val)
-   
     pts0 = Point2f.(collect(area_km2), parent(val(dheight)))
     pts = similar(pts0, (length(pts0) * 2)+2)
 
@@ -293,32 +322,62 @@ function plot_hypsometry!(f, area_km2)
         end
     end
 
-    poly!(ax13, pts, color=:skyblue2, strokecolor=:black, strokewidth=1)
-    xlims!(ax13, (0, ceil(maximum(area_km2)*1.05 / Δheight) * Δheight))
-    #ax13.xtickformat = "{:.2f}km²"
-    ax13.ygridvisible = false
-    ax13.xgridvisible = false
-    ax13.yticklabelsvisible = false
-    #ax13.xlabel = "area [km²]"
-    hidespines!(ax13, :t, :r);
-    ax13.yticksvisible = false
+    poly!(ax, pts, color=:skyblue2, strokecolor=:black, strokewidth=1)
+    xlims!(ax, (0, ceil(maximum(area_km2)*1.05 / Δheight) * Δheight))
+    ax.ygridvisible = false
+    ax.xgridvisible = false
+    ax.yticklabelsvisible = false
+    hidespines!(ax, :t, :r);
+    ax.yticksvisible = false
 
-    return f
+    return ax
 end
 
-function plot_area_average_height_anomaly!(f, dh0, area_km2; cmap=:thermal, mission_color_width = nothing, mission_order = nothing)
+"""
+    plot_area_average_height_anomaly!(ax, dh0, area_km2; cmap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5)
+
+Plot area-averaged height anomalies for multiple missions on a given axis.
+
+# Arguments
+- `ax`: Makie axis to plot on
+- `dh0`: Dictionary of dimensional arrays containing height anomaly data for each mission
+- `area_km2`: Area data for each geotile [km²]
+- `cmap`: Colormap for mission lines (default: :thermal)
+- `mission_color_width`: Dictionary specifying custom colors and linewidths for missions
+- `mission_order`: Array specifying order of missions to display
+- `xtickspacing`: Spacing between x-axis ticks (default: 5)
+
+# Returns
+- Modified axis with area-averaged height anomaly plots
+
+# Description
+Plots time series of area-averaged height anomalies for multiple missions. Each mission is
+displayed as a line with the median value shown in the legend. Supports custom styling
+and mission ordering.
+"""
+function plot_area_average_height_anomaly!(ax, dh0, area_km2; cmap=:thermal, mission_color_width = nothing, mission_order = nothing, xtickspacing = 5)
     # mission_color_width = Dict("synthesis" => (color = :black, linewidth = 1))
-    # ----------- area average height anomaly  ------------
-    ax23 = CairoMakie.Axis(f[2, 3], yaxisposition=:right, ytickformat=values -> ["$(value)m" for value in values], title="area-averaged height anomaly")
-    
+    ax.yaxisposition=:right
+    ax.ytickformat=values -> ["$(round(Int,value))m" for value in values]
+    ax.title="area-averaged height anomaly"
+
+    # ----------- area average height anomaly  ------------    
+    ddate = dims(dh0[first(keys(dh0))], :date)
+    x = collect(val(ddate))
     clrs = Makie.resample_cmap(cmap, length(keys(dh0))+1)
+
+    valid = falses(size(dh0[first(keys(dh0))]))
+    for mission in keys(dh0)
+        valid = valid .| .!isnan.(dh0[mission])
+    end
+    date_range, = validrange(valid)
 
     if isnothing(mission_order)
         mission_order = collect(keys(dh0))
     end
 
     for (i, mission) in enumerate(mission_order)
-        y = dh_area_average(dh0[mission], area_km2)
+        y =  collect(dh_area_average(dh0[mission], area_km2))
         y_median = round(median(y[.!isnan.(y)]), digits=1)
 
         if !in(mission, keys(dh0))
@@ -326,20 +385,54 @@ function plot_area_average_height_anomaly!(f, dh0, area_km2; cmap=:thermal, miss
         end
 
         if isnothing(mission_color_width) || (!in(mission, keys(mission_color_width)))
-            lines!(ax23, collect(val(dims(dh0[mission], :date))), collect(y); label="$(mission_proper_name(mission)) [$(y_median)]", color=clrs[i])
+            lines!(ax, x, y; label="$(mission_proper_name(mission)): $(y_median)m", color=clrs[i])
         else
-            lines!(ax23, collect(val(dims(dh0[mission], :date))), collect(y); label="$(mission_proper_name(mission)) [$(y_median)]", color = mission_color_width[mission].color, linewidth = mission_color_width[mission].linewidth)
+            lines!(ax, x, y; label="$(mission_proper_name(mission)): $(y_median)m", color = mission_color_width[mission].color, linewidth = mission_color_width[mission].linewidth)
         end
     end
 
-    axislegend(ax23, position=:rt, patchsize=(20.0f0, 1.0f0), padding=(1.0f0, 1.0f0, 1.0f0, 1.0f0)) # orientation=:horizontal, fontsize=10, framevisible=false
+    xlims = (floor(Int, minimum(ddate[date_range] ./ xtickspacing)) * xtickspacing, ceil(Int, maximum(ddate[date_range] ./ xtickspacing)) * xtickspacing)
+    ax.xticks = xlims[1]:xtickspacing:xlims[2]
+    xlims!(ax, xlims)
 
-    colgap!(f.layout, 10)
-    rowgap!(f.layout, 10)
-    #hidespines!(ax23, :t, :r)
-    return f
+    axislegend(ax, position=:rt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false
+
+    #colgap!(f.layout, 10)
+    #rowgap!(f.layout, 10)
+    #hidespines!(ax, :t, :r)
+    return ax
 end
 
+"""
+    plot_elevation_time_multimission_geotiles(dh; geotiles2plot, area_km2, colorrange, label, colorbar_label, mission_order, hypsometry, area_averaged, plots_show, plots_save, plot_save_path_prefix, plot_save_format, cmap, xtickspacing)
+
+Create multi-mission elevation-time plots for specified geotiles.
+
+# Arguments
+- `dh`: Dictionary of dimensional arrays containing elevation change data for each mission
+- `geotiles2plot`: Array of geotile identifiers to plot (default: ["lat[+30+32]lon[+078+080]"])
+- `area_km2`: Area data for each geotile [km²]
+- `colorrange`: Color scale range for heatmaps (default: (-20, 20))
+- `label`: Optional title label for the figure
+- `colorbar_label`: Label for colorbar (default: "height anomaly")
+- `mission_order`: Array specifying order of missions to display
+- `hypsometry`: Whether to include hypsometry plot (default: false)
+- `area_averaged`: Whether to include area-averaged height anomaly plot (default: false)
+- `plots_show`: Whether to display plots (default: false)
+- `plots_save`: Whether to save plots (default: false)
+- `plot_save_path_prefix`: Prefix for saved plot filenames
+- `plot_save_format`: File format for saved plots (default: ".png")
+- `cmap`: Colormap for plots (default: :thermal)
+- `xtickspacing`: Spacing between x-axis ticks (default: 5)
+
+# Returns
+- Makie Figure object containing the multi-mission elevation-time visualization
+
+# Description
+Creates comprehensive multi-mission elevation-time plots for specified geotiles. The function
+can include hypsometry and area-averaged height anomaly panels. Supports both display and
+file saving options.
+"""
 function plot_elevation_time_multimission_geotiles(
     dh;
     geotiles2plot=["lat[+30+32]lon[+078+080]"],
@@ -355,25 +448,44 @@ function plot_elevation_time_multimission_geotiles(
     plot_save_path_prefix = "",
     plot_save_format = ".png",
     cmap=:thermal,
+    xtickspacing = 5,
     )
 
     if !isnothing(geotiles2plot)
         for geotile2plot in geotiles2plot
-            dh0 = Dict(mission => dh[mission][geotile=At(geotile2plot)] for mission in keys(dh))
+            # need to use copy as the date lookup is modified
+            dh0 = Dict() 
             for mission in keys(dh)
+                dh0[mission] =dh[mission][geotile=At(geotile2plot)]
                 if all(isnan.(dh0[mission]))
+                    #println("all NaNs for $mission")
                     delete!(dh0, mission)
                 end
             end
             
-            f = plot_elevation_time_multimission(dh0; colorrange, colorbar_label, mission_order)
+            if !isnothing(mission_order)
+                mission_order = intersect(collect(keys(dh0)), mission_order)
+            end
+
+            # In Makie you are not able to speci
+            (ddate, dheight) = dims(dh0[first(keys(dh0))])
+            decyear = decimalyear.(collect(ddate))
+            ddate = Dim{:date}(decyear)
+            for mission in keys(dh0)
+                dh0[mission] = DimArray(dh0[mission][:,:], (ddate, dheight))
+            end
+
+            f = plot_elevation_time_multimission(dh0; colorrange, colorbar_label, mission_order, xtickspacing)
             
             if hypsometry
-                f = plot_hypsometry!(f, area_km2[geotile=At(geotile2plot)])
+                ax13 = CairoMakie.Axis(f[1, 3])
+                plot_hypsometry!(ax13, area_km2[geotile=At(geotile2plot)])
+                ylims!(ax13, f.content[1, 1].yaxis.attributes.limits.val)
             end
 
             if area_averaged
-                f = plot_area_average_height_anomaly!(f, dh0, area_km2[geotile=At(geotile2plot)]; mission_order, cmap)
+                ax23 = CairoMakie.Axis(f[2, 3])
+                plot_area_average_height_anomaly!(ax23, dh0, area_km2[geotile=At(geotile2plot)]; mission_order, cmap, xtickspacing)
             end
 
             isnothing(label) ? nothing : Label(f[0, 1:2], label)
@@ -390,9 +502,25 @@ function plot_elevation_time_multimission_geotiles(
     end
 end
 
+"""
+    plot_amplitude_correction(model_ref, model0, delta, mission, p0, p_ref)
+
+Create a three-panel visualization comparing amplitude correction models.
+
+# Arguments
+- `model_ref`: Reference model height anomalies [m]
+- `model0`: Original model height anomalies [m] 
+- `delta`: Difference between models [m]
+- `mission`: Mission identifier string
+- `p0`: Original amplitude correction parameters
+- `p_ref`: Reference amplitude correction parameters
+
+# Returns
+- A Makie Figure object with three heatmaps showing the comparison
+"""
 function plot_amplitude_correction(model_ref, model0, delta, mission, p0, p_ref)
 
-    mission =mission_proper_names(mission)
+    mission = mission_proper_names(mission)
 
     max_dh = ceil(Int, max(maximum(abs.(model_ref)), maximum(abs.(model0))))
     colorrange = (-max_dh, max_dh)
@@ -420,6 +548,131 @@ function plot_amplitude_correction(model_ref, model0, delta, mission, p0, p_ref)
 end
 
 
+
+"""
+    plot_area_average_height_anomaly_with_error(dh_area_average_median, dh_area_average_error; cmap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
+
+Create a plot showing area-averaged height anomalies with error bands.
+
+# Arguments
+- `dh_area_average_median`: Dictionary of median height anomaly data by mission
+- `dh_area_average_error`: Dictionary of error data by mission
+- `cmap`: Color map for mission lines (default: :thermal)
+- `mission_color_width`: Custom colors and line widths for missions
+- `mission_order`: Order of missions to plot
+- `xtickspacing`: Spacing between x-axis ticks (default: 5)
+- `median_in_label`: Include median value in legend labels (default: false)
+
+# Returns
+- A Makie Figure object with the height anomaly plot
+"""
+function plot_area_average_height_anomaly_with_error(dh_area_average_median, dh_area_average_error; cmap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
+
+    mm = 3.7795275590551176
+    figure_width = 89mm
+
+    f = Figure(size=(figure_width*1.5, figure_width));
+    ax = CairoMakie.Axis(f[1, 1])
+    plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median, dh_area_average_error; cmap, mission_color_width, mission_order, xtickspacing, median_in_label)
+    
+    return f
+end
+
+
+"""
+    plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median, dh_area_average_error; cmap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
+
+Plot area-averaged height anomalies with error bands on an existing axis.
+
+# Arguments
+- `ax`: Makie axis to plot on
+- `dh_area_average_median`: Dictionary of median height anomaly data by mission
+- `dh_area_average_error`: Dictionary of error data by mission
+
+# Keyword Arguments
+- `cmap`: Color map for mission lines (default: :thermal)
+- `mission_color_width`: Custom colors and line widths for missions
+- `mission_order`: Order of missions to plot
+- `xtickspacing`: Spacing between x-axis ticks (default: 5)
+- `median_in_label`: Include median value in legend labels (default: false)
+
+# Returns
+- The modified axis object
+
+# Description
+Unlike plot_area_average_height_anomaly!(), area_average is precomputed before passing to this function.
+Plots error bands first, then lines on top with customizable styling and legend.
+"""
+function plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median, dh_area_average_error; cmap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
+    # mission_color_width = Dict("synthesis" => (color = :black, linewidth = 1))
+    ax.ytickformat = values -> ["$(round(Int,value))m" for value in values]
+    #ax.title = "median area-averaged height anomaly ± 2σ"
+
+    # ----------- area average height anomaly  ------------    
+    clrs = Makie.resample_cmap(cmap, length(keys(dh_area_average_median)) + 1)
+
+    if isnothing(mission_order)
+        mission_order = collect(keys(dh_area_average_median))
+    end
+
+    date_min = Inf
+    date_max = -Inf
+
+    for (i, mission) in enumerate(mission_order)
+        ddate = dims(dh_area_average_median[mission], :date)
+        x = collect(val(ddate))
+        date_min = min(date_min, minimum(x))
+        date_max = max(date_max, maximum(x))
+
+        mid0 = dh_area_average_median[mission]
+        valid_index = .!isnan.(mid0)
+
+        if !any(valid_index)
+            continue
+        end
+
+        mid0 = mid0
+        low = mid0 .- dh_area_average_error[mission]
+        high = mid0 .+ dh_area_average_error[mission]
+
+        CairoMakie.band!(ax, x, collect(low), collect(high); color=(clrs[i], 0.4))
+    end
+
+    for (i, mission) in enumerate(mission_order)
+        ddate = dims(dh_area_average_median[mission], :date)
+        x = collect(val(ddate))
+        y = collect(dh_area_average_median[mission])
+        y_median = round(median(y[.!isnan.(y)]), digits=1)
+
+        if !in(mission, keys(dh_area_average_median))
+            continue
+        end
+
+        if median_in_label
+            label="$(mission_proper_name(mission)): $(y_median)m"
+        else
+            label="$(mission_proper_name(mission))"
+        end
+
+        if isnothing(mission_color_width) || (!in(mission, keys(mission_color_width)))
+            lines!(ax, x, y; label, color=clrs[i])
+        else
+            lines!(ax, x, y; label, color=mission_color_width[mission].color, linewidth=mission_color_width[mission].linewidth)
+        end
+    end
+
+    xlims = (floor(Int, date_min / xtickspacing) * xtickspacing, ceil(Int, date_max / xtickspacing) * xtickspacing)
+    ax.xticks = xlims[1]:xtickspacing:xlims[2]
+    ax.ylabel = "height anomaly"
+    xlims!(ax, xlims)
+
+    axislegend(ax, position=:rt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false
+
+    #colgap!(f.layout, 10)
+    #rowgap!(f.layout, 10)
+    #hidespines!(ax, :t, :r)
+    return ax
+end
 
 """
     plot_multiregion_dvdm(regions; kwargs...) -> Figure, Vector, Vector

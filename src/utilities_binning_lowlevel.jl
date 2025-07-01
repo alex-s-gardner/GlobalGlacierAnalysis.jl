@@ -198,7 +198,7 @@ This function fills gaps in elevation change data by:
 3. Smoothing residuals using k-nearest neighbors
 4. Filling gaps with model predictions plus smoothed residuals
 """
-function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5, smooth_n=9, smooth_h2t_length_scale=800, variogram_range_ratio=false, show_times=false, missions2update=nothing)
+function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5, smooth_n=9, smooth_h2t_length_scale=800, show_times=false, missions2update=nothing)
 
     if smooth_h2t_length_scale < 1
         error("smooth_h2t_length_scale is < 1, should be in the range 2000 to 1, sypically 800")
@@ -213,26 +213,19 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
     dgeotiels = dims(dh1[first(keys(dh1))], :geotile)
     foo = DimArray(fill(NaN, length(dgeotiels)), dgeotiels)
 
-    if variogram_range_ratio
-        range_ratio = Dict()
-        for mission in keys(dh1)
-            push!(range_ratio, String(mission) => copy(foo))
-        end
-    end
-
     if isnothing(missions2update)
         missions2update = keys(dh1)
     end
 
     for mission in missions2update
 
-        valid1 = .!isnan.(dh1[mission])
-        if !any(valid1)
+        valid_all_mission = .!isnan.(dh1[mission])
+        if !any(valid_all_mission)
             continue
         end
 
         # find valid range for entire mission so that all filled geotiles cover the same date range
-        rrange, = validrange(vec(any(valid1, dims=(1, 3))))
+        rrange, = validrange(vec(any(valid_all_mission, dims=(1, 3))))
 
         Threads.@threads for geotile in dims(dh1[mission], :geotile)
 
@@ -241,8 +234,8 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
             k = findfirst(params[mission].geotile .== geotile)
             df = @view params[mission][k, :]
 
-            dh0 = dh1[mission][At(geotile), :, :]
-            nobs0 = nobs1[mission][At(geotile), :, :]
+            dh0 = dh1[mission][geotile=At(geotile)]
+            nobs0 = nobs1[mission][geotile=At(geotile)]
             df.nobs_raw = sum(nobs0)
             df.nbins_raw = sum(nobs0 .> 0)
 
@@ -250,16 +243,16 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
             valid1 = .!isnan.(dh0) .& (nobs0 .> bincount_min[mission]) .& (abs.(dh0) .< 200)
             ################################################################################
 
-            dh0[.!valid1] .= NaN
-            dh1[mission][At(geotile), :, :] = dh0
+            dh0[collect(.!valid1)] .= NaN
+            dh1[mission][geotile=At(geotile)] = dh0
             nobs0[.!valid1] .= 0
-            nobs1[mission][At(geotile), :, :] = nobs0
+            nobs1[mission][geotile=At(geotile)] = nobs0
 
             # if there are not enough points to fit a model then set all to NaNs
             va = sum(valid1)
             if va <= (length(p1) + 2)
-                dh1[mission][At(geotile), :, :] .= NaN
-                nobs1[mission][At(geotile), :, :] .= 0
+                dh1[mission][geotile=At(geotile)] .= NaN
+                nobs1[mission][geotile=At(geotile)] .= 0
                 continue
             end
 
@@ -279,7 +272,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
             nobs0 = nobs0[rrange, crange]
             t0 = t[rrange, crange]
             h0 = h[rrange, crange]
-
+    
             show_times ? t2 = time() : nothing
             show_times && printstyled("initial data selection $mission: $(round(t2 - t1; digits=2))s\n", color=:yellow)
 
@@ -293,6 +286,10 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
             h0 = h0 .- h0_mean
 
             dh0_median = median(dh0[valid0]) + 0.0000001 # add a small offset to prevent numerical instability
+            if isnan(dh0_median)
+                error("dh0_median is NaN")
+            end
+
             df.dh0 = dh0_median
             dh0 = dh0 .- dh0_median
 
@@ -308,6 +305,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
             catch
                 fit1 = curve_fit(model1, hcat(t0[valid0], h0[valid0]), dh0[valid0], nobs0[valid0], p1)
             end
+
             show_times ? t4 = time() : nothing
             show_times && printstyled("model fit $mission: $(round(t4 - t3; digits=2))s\n", color=:yellow)
 
@@ -322,8 +320,8 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
 
             # if there are not enough points to fit a model then set all to NaNs
             if vb <= (length(p1) + 2)
-                dh1[mission][At(geotile), :, :] .= NaN
-                nobs1[mission][At(geotile), :, :] .= 0
+                dh1[mission][geotile = At(geotile)] .= NaN
+                nobs1[mission][geotile = At(geotile)] .= 0
                 continue
 
             end
@@ -335,26 +333,6 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
 
                 dh0_mdl = model1(hcat(t0[valid0], h0[valid0]), fit1.param)
                 dh0_anom = dh0[valid0] .- dh0_mdl
-            end
-
-            ####################################################################################
-            if variogram_range_ratio
-                coord = [(a, b) for (a, b) in zip(t0[valid0], h0[valid0])]
-                table = (; Z=vec(dh0_anom))
-                geotable = georef(table, coord)
-
-                try
-                    vg1 = GeoStats.DirectionalVariogram((1.0, 0.0), geotable, :Z)
-                    f1 = GeoStats.fit(SphericalVariogram, vg1)
-                    vg2 = GeoStats.DirectionalVariogram((0.0, 1.0), geotable, :Z)
-                    f2 = GeoStats.fit(SphericalVariogram, vg2)
-                    range_ratio[mission][At(geotile)] = round(Int, (f2.ball.radii./f1.ball.radii)[1])
-                    println("elevation / height range: $(range_ratio[mission][At(geotile)])")
-
-                catch
-                end
-
-                continue
             end
 
             df.bin_anom_std = std(dh0_anom)
@@ -398,12 +376,57 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
         end
     end
 
-    if variogram_range_ratio
-        return range_ratio
-    end
     return dh1, nobs1, params
 end
 
+"""
+    hyps_remove_land_surface_trend!(dh1; missions2update=nothing, remove_land_surface_trend=nothing)
+
+Remove erroneous land surface trends from elevation change data.
+
+# Arguments
+- `dh1`: Dictionary of elevation change DimArrays indexed by mission
+- `missions2update`: Missions to process (default: all missions)
+- `remove_land_surface_trend`: Array of trend values to remove per mission (default: nothing)
+
+# Description
+For each mission, removes a linear trend from the elevation change data if specified.
+The trend is centered around the mission's temporal midpoint to minimize impact on
+the overall elevation change signal. This correction is typically applied to remove
+artificial trends that may arise from land surface processing artifacts.
+
+# Returns
+- Modified `dh1` with land surface trends removed
+"""
+function hyps_remove_land_surface_trend!(dh1; missions2update=nothing, remove_land_surface_trend=nothing)
+
+    dgeotile = dims(dh1[first(keys(dh1))], :geotile)
+    dheight = dims(dh1[first(keys(dh1))], :height)
+    ddate = dims(dh1[first(keys(dh1))], :date)
+    decyear = decimalyear.(ddate)
+    
+    for mission in missions2update
+
+        if !isnothing(remove_land_surface_trend) && (remove_land_surface_trend[At(mission)] != 0)
+    
+            # center date around mission center date
+            valid1 = .!isnan.(dh1[mission])
+            if !any(valid1)
+                continue
+            end
+
+            _, date_range, _ = validrange(valid1)
+            mid_date = mean(decyear[date_range])
+            delta = (decyear .- mid_date) .* remove_land_surface_trend[At(mission)]
+
+            for geotile in dgeotile
+                for height in dheight
+                    dh1[mission][geotile=At(geotile), height=At(height)] .-= delta
+                end
+            end
+        end
+    end
+end
 
 
 """
@@ -486,7 +509,6 @@ Align elevation change data between different altimetry missions by calculating 
 function hyps_align_dh!(dh, nobs, params, area_km2; missions2align2=["icesat2", "icesat"], missions2update=nothing)
     # Get dimensions from first mission
     ddate = dims(dh[first(keys(dh))], :date)
-    dheight = dims(dh[first(keys(dh))], :height)
     dgeotile = dims(dh[first(keys(dh))], :geotile)
 
     # Initialize area-averaged elevation changes and observation counts
@@ -503,7 +525,7 @@ function hyps_align_dh!(dh, nobs, params, area_km2; missions2align2=["icesat2", 
     end
 
     # Calculate area-averaged elevation changes per geotile
-    for geotile in dgeotile
+    Threads.@threads for geotile in dgeotile
         for mission in keys(dh)
             area_avg_dh[mission][geotile=At(geotile)] = dh_area_average(dh[mission][geotile=At(geotile)], area_km2[geotile=At(geotile)])
             nobs_sum[mission][geotile=At(geotile)] = sum(nobs[mission][At(geotile), :, :], dims=:height)
@@ -512,8 +534,10 @@ function hyps_align_dh!(dh, nobs, params, area_km2; missions2align2=["icesat2", 
 
     # Align non-reference missions to reference missions
     missions2align = setdiff(missions2update, missions2align2)
-    for (i, geotile) in enumerate(dgeotile)
+
+    Threads.@threads for geotile in dgeotile
         for mission in missions2align
+            index_table = findfirst(params[mission][!, :geotile] .== geotile)
             offset0 = 0.0
             weight0 = 0
 
@@ -524,24 +548,24 @@ function hyps_align_dh!(dh, nobs, params, area_km2; missions2align2=["icesat2", 
 
                 if any(index)
                     # Store offset statistics
-                    params[mission][i, "offset_$mission_ref"] = median(offest1[index])
-                    params[mission][i, "offset_nmad_$mission_ref"] = mean(nmad(offest1[index]))
-                    params[mission][i, "offset_nobs_$mission_ref"] = sum(nobs[mission][geotile=At(geotile)])
+                    params[mission][index_table, "offset_$mission_ref"] = median(offest1[index])
+                    params[mission][index_table, "offset_nmad_$mission_ref"] = mean(nmad(offest1[index]))
+                    params[mission][index_table, "offset_nobs_$mission_ref"] = sum(nobs[mission][geotile=At(geotile)])
 
                     # I don't think nmad if very relevant here as the data being adjusted can be pretty noisy
-                    # weight1 = 1 / ((params[mission][i, "offset_nmad_$mission_ref"] / (sqrt(params[mission][i, "offset_nobs_$mission_ref"]))) .^ 2)
-                    weight1 = sqrt(params[mission_ref][i, "offset_nobs_$mission_ref"] + params[mission][i, "offset_nobs_$mission_ref"])
-                    offset0 += params[mission][i, "offset_$mission_ref"] * weight1
+                    # weight1 = 1 / ((params[mission][index_table, "offset_nmad_$mission_ref"] / (sqrt(params[mission][index_table, "offset_nobs_$mission_ref"]))) .^ 2)
+                    weight1 = sqrt(params[mission_ref][index_table, "offset_nobs_$mission_ref"] + params[mission][index_table, "offset_nobs_$mission_ref"])
+                    offset0 += params[mission][index_table, "offset_$mission_ref"] * weight1
                     weight0 += weight1
                 end
             end
 
             # Apply weighted average offset
             if weight0 > 0
-                params[mission][i, "offset"] = offset0 / weight0
+                params[mission][index_table, "offset"] = offset0 / weight0
 
                 # NOTE: offset is subtracted from height anomalies
-                dh[mission][geotile=At(geotile)] .-= params[mission][i, "offset"]
+                dh[mission][geotile=At(geotile)] .-= params[mission][index_table, "offset"]
             end
         end
     end
@@ -615,7 +639,7 @@ function hyps_fill_empty!(dh1, params, geotile_extent, area_km2; missions2update
 
         within_mission_rectangles = GO.intersects.(geotile_rectangles, Ref(mission_rectangle))
 
-        for geotile in (dims(dh1[mission], :geotile)[within_mission_rectangles])
+        Threads.@threads for geotile in (dims(dh1[mission], :geotile)[within_mission_rectangles])
            
             # fill with median of nearest neighbors if no data
             has_ice = area_km2[geotile=At(geotile)] .> 0
@@ -660,7 +684,7 @@ function hyps_fill_empty!(dh1, params, geotile_extent, area_km2; missions2update
                 end
 
                 idx = idx[has_data][1:nnearest]
-                f1 = dh2[idx, rrange, crange]
+                f1 = copy(dh2[idx, rrange, crange])
 
                 # remove mean offset to normalize between regions
                 dh0_median0 = dh0_median[idx]

@@ -54,7 +54,7 @@ begin
 end
 
 begin
-    gembinfo = GGA.gemb_info(; gemb_run_id=4)
+    gembinfo = GGA.gemb_info(; gemb_run_id)
 
     # define date and hight binning ranges 
     date_range, date_center = GGA.project_date_bins()

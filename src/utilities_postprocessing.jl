@@ -820,3 +820,94 @@ function geotiles_mean_error_glaciers(glaciers, geotiles; show_progress=true, va
 
     return glacier_out
 end
+
+
+"""
+    _simrun_init(nsamples, single_geotile_test)
+
+Initialize a dictionary of DimensionalArrays for simulation runs.
+
+# Arguments
+- `nsamples`: Number of simulation runs
+- `single_geotile_test`: Geotile identifier for testing
+
+# Returns
+- Dictionary with mission keys containing DimensionalArrays filled with NaN values
+  with dimensions for run, geotile, date, and height
+"""
+function _simrun_init(;nsamples, missions2include, single_geotile_test)
+    height_range, height_center = project_height_bins()
+    date_range, date_center = project_date_bins()
+    dheight = Dim{:height}(height_center)
+    ddate = Dim{:date}(date_center)
+    drun = Dim{:run}(1:nsamples)
+    dgeotile = Dim{:geotile}([single_geotile_test])
+    dmission = Dim{:mission}(keys(project_products()))
+
+    dh = Dict{String,DimArray}()
+    for mission in vcat(missions2include, "Synthesis")
+        dh[mission] = fill(NaN, drun, dgeotile, ddate, dheight)
+    end
+
+    return dh
+end
+
+"""
+    _simrun2areaaverage(dh; surface_mask, geotile_width=2, geotile2extract=nothing, sigma_error=2)
+
+Calculate area-averaged height anomalies from simulation runs.
+
+# Arguments
+- `dh`: Dictionary of DimensionalArrays containing height data for each mission
+- `surface_mask`: Surface mask type for area calculations
+- `geotile_width`: Width of geotiles in degrees (default: 2)
+- `geotile2extract`: Specific geotile to extract (default: nothing)
+- `sigma_error`: Multiplier for error calculation (default: 2)
+
+# Returns
+- Tuple of (median_values, error_estimates) dictionaries containing area-averaged statistics
+"""
+function _simrun2areaaverage(dh; surface_mask, geotile_width=2, geotile2extract=nothing, sigma_error=2)
+    # Calculate area-averaged height anomalies
+    dh0_area_average = Dict()
+    area_km2 = _geotile_area_km2(surface_mask, geotile_width)
+
+    # Extract dimensions and convert dates to decimal years
+    (drun, dgeotile, ddate, dheight) = dims(dh[first(keys(dh))])
+    decyear = decimalyear.(collect(ddate))
+    ddate = Dim{:date}(decyear)
+
+    # Extract specific geotile data for each mission
+    for mission in keys(dh)
+        dh[mission] = DimArray(dh[mission][geotile=At(geotile2extract)][:, :, :], (drun, ddate, dheight))
+    end
+
+    # Initialize area-averaged arrays
+    for mission in keys(dh)
+        dh0_area_average[mission] = fill(NaN, drun, ddate)
+    end
+
+    # Calculate area-averaged values for each mission
+    for mission in keys(dh)
+        valid_run, valid_date, valid_height = validrange(.!isnan.(dh[mission]))
+        for i in drun
+            dh0_area_average[mission][At(i), valid_date] = dh_area_average(dh[mission][At(i), valid_date, valid_height], area_km2[At(geotile2extract), valid_height])
+        end
+    end
+
+    # Calculate error estimates
+    dh0_area_average_error = Dict()
+    for mission in keys(dh)
+        valid_run, valid_date = validrange(.!isnan.(dh0_area_average[mission]))
+        dh0_area_average_error[mission] = dropdims(std(dh0_area_average[mission][:, valid_date], dims=:run), dims=:run) * sigma_error
+    end
+
+    # Calculate median values
+    dh0_area_average_median = Dict()
+    for mission in keys(dh)
+        valid_run, valid_date = validrange(.!isnan.(dh0_area_average[mission]))
+        dh0_area_average_median[mission] = dropdims(median(dh0_area_average[mission][:, valid_date], dims=:run), dims=:run)
+    end
+
+    return dh0_area_average_median, dh0_area_average_error
+end
