@@ -1,24 +1,22 @@
-"""
-    synthesis_plots_gis.jl
-
-Generate plots and GIS files from glacier mass change synthesis data.
-
-This script processes the reference synthesis run to extract trends and amplitudes
-of glacier elevation and volume changes. It creates visualization outputs and
-exports the data to GIS formats for further analysis.
-
-The workflow:
-1. Loads the reference synthesis run data
-2. Calculates temporal trends for all variables
-3. Exports results to Arrow and GeoPackage formats
-4. Creates histograms comparing GEMB and altimetry-derived trends and amplitudes
-5. Visualizes parameter distributions (pscale and Δheight)
-
-Key outputs:
-- GIS files with geotile-level rates in km³/yr
-- Histograms comparing different measurement approaches
-- Visualizations of model parameter distributions
-"""
+# synthesis_plots_gis.jl
+#
+# Generate plots and GIS files from glacier mass change synthesis data.
+#
+# This script processes the reference synthesis run to extract trends and amplitudes
+# of glacier elevation and volume changes. It creates visualization outputs and
+# exports the data to GIS formats for further analysis.
+#
+# The workflow:
+# 1. Loads the reference synthesis run data
+# 2. Calculates temporal trends for all variables
+# 3. Exports results to Arrow and GeoPackage formats
+# 4. Creates histograms comparing GEMB and altimetry-derived trends and amplitudes
+# 5. Visualizes parameter distributions (pscale and Δheight)
+#
+# Key outputs:
+# - GIS files with geotile-level rates in km³/yr
+# - Histograms comparing different measurement approaches
+# - Visualizations of model parameter distributions
 
 begin
     import GlobalGlacierAnalysis as GGA
@@ -28,7 +26,6 @@ begin
     using CairoMakie
     import GeoFormatTypes as GFT
     using DataFrames
-
 
     reference_run = "binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized.jld2"
 
@@ -69,21 +66,7 @@ begin
     geotiles0 = GGA.df_tsfit!(geotiles0, vars_ts; datelimits = (DateTime(2000,1,1), DateTime(2025,1,1)))
 
     # plot a histogram of the rates
-    f = Figure();
-    var1 = "dv_trend"
-    var2 = "dv_altim_trend"
-    linewidth = 3
-    ax1 = f[1, 1] = Axis(f; xlabel = "trend [m i.e. yr⁻¹]", ylabel = "count")
-    CairoMakie.stephist!(geotiles0[:, var1], bins = -5:0.25:5; label = "gemb", linewidth)
-    CairoMakie.stephist!(geotiles0[:, var2], bins = -5:0.25:5; label = "altim", linewidth); 
-    axislegend(ax1, framevisible = false); 
-    
-    var1 = "dv_amplitude"
-    var2 = "dv_altim_amplitude"
-    ax2 = f[1, 2] = Axis(f; xlabel = "amplitude [m i.e.]", ylabel = "count")
-    CairoMakie.stephist!(geotiles0[:, var1], bins = 0:0.25:5; label = "gemb", linewidth)
-    CairoMakie.stephist!(geotiles0[:, var2], bins = 0:0.25:5; label = "altim", linewidth); 
-    axislegend(ax2, framevisible = false); 
+    f = GGA.plot_hist_gemb_altim_trend_amplitude(geotiles0)
     display(f)
 
     outfile = joinpath(paths[:figures], "hist_gemb_altim_trend_amplitude.png")
@@ -93,14 +76,7 @@ begin
     synthesized_gemb_fit = replace(path2reference, ".jld2" => "_gemb_fit.arrow")
     gemb_fit = GeoDataFrames.read(synthesized_gemb_fit);
 
-    f = Figure();
-    ax1 = f[1, 1] = Axis(f; xlabel = "pscale", ylabel = "count")
-    CairoMakie.hist!(gemb_fit[:, :pscale], bins = 0.25:0.25:4, linewidth)
-    ylims!(low = 0)
-    ax2 = f[1, 2] = Axis(f; xlabel = "Δheight [m]", ylabel = "count")
-    CairoMakie.hist!(gemb_fit[:, :Δheight], bins = -3000:100:3000, linewidth); 
-    ylims!(low = 0)
-    #axislegend(ax1, framevisible = false); 
+    f = GGA.plot_hist_pscale_Δheight(gemb_fit)
     display(f)
 
     outfile = joinpath(paths[:figures], "hist_pscale_dheight.png")

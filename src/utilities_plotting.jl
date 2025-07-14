@@ -1,4 +1,41 @@
 """
+    _publication_figure(; columns=1, rows=1)
+
+Create a Figure with publication-standard dimensions for scientific plots.
+
+# Arguments
+- `columns`: Number of columns in the figure layout (1 or 2, default: 1)
+- `rows`: Number of rows in the figure layout (default: 1)
+
+# Returns
+- A CairoMakie Figure object with standardized dimensions
+
+# Description
+Creates a Figure with dimensions optimized for publication layouts. The figure width
+is determined by the number of columns: 89mm for single-column and 183mm for 
+two-column layouts. The height is calculated proportionally based on the aspect ratio
+of rows to columns. Uses a scaling factor of 1.5 for the width to accommodate
+proper rendering and margins.
+
+# Throws
+- `ErrorException`: If columns is not 1 or 2
+"""
+function _publication_figure(; columns=1, rows=1)
+    mm = 3.7795275590551176
+    if columns == 1
+        figure_width = 89mm
+    elseif columns == 2
+        figure_width = 183mm
+    else
+        error("columns must be 1 or 2: input was $columns")
+    end
+    
+    f = CairoMakie.Figure(size=(figure_width * 1.5, figure_width * rows / columns))
+
+    return f
+end
+
+"""
     plot_unbinned_height_anomalies(datetime, dh; title="")
 
 Create a visualization of raw height anomalies and their monthly medians over time.
@@ -19,14 +56,12 @@ uses a y-axis scaled to the 95th percentile of anomalies, while the bottom panel
 shows the full range. Both panels include raw measurements and monthly median values.
 """
 function plot_unbinned_height_anomalies(datetime, dh; title="")
-    mm = 3.7795275590551176
-    figure_width = 183mm
+
+    f = _publication_figure(columns=2, rows=2)
 
     sample_rate = ceil(Int, length(dh) / 1E6)
 
     df = binstats(DataFrame(Ti=decimalyear.(datetime), dh=dh), :Ti, decimalyear.(minimum(datetime):Month(1):maximum(datetime)), :dh, col_function=[median])
-
-    f = Figure(size=(figure_width, figure_width * 2 / 3))
 
     ymax = quantile(abs.(dh[1:sample_rate:end]), 0.99)
     ax1 = CairoMakie.Axis(f[1:2, 1]; title, ylabel="height anomaly [m]")
@@ -75,15 +110,11 @@ displays raw observations, the model fit, and corrected values. The bottom panel
 distribution of observations across curvature bins.
 """
 function plot_curvature(bin_center, dh_obs, dh_cor, nrow; title = "")
-    mm = 3.7795275590551176
-    figure_width = 183mm
+    f = _publication_figure(columns=2, rows=2)
     
     valid = .!ismissing.(dh_obs)
     valid_range, = validrange(valid)
    
-
-    f = Figure(size=(figure_width * 1.5, figure_width))
-
     ax1 = CairoMakie.Axis(f[1:4, 1]; title, ylabel="height anomaly [m]")
     ax2 = CairoMakie.Axis(f[5:6, 1], ylabel="count [×1000]", xlabel="curvature [cm⁻¹]")
 
@@ -197,8 +228,7 @@ on the right side shows the height anomaly scale in meters.
 """
 function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=true, colorbar_label="height anomaly", mission_order = nothing, xtickspacing = 5)
    
-    mm = 3.7795275590551176
-    figure_width = 183mm
+    f = _publication_figure(columns=2, rows=2)
 
     missions = mission_proper_name.(collect(keys(dh)))
     dheight = dims(dh[first(keys(dh))], :height)
@@ -212,8 +242,6 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
     date_range, = validrange(valid)
 
     xlims = (floor(Int, minimum(ddate[date_range] ./ xtickspacing)) * xtickspacing, ceil(Int, maximum(ddate[date_range] ./ xtickspacing)) * xtickspacing)
-
-    f = Figure(size=(figure_width * 1.5, figure_width))
 
     if isnothing(mission_order)
         mission_order = collect(keys(dh))
@@ -334,7 +362,7 @@ function plot_hypsometry!(ax, area_km2)
 end
 
 """
-    plot_area_average_height_anomaly!(ax, dh0, area_km2; cmap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5)
+    plot_area_average_height_anomaly!(ax, dh0, area_km2; colormap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5)
 
 Plot area-averaged height anomalies for multiple missions on a given axis.
 
@@ -342,7 +370,7 @@ Plot area-averaged height anomalies for multiple missions on a given axis.
 - `ax`: Makie axis to plot on
 - `dh0`: Dictionary of dimensional arrays containing height anomaly data for each mission
 - `area_km2`: Area data for each geotile [km²]
-- `cmap`: Colormap for mission lines (default: :thermal)
+- `colormap`: Colormap for mission lines (default: :thermal)
 - `mission_color_width`: Dictionary specifying custom colors and linewidths for missions
 - `mission_order`: Array specifying order of missions to display
 - `xtickspacing`: Spacing between x-axis ticks (default: 5)
@@ -355,7 +383,7 @@ Plots time series of area-averaged height anomalies for multiple missions. Each 
 displayed as a line with the median value shown in the legend. Supports custom styling
 and mission ordering.
 """
-function plot_area_average_height_anomaly!(ax, dh0, area_km2; cmap=:thermal, mission_color_width = nothing, mission_order = nothing, xtickspacing = 5)
+function plot_area_average_height_anomaly!(ax, dh0, area_km2; colormap=:thermal, mission_color_width = nothing, mission_order = nothing, xtickspacing = 5, median_in_label = false)
     # mission_color_width = Dict("synthesis" => (color = :black, linewidth = 1))
     ax.yaxisposition=:right
     ax.ytickformat=values -> ["$(round(Int,value))m" for value in values]
@@ -364,7 +392,7 @@ function plot_area_average_height_anomaly!(ax, dh0, area_km2; cmap=:thermal, mis
     # ----------- area average height anomaly  ------------    
     ddate = dims(dh0[first(keys(dh0))], :date)
     x = collect(val(ddate))
-    clrs = Makie.resample_cmap(cmap, length(keys(dh0))+1)
+    clrs = Makie.resample_cmap(colormap, length(keys(dh0))+1)
 
     valid = falses(size(dh0[first(keys(dh0))]))
     for mission in keys(dh0)
@@ -384,10 +412,15 @@ function plot_area_average_height_anomaly!(ax, dh0, area_km2; cmap=:thermal, mis
             continue
         end
 
-        if isnothing(mission_color_width) || (!in(mission, keys(mission_color_width)))
-            lines!(ax, x, y; label="$(mission_proper_name(mission)): $(y_median)m", color=clrs[i])
+        if median_in_label
+            label = "$(mission_proper_name(mission)): $(y_median)m"
         else
-            lines!(ax, x, y; label="$(mission_proper_name(mission)): $(y_median)m", color = mission_color_width[mission].color, linewidth = mission_color_width[mission].linewidth)
+            label = "$(mission_proper_name(mission))"
+        end
+        if isnothing(mission_color_width) || (!in(mission, keys(mission_color_width)))
+            lines!(ax, x, y; label, color=clrs[i])
+        else
+            lines!(ax, x, y; label, color = mission_color_width[mission].color, linewidth = mission_color_width[mission].linewidth)
         end
     end
 
@@ -403,8 +436,10 @@ function plot_area_average_height_anomaly!(ax, dh0, area_km2; cmap=:thermal, mis
     return ax
 end
 
+
+
 """
-    plot_elevation_time_multimission_geotiles(dh; geotiles2plot, area_km2, colorrange, label, colorbar_label, mission_order, hypsometry, area_averaged, plots_show, plots_save, plot_save_path_prefix, plot_save_format, cmap, xtickspacing)
+    plot_elevation_time_multimission_geotiles(dh; geotiles2plot, area_km2, colorrange, label, colorbar_label, mission_order, hypsometry, area_averaged, plots_show, plots_save, plot_save_path_prefix, plot_save_format, colormap, xtickspacing)
 
 Create multi-mission elevation-time plots for specified geotiles.
 
@@ -422,7 +457,7 @@ Create multi-mission elevation-time plots for specified geotiles.
 - `plots_save`: Whether to save plots (default: false)
 - `plot_save_path_prefix`: Prefix for saved plot filenames
 - `plot_save_format`: File format for saved plots (default: ".png")
-- `cmap`: Colormap for plots (default: :thermal)
+- `colormap`: Colormap for plots (default: :thermal)
 - `xtickspacing`: Spacing between x-axis ticks (default: 5)
 
 # Returns
@@ -447,11 +482,13 @@ function plot_elevation_time_multimission_geotiles(
     plots_save = false, 
     plot_save_path_prefix = "",
     plot_save_format = ".png",
-    cmap=:thermal,
+    colormap=:thermal,
     xtickspacing = 5,
+    median_in_label = true,
     )
 
     if !isnothing(geotiles2plot)
+        figures = Dict()
         for geotile2plot in geotiles2plot
             # need to use copy as the date lookup is modified
             dh0 = Dict() 
@@ -485,7 +522,7 @@ function plot_elevation_time_multimission_geotiles(
 
             if area_averaged
                 ax23 = CairoMakie.Axis(f[2, 3])
-                plot_area_average_height_anomaly!(ax23, dh0, area_km2[geotile=At(geotile2plot)]; mission_order, cmap, xtickspacing)
+                plot_area_average_height_anomaly!(ax23, dh0, area_km2[geotile=At(geotile2plot)]; mission_order, colormap, xtickspacing, median_in_label)
             end
 
             isnothing(label) ? nothing : Label(f[0, 1:2], label)
@@ -496,11 +533,203 @@ function plot_elevation_time_multimission_geotiles(
                 fname = plot_save_path_prefix * "_$(geotile2plot)$(plot_save_format)"
                 CairoMakie.save(fname, f)
             end
-
-            return f
+            figures[geotile2plot] = f
         end
+        return figures
+    else
+        return nothing
     end
 end
+
+
+"""
+    load_and_plot_elevation_time_multimission_geotiles(; path2file, geotiles2plot=["lat[+30+32]lon[+078+080]"], colorrange=(-20, 20))
+
+Load hypsometric height anomaly data from a file and plot multi-mission elevation time series for specified geotiles.
+
+# Arguments
+- `path2file`: Path to the file containing binned and filled elevation data.
+- `geotiles2plot`: Array of geotile identifiers to plot (default: one example geotile).
+- `colorrange`: Tuple specifying the color range for the plot (default: (-20, 20)).
+
+# Returns
+- `f`: Dictionary of CairoMakie Figure objects, keyed by geotile.
+- `dh`: Loaded hypsometric height anomaly data.
+- `param`: Parameters parsed from the file name.
+
+# Description
+This function loads hypsometric height anomaly data from the specified file, extracts plotting parameters,
+and generates multi-mission elevation time series plots for each geotile in `geotiles2plot`. The plots include
+hypsometry and area-averaged panels, and are configured for publication-quality output.
+"""
+function load_and_plot_elevation_time_multimission_geotiles(;
+    path2file,
+    geotiles2plot = ["lat[+30+32]lon[+078+080]"],
+    colorrange = (-20, 20),
+)
+
+    param = binned_filled_fileparts(path2file)
+
+    dh = FileIO.load(path2file, "dh_hyps")
+
+    f = plot_elevation_time_multimission_geotiles(
+        dh;
+        geotiles2plot,
+        area_km2 = _geotile_area_km2(; param.surface_mask, param.geotile_width),
+        colorrange, 
+        label = nothing,
+        colorbar_label = "height anomaly",
+        mission_order = vcat(plot_order["missions"], "Synthesis"),
+        hypsometry = true, 
+        area_averaged = true, 
+        plots_show = false, 
+        plots_save = false, 
+        plot_save_path_prefix = "",
+        plot_save_format = ".png",
+        colormap = :thermal,
+        xtickspacing = 5,
+        median_in_label = false,
+    )
+
+    for geotile2plot in geotiles2plot
+        Label(f[geotile2plot][0, :], geotile2plot, fontsize=20)
+    end
+
+    return f, dh, param
+end
+
+
+
+"""
+    plot_area_average_height_anomaly_with_ensemble_spread(
+        dh_area_averaged; 
+        path2runs_synthesized_reference=nothing, 
+        geotiles2plot=nothing, 
+        ref_period=(Date(2000, 1, 1), Date(2001, 12, 31)), 
+        xtickspacing=5, 
+        p=0.95
+    )
+
+Plot area-averaged height anomaly time series for one or more geotiles, showing the ensemble spread.
+
+For each geotile in `geotiles2plot`, this function:
+- Extracts the area-averaged height anomaly ensemble,
+- Converts the time axis to decimal years,
+- Centers the anomalies relative to the mean over a reference period,
+- Plots the ensemble spread and reference run using `plot_ensemble_spread!`.
+
+# Arguments
+- `dh_area_averaged`: DimArray or similar, containing area-averaged height anomaly ensemble data, with dimensions (run, date, geotile).
+- `path2runs_synthesized_reference`: The run identifier (or index) to use as the reference ensemble member.
+- `geotiles2plot`: Array of geotile identifiers to plot. If `nothing`, returns `nothing`.
+- `ref_period`: Tuple of two `Date` objects specifying the reference period for centering (default: (2000-01-01, 2001-12-31)).
+- `xtickspacing`: Spacing between x-axis ticks (in decimal years, default: 5).
+- `p`: Quantile for ensemble spread (default: 0.95).
+
+# Returns
+- `figures`: Dictionary mapping geotile identifier to CairoMakie Figure object, or `nothing` if `geotiles2plot` is `nothing`.
+"""
+function plot_area_average_height_anomaly_with_ensemble_spread(
+    dh_area_averaged; 
+    path2runs_synthesized_reference = nothing, 
+    geotiles2plot = nothing, 
+    ref_period = (Date(2000, 1, 1), Date(2001, 12, 31)), 
+    xtickspacing = 5, 
+    p = 0.95
+)
+    if !isnothing(geotiles2plot)
+        figures = Dict()
+        for geotile2plot in geotiles2plot
+            dh_area_averaged0 = dh_area_averaged[geotile=At(geotile2plot)]
+            valid = .!isnan.(dh_area_averaged0)
+            _, date_range, = validrange(valid)
+
+            # convert to decimal year
+            drun, ddate = dims(dh_area_averaged0)
+            decyear = decimalyear.(collect(ddate))[date_range]
+            ddate = Dim{:date}(decyear)
+
+            # recreate DimArray
+            dh_area_averaged0 = DimArray(dh_area_averaged0[:, date_range], (drun, ddate))
+
+            # reference period
+            ref_period = decimalyear.(ref_period)
+
+            # center data around reference period
+            ref_mean = mean(dh_area_averaged0[date=ref_period[1] .. ref_period[2]], dims=:date)
+            @d dh_area_averaged0 .-= ref_mean
+
+            figures[geotile2plot] = f = _publication_figure(columns=1, rows=1)
+            ax = CairoMakie.Axis(figures[geotile2plot][1, 1])
+
+            plot_ensemble_spread!(ax, dh_area_averaged0; path2runs_synthesized_reference, xtickspacing, p)
+        end
+        return figures
+    else
+        return nothing
+    end
+end
+
+"""
+    plot_ensemble_spread!(ax, dh_area_averaged0; path2runs_synthesized_reference=nothing, xtickspacing=5, p=0.95)
+
+Plot the ensemble spread and reference time series of area-averaged height anomaly on a given axis.
+
+# Arguments
+- `ax`: A CairoMakie Axis object to plot on.
+- `dh_area_averaged0`: A DimArray containing area-averaged height anomaly for each ensemble member and date.
+- `path2runs_synthesized_reference`: The run identifier (or index) to use as the reference ensemble member.
+- `xtickspacing`: Spacing between x-axis ticks (in decimal years, default: 5).
+- `p`: Quantile for ensemble spread (default: 0.95).
+
+# Description
+Plots the following on the provided axis:
+- The reference ensemble member time series (in black).
+- The ensemble spread (quantile `p` of the absolute difference from the reference) as a shaded band.
+- All ensemble members as faint lines.
+- A legend indicating the reference, ensemble member, and ensemble uncertainty.
+
+# Returns
+- The modified axis object with the plot.
+"""
+function plot_ensemble_spread!(ax, dh_area_averaged0; path2runs_synthesized_reference=nothing, xtickspacing=5, p=0.95)
+
+    # ensemble spread
+    dh_area_averaged_spread = @d dh_area_averaged0 .- dh_area_averaged0[run=At(path2runs_synthesized_reference)]
+    fun = x -> quantile(x, p)
+    dh_area_averaged_spread = dropdims(mapslices(fun, abs.(parent(dh_area_averaged_spread)), dims=1), dims=1)
+
+    ax.ytickformat = values -> ["$(round(Int,value))m" for value in values]
+    drun, ddate = dims(dh_area_averaged0)
+    x = collect(val(ddate))
+
+    mid0 = collect(dh_area_averaged0[run=At(path2runs_synthesized_reference)])
+    low = mid0 .- dh_area_averaged_spread
+    high = mid0 .+ dh_area_averaged_spread
+
+    CairoMakie.band!(ax, x, low, high; color=(:black, 0.3), label="2σ ensemble uncertainty")
+
+    for run in drun
+        lines!(ax, x, vec(dh_area_averaged0[run=At(run)]); color=(:mediumpurple2, 0.5), linewidth=0.1)
+    end
+    # this is just to get the legend entry for the ensemble member
+    lines!(ax, x, vec(dh_area_averaged0[run=At(drun[1])]); color=:mediumpurple2, linewidth=1, label="ensemble member", visible=false)
+
+    #plot reference
+    lines!(ax, x, vec(dh_area_averaged0[run=At(path2runs_synthesized_reference)]); color=:black, linewidth=1, label="reference")
+
+    date_min = minimum(collect(ddate))
+    date_max = maximum(collect(ddate))
+    xlims = (floor(Int, date_min / xtickspacing) * xtickspacing, ceil(Int, date_max / xtickspacing) * xtickspacing)
+    ax.xticks = xlims[1]:xtickspacing:xlims[2]
+    ax.ylabel = "height anomaly"
+    xlims!(ax, xlims)
+
+    axislegend(ax, position=:rt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1, visible=true) # orientation=:horizontal, framevisible=false
+
+    return ax
+end
+
 
 """
     plot_amplitude_correction(model_ref, model0, delta, mission, p0, p_ref)
@@ -550,14 +779,14 @@ end
 
 
 """
-    plot_area_average_height_anomaly_with_error(dh_area_average_median, dh_area_average_error; cmap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
+    plot_area_average_height_anomaly_with_error(dh_area_average_median, dh_area_average_error; colormap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
 
 Create a plot showing area-averaged height anomalies with error bands.
 
 # Arguments
 - `dh_area_average_median`: Dictionary of median height anomaly data by mission
 - `dh_area_average_error`: Dictionary of error data by mission
-- `cmap`: Color map for mission lines (default: :thermal)
+- `colormap`: Color map for mission lines (default: :thermal)
 - `mission_color_width`: Custom colors and line widths for missions
 - `mission_order`: Order of missions to plot
 - `xtickspacing`: Spacing between x-axis ticks (default: 5)
@@ -566,21 +795,18 @@ Create a plot showing area-averaged height anomalies with error bands.
 # Returns
 - A Makie Figure object with the height anomaly plot
 """
-function plot_area_average_height_anomaly_with_error(dh_area_average_median, dh_area_average_error; cmap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
+function plot_area_average_height_anomaly_with_error(dh_area_average_median, dh_area_average_error; colormap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
 
-    mm = 3.7795275590551176
-    figure_width = 89mm
-
-    f = Figure(size=(figure_width*1.5, figure_width));
+    f = _publication_figure(columns=1, rows=1)
     ax = CairoMakie.Axis(f[1, 1])
-    plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median, dh_area_average_error; cmap, mission_color_width, mission_order, xtickspacing, median_in_label)
+    plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median, dh_area_average_error; colormap, mission_color_width, mission_order, xtickspacing, median_in_label)
     
     return f
 end
 
 
 """
-    plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median, dh_area_average_error; cmap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
+    plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median, dh_area_average_error; colormap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
 
 Plot area-averaged height anomalies with error bands on an existing axis.
 
@@ -590,7 +816,7 @@ Plot area-averaged height anomalies with error bands on an existing axis.
 - `dh_area_average_error`: Dictionary of error data by mission
 
 # Keyword Arguments
-- `cmap`: Color map for mission lines (default: :thermal)
+- `colormap`: Color map for mission lines (default: :thermal)
 - `mission_color_width`: Custom colors and line widths for missions
 - `mission_order`: Order of missions to plot
 - `xtickspacing`: Spacing between x-axis ticks (default: 5)
@@ -603,13 +829,13 @@ Plot area-averaged height anomalies with error bands on an existing axis.
 Unlike plot_area_average_height_anomaly!(), area_average is precomputed before passing to this function.
 Plots error bands first, then lines on top with customizable styling and legend.
 """
-function plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median, dh_area_average_error; cmap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
+function plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median, dh_area_average_error; colormap=:thermal, mission_color_width=nothing, mission_order=nothing, xtickspacing=5, median_in_label=false)
     # mission_color_width = Dict("synthesis" => (color = :black, linewidth = 1))
     ax.ytickformat = values -> ["$(round(Int,value))m" for value in values]
     #ax.title = "median area-averaged height anomaly ± 2σ"
 
     # ----------- area average height anomaly  ------------    
-    clrs = Makie.resample_cmap(cmap, length(keys(dh_area_average_median)) + 1)
+    clrs = Makie.resample_cmap(colormap, length(keys(dh_area_average_median)) + 1)
 
     if isnothing(mission_order)
         mission_order = collect(keys(dh_area_average_median))
@@ -675,6 +901,216 @@ function plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median
 end
 
 """
+    plot_model_fit(best_smb, best_fac, best_discharge, best_fit, dv0, cost_metric; xlims, xtickspacing, colormap=:thermal)
+
+Create a two-panel figure visualizing the model fit and cost metric for glacier mass balance modeling.
+
+# Arguments
+- `best_smb`: Array of best-fit Surface Mass Balance (SMB) values over time.
+- `best_fac`: Array of best-fit Firn Air Content (FAC) values over time.
+- `best_discharge`: Array of best-fit discharge values over time.
+- `best_fit`: Array of best-fit modeled height anomaly values over time.
+- `dv0`: Array of observed height anomaly values over time.
+- `cost_metric`: 2D array of cost metric values (e.g., RMSE or MAD) as a function of model parameters.
+- `xlims`: Tuple specifying the x-axis limits for the time series plot.
+- `xtickspacing`: Spacing between x-axis ticks for the time series plot.
+- `colormap`: (Optional) Colormap to use for plotting (default: `:thermal`).
+
+# Returns
+- `f`: A CairoMakie Figure object with two subplots:
+    - Left: Time series of SMB, FAC, discharge, observed, and modeled height anomalies.
+    - Right: Contour plot of the cost metric as a function of model parameters.
+
+"""
+function plot_model_fit(best_smb, best_fac, best_discharge, best_fit, dv0, cost_metric; xlims, xtickspacing, colormap=:thermal)
+    f = _publication_figure(columns=2, rows=1)
+    ax1 = CairoMakie.Axis(f[1, 1])
+    ax2 = CairoMakie.Axis(f[1, 2])
+
+   
+
+    plot_best_fit!(ax1, best_smb, best_fac, best_discharge, best_fit, dv0; xlims, xtickspacing, colormap)
+    ax2, crange = plot_cost_metric!(ax2, cost_metric; colormap)
+    Colorbar(f[1, 3]; limits=crange, colormap)#label="cost"
+
+    return f
+end
+
+"""
+    plot_best_fit!(ax, best_smb, best_fac, best_discharge, best_fit, dv0; xlims, xtickspacing, colormap=:thermal)
+
+Plot the best-fit glacier mass balance model components and observations on a given axis.
+
+# Arguments
+- `ax`: A CairoMakie Axis object to plot on.
+- `best_smb`: Array of best-fit Surface Mass Balance (SMB) values over time.
+- `best_fac`: Array of best-fit Firn Air Content (FAC) values over time.
+- `best_discharge`: Array of best-fit discharge values over time.
+- `best_fit`: Array of best-fit modeled height anomaly values over time.
+- `dv0`: Array of observed height anomaly values over time.
+
+# Keyword Arguments
+- `xlims`: Tuple specifying the x-axis limits for the time series plot.
+- `xtickspacing`: Spacing between x-axis ticks for the time series plot.
+- `colormap`: (Optional) Colormap to use for plotting (default: `:thermal`).
+
+# Returns
+- The modified axis object with the plotted lines and legend.
+
+This function normalizes all time series to a common reference period (the first year), then plots
+the SMB, FAC, discharge, observed, and modeled height anomalies as lines on the provided axis.
+A legend is added for clarity.
+"""
+function plot_best_fit!(ax, best_smb, best_fac, best_discharge, best_fit, dv0; xlims, xtickspacing, colormap=:thermal)
+
+    ddate = dims(best_smb, :date)
+    decyear = decimalyear.(collect(val(ddate)))
+    clrs = Makie.resample_cmap(colormap, 6)
+
+    best_smb = best_smb .- mean(best_smb[ddate[1]..(ddate[1]+Year(1))])
+    best_fac = best_fac .- mean(best_fac[ddate[1]..(ddate[1]+Year(1))])
+    best_discharge = best_discharge .- mean(best_discharge[ddate[1]..(ddate[1]+Year(1))])
+    best_fit = best_fit .- mean(best_fit[ddate[1]..(ddate[1]+Year(1))])
+    dv0 = dv0 .- mean(dv0[ddate[1]..(ddate[1]+Year(1))])
+
+    ax.ylabel="height anomaly"
+    ax.ytickformat=values -> ["$(round(Int,value))m" for value in values]
+    ax.xticks = xlims[1]:xtickspacing:xlims[2]
+    xlims!(ax, xlims)
+    #title="best fit for $single_geotile_test [pscale = $pscale0, Δheight = $Δheight0, mad = $(round(cost_metric_minimum; digits=2))]"
+
+    CairoMakie.lines!(ax, decyear, parent(dv0); label="observed", color=clrs[1])
+    CairoMakie.lines!(ax, decyear, parent(best_fac); label="FAC", color=clrs[2])
+    CairoMakie.lines!(ax, decyear, parent(best_discharge); label="discharge", color=clrs[3])
+    CairoMakie.lines!(ax,decyear, parent(best_smb); label="SMB", color=clrs[4])
+    CairoMakie.lines!(ax,decyear, parent(best_fit); label="modeled", color=clrs[5])
+
+    axislegend(ax, position=:lb, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false
+    return ax
+end
+
+"""
+    plot_cost_metric!(ax, cost_metric; colormap=:thermal)
+
+Plot a contour map of the cost metric as a function of precipitation scale (pscale) and Δheight.
+
+# Arguments
+- `ax`: A CairoMakie Axis object to plot on.
+- `cost_metric`: 2D array (or NamedDimsArray) of cost metric values, with dimensions :pscale and :Δheight.
+
+# Keyword Arguments
+- `colormap`: Colormap to use for the contour plot (default: `:thermal`).
+
+# Returns
+- `(ax, crange)`: The modified axis object and the color range tuple used for the plot.
+
+This function creates a contour plot of the cost metric over the parameter space of precipitation scale and Δheight.
+It highlights the minimum cost location with a marker and label, and adds a colorbar for reference.
+"""
+function plot_cost_metric!(ax, cost_metric; colormap=:thermal)
+    
+    ax.xlabel = "precipitation scaling"
+    ax.ylabel = "height offset / melt scaling"
+    ax.ytickformat = values -> ["$(round(Int,value))m" for value in values]
+    dpscale = dims(cost_metric, :pscale)
+    dΔheight = dims(cost_metric, :Δheight)
+
+
+    step = ceil(Int, minimum(cost_metric)/4)
+    crange = (0, step*6)
+    contour!(ax, collect(val(dpscale)), collect(val(dΔheight)), parent(cost_metric); colorrange=crange, levels=0:step:maximum(cost_metric), colormap)
+    #heatmap!(ax, cost_metric; colorrange=(0, 50))
+
+    xlims!(ax, extrema(collect(val(dpscale))))
+    ylims!(ax, extrema(collect(val(dΔheight))))
+
+    index_minimum = argmin(cost_metric)
+    pscale_best = DimPoints(cost_metric)[index_minimum][1]
+    Δheight_best = DimPoints(cost_metric)[index_minimum][2]
+
+    scatter!(ax, pscale_best, Δheight_best; color=:black, markersize=15, marker=:xcross)
+    text!(ax, pscale_best, Δheight_best,
+        text="  cost = $(round(cost_metric[index_minimum]; digits=1))",
+        align=(:left, :center)
+    )
+    return ax, crange
+end
+
+"""
+    plot_hist_gemb_altim_trend_amplitude(geotiles0)
+
+Plot histograms comparing model and altimetry-derived trends and amplitudes.
+
+# Arguments
+- `geotiles0`: A DataFrame or table containing columns for model and altimetry trends and amplitudes.
+    Expected columns: `"dv_trend"`, `"dv_altim_trend"`, `"dv_amplitude"`, `"dv_altim_amplitude"`.
+
+# Returns
+- `f`: A CairoMakie Figure object with two panels:
+    - Left: Histogram of trends (model vs. altimetry)
+    - Right: Histogram of amplitudes (model vs. altimetry)
+
+# Description
+Creates a two-panel figure. The first panel shows step histograms of the model and altimetry-derived trends.
+The second panel shows step histograms of the model and altimetry-derived amplitudes. Legends are included for clarity.
+"""
+function plot_hist_gemb_altim_trend_amplitude(geotiles0)
+    f = _publication_figure(columns=2, rows=1)
+    var1 = "dv_trend"
+    var2 = "dv_altim_trend"
+
+    ax1 = CairoMakie.Axis(f[1, 1]; xlabel="trend", ylabel="count")
+    ax1.xtickformat = values -> ["$(round(Int,value))m yr⁻¹" for value in values]
+    CairoMakie.stephist!(geotiles0[:, var1], bins=-5:0.25:5; label="model")
+    CairoMakie.stephist!(geotiles0[:, var2], bins=-5:0.25:5; label="synthesis")
+    axislegend(ax1, framevisible=false)
+
+    var1 = "dv_amplitude"
+    var2 = "dv_altim_amplitude"
+    ax2 = CairoMakie.Axis(f[1, 2]; xlabel="amplitude")
+    ax2.xtickformat = values -> ["$(round(Int,value))m" for value in values]
+
+    CairoMakie.stephist!(geotiles0[:, var1], bins=0:0.25:5; label="model")
+    CairoMakie.stephist!(geotiles0[:, var2], bins=0:0.25:5; label="synthesis")
+    axislegend(ax2, framevisible=false)
+
+    return f
+end
+
+
+
+"""
+    plot_hist_pscale_Δheight(gemb_fit)
+
+Plot histograms of precipitation scaling and height offset parameters from GEMB fit results.
+
+# Arguments
+- `gemb_fit`: A DataFrame or table containing columns `:pscale` (precipitation scaling) and `:Δheight` (height offset).
+
+# Returns
+- `f`: A CairoMakie Figure object with two panels:
+    - Left: Histogram of precipitation scaling values.
+    - Right: Histogram of height offset values.
+
+# Description
+Creates a two-panel figure. The first panel shows a histogram of precipitation scaling factors (`pscale`).
+The second panel shows a histogram of height offset values (`Δheight`). Both histograms have counts on the y-axis,
+and the y-axis is set to start at zero.
+"""
+function plot_hist_pscale_Δheight(gemb_fit)
+    f = _publication_figure(columns=2, rows=1)
+    ax1 = CairoMakie.Axis(f[1, 1]; xlabel="precipitation scaling", ylabel="count")
+    CairoMakie.hist!(ax1, gemb_fit[:, :pscale], bins=0.25:0.25:4)
+    ylims!(low=0)
+    ax2 = CairoMakie.Axis(f[1, 2]; xlabel="height offset")
+    ax2.xtickformat = values -> ["$(round(Int,value))m" for value in values]
+    CairoMakie.hist!(ax2, gemb_fit[:, :Δheight], bins=-3000:100:3000)
+    ylims!(low=0)
+    #axislegend(ax1, framevisible = false)
+    return f
+end
+
+"""
     plot_multiregion_dvdm(regions; kwargs...) -> Figure, Vector, Vector
 
 Create a multi-region plot of glacier mass change time series with stacked regions.
@@ -692,7 +1128,7 @@ with error bounds and customizable styling.
 - `rgi_regions=setdiff(collect(dims(runs_rgi["dm_altim"], :rgi)), [13, 14, 15, 99])`: RGI regions to include
 - `showlines=false`: Whether to show grid lines
 - `fontsize=15`: Font size for plot text
-- `cmap=:Dark2_4`: Color map for regions
+- `colormap=:Dark2_4`: Color map for regions
 - `region_order=nothing`: Custom ordering of regions (default: sorted by total mass change)
 - `ylims=nothing`: Custom y-axis limits
 - `title=nothing`: Plot title
@@ -714,7 +1150,7 @@ function plot_multiregion_dvdm(
     rgi_regions=setdiff(collect(dims(runs_rgi["dm_altim"], :rgi)), [13, 14, 15, 99]),
     showlines=false,
     fontsize=15,
-    cmap=:Dark2_4,
+    colormap=:Dark2_4,
     region_order=nothing,
     ylims=nothing,
     title=nothing,
@@ -774,7 +1210,7 @@ function plot_multiregion_dvdm(
     (n == 1) ? (n = 2) : (n = n)
 
     if isnothing(palette)
-        palette = (; color=Makie.resample_cmap(cmap, n))
+        palette = (; color=Makie.resample_cmap(colormap, n))
     end
 
     y2ticks = zeros(n)
@@ -879,7 +1315,13 @@ function plot_multiregion_dvdm(
             if varname == dvarname[end]
                 ln = CairoMakie.lines!(ax1, collect(decimalyear.(dims(mid0, :date))), collect(mid0))
 
-                y2ticklabels[i] = string(round(Int64, (mid0[end] - mid0[1]))) * " $(units)"
+                if !occursin("yr⁻¹", units)
+                    y2ticklabels[i] = string(round(Int64, (mid0[end] - mid0[1]))) * " $(units)"
+                else
+                    fit = ts_seasonal_model(mid0)
+                    y2ticklabels[i] = string(round(Int64, fit.trend)) * " $(units)"
+                end
+
                 yticks[i] = mid0[1]
                 y2ticks[i] = mid0[end]
                 y2ticklabelcolor[i] = ln.color.val
@@ -912,7 +1354,6 @@ function plot_multiregion_dvdm(
         printstyled("NOTE: if you end up here there is a bug with CairoMakie in which a cryptic error is thrown when the ytick positions exceed the yaxis limits\n"; color=:red)
         rethrow(e)
     end
-
 
     ax2.yticklabelcolor = y2ticklabelcolor
 
@@ -977,4 +1418,120 @@ function show_error_bar_table(regional_results; cols2display=3)
             show(regional_results[:, [1:2; (3:(2+cols2display)) .+ (4 * i)]], allrows=true, allcols=true)
         end
     end
+end
+
+
+"""
+    plot_area_average_height_gemb_ensemble(gemb0, area_km2; vars2plot=["melt", "refreeze", "acc", "fac", "rain", "ec"], geotiles2plot=[geotiles_golden_test[1]], title_prefix="")
+
+Plot area-averaged height change time series for GEMB ensemble variables and geotiles.
+
+# Arguments
+- `gemb0`: Dictionary or NamedTuple of GEMB output variables, each as a DimArray.
+- `area_km2`: DimArray or array of glacier area (km²) for each geotile.
+- `vars2plot`: Array of variable names to plot (default: ["melt", "refreeze", "acc", "fac", "rain", "ec"]).
+- `geotiles2plot`: Array of geotile identifiers to plot (default: [geotiles_golden_test[1]]).
+- `title_prefix`: String prefix for plot titles.
+
+# Returns
+- `figures`: Nested dictionary mapping geotile and variable names to Makie figures.
+"""
+function plot_area_average_height_gemb_ensemble(
+    gemb0, area_km2;
+    vars2plot = ["melt", "refreeze", "acc", "fac", "rain", "ec"],
+    geotiles2plot = [geotiles_golden_test[1]],
+    title_prefix = ""
+)
+    dpscale = dims(gemb0[first(vars2plot)], :pscale)
+    if hasdim(gemb0[first(vars2plot)], :Δheight)
+        dΔheight = dims(gemb0[first(vars2plot)], :Δheight)
+        clrs = Makie.resample_cmap(:thermal, length(dpscale) * length(dΔheight) + 1)
+    else
+        dΔheight = nothing
+        clrs = Makie.resample_cmap(:thermal, length(dpscale) + 1)
+    end
+
+    figures = Dict()
+
+    for geotile2plot in geotiles2plot
+        figures[geotile2plot] = Dict()
+        for var0 in vars2plot
+            figures[geotile2plot][var0] = _publication_figure(columns=1, rows=1)
+            title = "$(title_prefix) $(var0)-$(geotile2plot)"
+            ax = CairoMakie.Axis(figures[geotile2plot][var0][1, 1]; title)
+            ax.ytickformat = values -> ["$(round(Int, value))m" for value in values]
+
+            cnt = 1
+            for pscale in dpscale
+                if isnothing(dΔheight)
+                    dh = dh_area_average(
+                        gemb0[var0][geotile=At(geotile2plot), pscale=At(pscale)],
+                        area_km2[geotile=At(geotile2plot)]
+                    )
+                    height_range, = validrange(.!isnan.(dh))
+                    lines!(ax, dh[height_range]; label="p:$(pscale)", color=clrs[cnt])
+                    cnt += 1
+                else
+                    for Δheight in dΔheight
+                        dh = dh_area_average(
+                            gemb0[var0][pscale=At(pscale), Δheight=At(Δheight)],
+                            area_km2[geotile=At(geotile2plot)]
+                        )
+                        height_range, = validrange(.!isnan.(dh))
+                        lines!(ax, dh[height_range]; label="p:$(pscale) Δh:$(Δheight)", color=clrs[cnt])
+                        cnt += 1
+                    end
+                end
+            end
+            axislegend(ax, position=:lt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1)
+        end
+    end
+    return figures
+end
+
+
+"""
+    plot_dh_gemb_ensemble(gemb_dv, area_km2; geotile = "", title_prefix = "")
+
+Plot area-normalized height change ensemble results from GEMB model diagnostics.
+
+# Arguments
+- `gemb_dv`: Dictionary or NamedTuple of GEMB diagnostic variables, each as a DimArray with `:pscale` and `:Δheight` dimensions.
+- `area_km2`: DimArray or array representing the area (in km²) for normalization.
+- `geotile`: (Optional) String identifier for the geotile being plotted (used in plot titles).
+- `title_prefix`: (Optional) String prefix for plot titles.
+
+# Returns
+- `figures`: Dictionary mapping each variable name to its corresponding Makie figure.
+
+Each figure shows the area-normalized height change for all parameter scale (`pscale`) and height change (`Δheight`) ensemble members, with a legend indicating the parameter combinations.
+"""
+function plot_dh_gemb_ensemble(gemb_dv, area_km2; geotile = "", title_prefix="")
+    area_total = sum(parent(area_km2))
+    vars2plot = keys(gemb_dv)
+    dpscale = dims(gemb_dv[first(vars2plot)], :pscale)
+    dΔheight = dims(gemb_dv[first(vars2plot)], :Δheight)
+    clrs = Makie.resample_cmap(:thermal, length(dpscale) * length(dΔheight) + 1)
+    figures = Dict()
+
+    for var0 in vars2plot
+        figures[var0] = _publication_figure(columns=1, rows=1)
+        title = "$(title_prefix) $(var0)-$(geotile)"
+        ax = CairoMakie.Axis(figures[var0][1, 1]; title)
+        ax.ytickformat = values -> ["$(round(Int,value))m" for value in values]
+
+        cnt = 1
+        for pscale in dpscale
+            for Δheight in dΔheight
+                dh = gemb_dv[var0][pscale=At(pscale), Δheight=At(Δheight)] ./ area_total
+                height_range, = validrange(.!isnan.(dh))
+                lines!(ax, dh[height_range]; label="p:$(pscale) Δh:$(Δheight)", color=clrs[cnt])
+                cnt += 1
+            end
+        end
+
+        axislegend(ax, position=:lt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false)
+    end
+
+    return figures
 end

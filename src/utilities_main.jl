@@ -26,7 +26,6 @@ Nothing. Processed altimetry data is organized into geotiles and saved locally.
 - Granules are sorted by longitude for improved processing speed
 - When `single_geotile_test` is specified, only processes that specific geotile for testing
 """
-
 function geotile_build_archive(;
     force_remake = false,
     project_id = :v01,

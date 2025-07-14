@@ -31,7 +31,7 @@ begin
     using GGA.MyUnits
 
     dates2average = [Date("2000-01-01"), Date("2025-01-01")]
-    glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
+    glacier_summary_file = GGA.pathlocal[:glacier_summary]
    
     paths = GGA.pathlocal
     km2Gt = 910/1000

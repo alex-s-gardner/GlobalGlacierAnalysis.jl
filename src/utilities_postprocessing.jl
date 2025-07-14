@@ -729,47 +729,61 @@ end
 
 
 """
-    geotiles_mean_error(path2ref, path2files; p=0.95, reference_period=nothing)
+    geotiles_mean_error(path2ref, path2files; error_quantile=0.95, error_scaling=1.0, reference_period=nothing)
 
-Calculate reference values and error estimates for geotile data across multiple model runs.
+Compute reference values and error estimates for geotile-level data across multiple model runs.
 
-This function computes the deviation of each model run from a reference run, then calculates
-error estimates based on the quantile of absolute differences.
+This function loads geotile data for a reference run and a set of comparison runs, computes the deviation of each comparison run from the reference, and then estimates the error at each point as the specified quantile of the absolute deviations, optionally scaled. The result is a DimensionalArray with an added error dimension, containing both the reference values and the error estimates.
 
 # Arguments
-- `path2ref`: Path to the reference model run file
-- `path2files`: Vector of paths to model run files to compare against the reference
-- `p`: Quantile level for error estimation (default: 0.95)
-- `reference_period`: Optional time period for centering data (subtracting temporal mean)
+- `path2ref::AbstractString`: Path to the reference model run file.
+- `path2files::AbstractVector{<:AbstractString}`: Vector of paths to model run files to compare against the reference.
+- `error_quantile::Real=0.95`: Quantile level for error estimation (e.g., 0.95 for the 95th percentile).
+- `error_scaling::Real=1.0`: Optional scaling factor to apply to the error estimate (e.g., 2.0 for 2-sigma).
+- `reference_period::Union{Nothing,Tuple}`: Optional time period for centering data (subtracting temporal mean).
 
 # Returns
-- A DimensionalArray with dimensions for variable name, geotile, time, and error,
-  where the error dimension contains reference values (false) and error estimates (true)
+- `DimArray`: A DimensionalArray with dimensions for variable name, geotile, time, and error,
+  where the error dimension contains reference values (`false`) and error estimates (`true`).
+
+# Notes
+- The error estimate is computed as the specified quantile of the absolute deviation of each run from the reference, for each variable, geotile, and time step.
+- The function assumes all input files are compatible and aligned in variables, geotiles, and time.
 """
-function geotiles_mean_error(path2ref, path2files; p=0.95, reference_period=nothing)
+function geotiles_mean_error(path2ref, path2files; error_quantile=0.95, error_scaling=1.0, reference_period=nothing)
 
     geotiles_ref = geotile2dimarray_kgm2(path2ref; reference_period)
-    geotiles0 = geotile2dimarray_kgm2.(path2files; reference_period)
 
-    # calculate the deviation relative to a reference run
-    for gt in geotiles0
-        gt .-= geotiles_ref
+    # place all runs into array with same number of geotiles... if a geotile is missing then set dv = 0
+    drun = Dim{:run}(path2files)
+    dgeotile = dims(geotiles_ref, :geotile)
+    dvarname = dims(geotiles_ref, :varname)
+    dTi = dims(geotiles_ref, :Ti)
+    geotiles0 = zeros(drun, dvarname, dgeotile, dTi) * 1u"kg/m^2"
+
+    @showprogress desc = "Loading geotile dv data and calculating error..." for run in drun
+        gt = geotile2dimarray_kgm2(run; reference_period)
+        dgeotile = dims(gt, :geotile)
+        geotiles0[run=At(run), geotile=At(val(dgeotile))] = gt
+        geotiles0[run=At(run)] = geotiles0[run=At(run)] .- geotiles_ref
     end
 
-    geotiles0 = cat(geotiles0..., dims=Dim{:run}(DimensionalData.name.(geotiles0)))
-
-    # calculate the 95% quantile of the absolute deviation relative to the reference run
+    # calculate the quantile of the absolute deviation relative to the reference run
     geotiles_ref_err = copy(geotiles_ref)
     (dvarname, dgeotile, dTi) = dims(geotiles_ref_err)
+
     Threads.@threads for varname in dvarname
         for geotile in dgeotile
             for Ti in dTi
-                geotiles_ref_err[At(varname), At(geotile), At(Ti)] = quantile(abs.(geotiles0[At(varname), At(geotile), At(Ti), :]), p)
+                try
+                    geotiles_ref_err[varname=At(varname), geotile= At(geotile), Ti = At(Ti)] = quantile(abs.(geotiles0[varname=At(varname), geotile= At(geotile), Ti = At(Ti)]), error_quantile) * error_scaling
+                catch
+                    return geotiles0[varname=At(varname), geotile= At(geotile), Ti = At(Ti)]
+                end
             end
         end
     end
 
-    metadata0 = DimensionalData.metadata(geotiles_ref)
     geotiles_out = cat(geotiles_ref, geotiles_ref_err; dims=Dim{:error}([false, true]))
 
     return geotiles_out
@@ -795,26 +809,21 @@ Downscale geotile-level data to individual glaciers, preserving reference values
 function geotiles_mean_error_glaciers(glaciers, geotiles; show_progress=true, vars2downscale=nothing)
 
     drgiid = Dim{:rgiid}(glaciers.rgiid)
-    derror = Dim{:error}([false, true])
     (dvarname, dgeotile, dTi, derror) = dims(geotiles)
     
     if !isnothing(vars2downscale)
         dvarname = Dim{:varname}(vars2downscale)
     end
 
-    glacier_out = DimArray(zeros(length(dvarname), length(drgiid), length(dTi), length(derror)) * 1u"Gt", (dvarname, drgiid, dTi, derror))
+    glacier_out = zeros(dvarname, drgiid, dTi, derror) * 1u"Gt" 
 
     prog = Progress(nrow(glaciers)*length(dvarname); desc="Downscaling from geotiles to glaciers", enabled=show_progress)
 
     for varname in dvarname
         Threads.@threads for r in eachrow(glaciers)
-            glacier_out[At(varname), At(r.rgiid), :, At(false)] = geotiles[At(varname), At(r.geotile), :, At(false)] .* r.area_km2
-
-            glacier_out[At(varname), At(r.rgiid), :, At(true)] = geotiles[At(varname), At(r.geotile), :, At(true)] .* r.area_km2
-
+            glacier_out[varname=At(varname), rgiid=At(r.rgiid)] = geotiles[varname=At(varname), geotile=At(r.geotile)] .* r.area_km2
             next!(prog)
         end
-      
     end
     finish!(prog)
 
@@ -870,7 +879,7 @@ Calculate area-averaged height anomalies from simulation runs.
 function _simrun2areaaverage(dh; surface_mask, geotile_width=2, geotile2extract=nothing, sigma_error=2)
     # Calculate area-averaged height anomalies
     dh0_area_average = Dict()
-    area_km2 = _geotile_area_km2(surface_mask, geotile_width)
+    area_km2 = _geotile_area_km2(;surface_mask, geotile_width)
 
     # Extract dimensions and convert dates to decimal years
     (drun, dgeotile, ddate, dheight) = dims(dh[first(keys(dh))])
@@ -910,4 +919,129 @@ function _simrun2areaaverage(dh; surface_mask, geotile_width=2, geotile2extract=
     end
 
     return dh0_area_average_median, dh0_area_average_error
+end
+
+
+function glacier_summary_file(
+    binned_synthesized_dv_files, 
+    binned_synthesized_dv_file_ref; 
+    error_quantile=0.95, 
+    error_scaling=2.0, 
+    reference_period=(DateTime(2000, 4, 1), DateTime(2024, 12, 31)), 
+    surface_mask="glacier", 
+    force_remake_before=nothing, 
+    geotile_width=2
+    )
+
+    glacier_summary_file = pathlocal[:glacier_summary]
+
+    if isfile(glacier_summary_file) && (isnothing(force_remake_before) || (Dates.unix2datetime(mtime(glacier_summary_file)) > force_remake_before))
+        printstyled("    -> Skipping $(glacier_summary_file) because it was created after force_remake_before:$force_remake_before\n"; color=:light_green)
+        return
+    end
+    
+    path2ref = binned_synthesized_dv_file_ref
+    path2files = setdiff(binned_synthesized_dv_files, [binned_synthesized_dv_file_ref])
+
+    if length(path2files) == length(binned_synthesized_dv_files)
+        error("Reference run not found in binned_synthesized_dv_files")
+    end
+
+    # return a DimensionalArray with the mean and error for all runs relative to the reference run, for all modeled variables 
+    geotiles0 = geotiles_mean_error(path2ref, path2files; error_quantile, error_scaling, reference_period) # returns variables in units of kg/m2 [90s]
+
+    #TODO: it would be good to save this to disk and a gpkg file of trends and amplitudes currently in synthesis_plots_gis.jl... synthesis_plots_gis.jl should be deprecated at some point
+    glacier_geotile_hyps_fn = replace(pathlocal[Symbol("$(surface_mask)_individual")], ".gpkg" => "geotile_hyps.jld2")
+    glaciers0 = load(glacier_geotile_hyps_fn, "glacier")
+
+    # load glaciers
+    glaciers0.area_km2 = sum.(glaciers0.area_km2)
+
+    # glaciers have been split by geotile by model variables have been averaged by geotile groups so this is no longer needed... combine split glaciers
+    glaciers = DataFrame()
+    rgiids = unique(glaciers0.RGIId)
+    glaciers[!, :rgiid] = rgiids
+    glaciers[!, :area_km2] .= 0.0 * u"km^2"
+    glaciers[!, :geotile] .= ""
+    glaciers[!, :rgi] .= 0.0
+    glaciers[!, :latitude] .= 0.0
+    glaciers[!, :longitude] .= 0.0
+
+    geotiles = _geotile_load_align(; surface_mask, geotile_width)
+    geotiles[!, :rgi] .= 0
+
+    for rgi in 1:19
+        geotiles[geotiles[:, "rgi$rgi"].>0, :rgi] .= rgi
+    end
+
+    Threads.@threads for r in eachrow(glaciers)
+        index = findall(isequal.(Ref(r.rgiid), glaciers0.RGIId))
+        _, ind = findmax(glaciers0.area_km2[index])
+        ind = index[ind]
+        r.area_km2 = sum(glaciers0.area_km2[index]) * u"km^2"
+        r.geotile = glaciers0[ind, :geotile]
+        r.latitude = glaciers0[ind, :CenLat]
+        r.longitude = glaciers0[ind, :CenLon]
+        r.rgi = geotiles[findfirst(isequal(r.geotile), geotiles.id), :rgi]
+    end
+
+    vars2downscale = nothing
+
+    drgiid = Dim{:rgiid}(glaciers.rgiid)
+    (dvarname, dgeotile, dTi, derror) = dims(geotiles0)
+
+    if !isnothing(vars2downscale)
+        dvarname = Dim{:varname}(vars2downscale)
+    end
+
+    glacier_out = geotiles_mean_error_glaciers(glaciers, geotiles0) #[2 min]
+
+    # From DimArray to DimStack for saveing
+    vars = glacier_out[error=At(false)]
+    var_error = glacier_out[error=At(true)]
+    dvarerror = Dim{:varname}(parent(val(dims(vars, :varname))) .* "_error")
+    var_error = set(var_error, :varname => dvarerror)
+    da = cat(vars, var_error, dims=(:varname))
+    dstack = DimStack(glacier_out[error=At(false)]; layersfrom=:varname)
+
+    # save to netcdf
+    NCDataset(glacier_summary_file, "c") do ds
+
+        data_dims = dims(dstack)
+
+        # First all dimensions need to be defined
+        for dim in data_dims
+            dname = string(DimensionalData.name(dim))
+            defDim(ds, dname, length(dim))
+        end
+
+        # now add the variables
+        for dim in data_dims
+            dname = string(DimensionalData.name(dim))
+            d = defVar(ds, dname, val(val(dim)), (dname,))
+            if DateTime <: eltype(dim)
+                d.attrib["cf_role"] = "timeseries_id"
+            end
+        end
+
+        for vaname in keys(dstack)
+            v = defVar(ds, "$vaname", ustrip.(parent(dstack[vaname])), string.(DimensionalData.name.(data_dims)))
+            v.attrib["units"] = string(Unitful.unit(dstack[vaname][1]))
+        end
+
+
+        v = defVar(ds, "glacier_area", ustrip.(glaciers.area_km2), string.(DimensionalData.name.(data_dims[1:1])))
+        v.attrib["units"] = "km^2"
+
+        # add latitude and longitude [This is a hack until I can get geometry into a NetCDF]
+        defVar(ds, "latitude", glaciers.latitude, string.(DimensionalData.name.(data_dims[1:1])))
+        defVar(ds, "longitude", glaciers.longitude, string.(DimensionalData.name.(data_dims[1:1])))
+
+        # add global attributes
+        ds.attrib["title"] = "cumulative glacier mass flux outputs from Gardner et al. 2025"
+        ds.attrib["version"] = "beta - " * Dates.format(now(), "yyyy-mm-dd")
+        ds.attrib["featureType"] = "timeSeries"
+
+        println("glacier output saved to $glacier_summary_file")
+    end
 end

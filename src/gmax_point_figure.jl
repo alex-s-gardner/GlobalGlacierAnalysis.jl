@@ -1,19 +1,19 @@
-"""
-    gmax_point_figure.jl
-
-Calculate and visualize the climatological maximum monthly fractional contribution of glacier runoff to total river flux (gmax).
-
-This script:
-1. Loads glacier runoff and river flux data from NetCDF files
-2. Processes time series data for specific geographic locations
-3. Creates visualizations showing:
-   - River flux components (land, snow, glacier)
-   - Glacier runoff as a fraction of total river flux
-   - The maximum monthly contribution (gmax) with seasonal patterns
-4. Saves the resulting figures for each location
-
-The script handles data from 2000-2024 and focuses on key river basins near glaciated regions.
-"""
+# ============================================================================
+# gmax_point_figure.jl
+#
+# Calculate and visualize the climatological maximum monthly fractional contribution of glacier runoff to total river flux (gmax).
+#
+# This script:
+# 1. Loads glacier runoff and river flux data from NetCDF files
+# 2. Processes time series data for specific geographic locations
+# 3. Creates visualizations showing:
+#    - River flux components (land, snow, glacier)
+#    - Glacier runoff as a fraction of total river flux
+#    - The maximum monthly contribution (gmax) with seasonal patterns
+# 4. Saves the resulting figures for each location
+#
+# The script handles data from 2000-2024 and focuses on key river basins near glaciated regions.
+# ============================================================================
 
 begin
     using NCDatasets
@@ -132,28 +132,28 @@ location = locations[1]
 
     x = GGA.decimalyear.(collect(dims(land_flux, :Ti)[date_interval]))
     x = vcat(x[1],x, x[end])
-    yunits = unit(land_flux[1])
+    yunits = Unitful.unit(land_flux[1])
     y = vcat(0*yunits, y, 0*yunits)
     max_y = maximum(y)
-    p = poly!(ax1, Point.(ustrip(x), ustrip(y)); color = (:peru, 1), label="land")
+    p = poly!(ax1, GGA.GI.Point.(ustrip(x), ustrip(y)); color=(:peru, 1), label="land")
 
     # plot snow flux
     if seperate_out_snow
         y = y_snow;
         x = GGA.decimalyear.(collect(dims(land_flux, :Ti)[date_interval]))
         x = vcat(x[1], x, x[end])
-        yunits = unit(y[1])
+        yunits = Unitful.unit(y[1])
         y = vcat(0.0*yunits , y, 0.0*yunits)
         max_y = max(maximum(y),max_y)
-        p = poly!(ax1, Point.(x, ustrip(y)); color=(:gray, 0.5), label="snow")
+        p = poly!(ax1, GGA.GI.Point.(x, ustrip(y)); color=(:gray, 0.5), label="snow")
     end
 
     y = collect(glacier_flux[date_interval,At(COMID)])./1000
-    yunits = unit(y[1])
+    yunits = Unitful.unit(y[1])
     x = GGA.decimalyear.(collect(dims(glacier_flux, :Ti)[date_interval]))
     x = vcat(x[1],x, x[end])
     y = vcat(0*yunits, y, 0*yunits)
-    poly!(ax1, Point.(ustrip(x), ustrip(y)); color = (:blue, 0.5), label = "glacier")
+    poly!(ax1, GGA.GI.Point.(ustrip(x), ustrip(y)); color=(:blue, 0.5), label="glacier")
 
     axislegend(ax1; merge=true, backgroundcolor=(:white, 0), framevisible=false, position=:lt)
     #xlabel!(p.axis[1], "Year")

@@ -6,7 +6,8 @@ module GlobalGlacierAnalysis
 
    using Unitful
    Unitful.register(MyUnits)
-
+   using GlobalGlacierAnalysis.MyUnits
+   
    # import geographic packages
    using Proj
    using GeoArrays

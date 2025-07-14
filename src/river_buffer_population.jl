@@ -1,24 +1,24 @@
-"""
-    river_buffer_population.jl
-
-Analyze population living near glacier-fed rivers globally.
-
-This script calculates and visualizes the number of people living within various 
-buffer distances of rivers with different glacier melt contribution thresholds.
-It processes global population density data, river networks, and glacier runoff 
-information to quantify population exposure to changes in glacier-fed river systems.
-
-The analysis:
-1. Loads global population density data and river networks with glacier attributes
-2. Calculates population within specified buffer distances of glacier-fed rivers
-3. Generates visualizations of population exposure by country and continent
-4. Provides summary statistics for different scenarios (low, medium, high exposure)
-
-Key parameters:
-- gmax: Maximum glacier contribution threshold (%)
-- buffer_radii: Distance from rivers (meters)
-- runoff: River discharge threshold (m³/s)
-"""
+# =============================================================================
+# river_buffer_population.jl
+#
+# Analyze population living near glacier-fed rivers globally.
+#
+# This script calculates and visualizes the number of people living within various 
+# buffer distances of rivers with different glacier melt contribution thresholds.
+# It processes global population density data, river networks, and glacier runoff 
+# information to quantify population exposure to changes in glacier-fed river systems.
+#
+# The analysis:
+# 1. Loads global population density data and river networks with glacier attributes
+# 2. Calculates population within specified buffer distances of glacier-fed rivers
+# 3. Generates visualizations of population exposure by country and continent
+# 4. Provides summary statistics for different scenarios (low, medium, high exposure)
+#
+# Key parameters:
+# - gmax: Maximum glacier contribution threshold (%)
+# - buffer_radii: Distance from rivers (meters)
+# - runoff: River discharge threshold (m³/s)
+# =============================================================================
 
 begin
     progress = true
@@ -64,7 +64,7 @@ begin
     rivers_path = joinpath(paths.data_dir, "rivers/MERIT_Hydro_v07_Basins_v01")
     glacier_rivers_path = joinpath(rivers_path, "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
-    glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
+    glacier_summary_file = GGA.pathlocal[:glacier_summary]
     glacier_summary_gmax_file = replace(glacier_summary_file, ".nc" => "_gmax.gpkg")
 
     population_file = joinpath(paths[:project_dir], "gardner2025_gmax_buffer_population.nc")
@@ -251,6 +251,12 @@ df = DataFrame(country=countries)
 df[!, :continent] = getindex.(Ref(country2continent), df[!, :country]);
 index = falses(nrow(df))
 
+
+runoff = 10;
+buffer = 30_000;
+gmax = 50;
+
+
 for gmax in [gmax_low, gmax_mid, gmax_high]
     df[!, "gmax ≥ $gmax"] = parent(population[gmax=At(gmax), buffer=At(buffer), runoff=At(runoff)])
     index .|= df[!, "gmax ≥ $gmax"] .> 0
@@ -302,9 +308,7 @@ with_theme(theme_dark()) do
 end
 
 
-runoff = 10;
-buffer = 30_000;
-gmax = 50;
+
 pop = population[gmax=At(gmax), buffer=At(buffer), runoff=At(runoff)];
 pop = pop[pop.>0];
 sort_idx = sortperm(parent(pop); rev=true);

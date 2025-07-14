@@ -76,7 +76,7 @@ offset_trend::Function = offset_trend(t, p) = p[1] .+ p[2] .* t;
 offset_trend_p = zeros(2);
 
 """
-    replace_with_model!(dh, nobs, geotiles2replace::AbstractArray; mission_replace="hugonnet", missions2align2, missions2update)
+    replace_with_model!(dh, nobs, geotiles2replace::AbstractArray; mission2replace="hugonnet", missions2align2, missions2update)
 
 Replace elevation change data for specified geotiles with model-fitted values.
 
@@ -84,7 +84,7 @@ Replace elevation change data for specified geotiles with model-fitted values.
 - `dh`: Dictionary of DimensionalArrays containing elevation change data by mission
 - `nobs`: Dictionary of DimensionalArrays containing observation counts by mission
 - `geotiles2replace`: Array of geotile IDs to replace with model-fitted values
-- `mission_replace`: Mission whose data will be replaced (default: "hugonnet")
+- `mission2replace`: Mission whose data will be replaced (default: "hugonnet")
 -  `missions2align2`: List of missions to align to the reference mission
 
 # Returns
@@ -95,71 +95,72 @@ Fits elevation change models to reference mission data and uses these models to 
 values in the target mission for specified geotiles. Uses a combination of reference
 missions to ensure data coverage, with the primary reference taking precedence.
 """
-function replace_with_model!(dh, nobs, geotiles2replace; mission_replace="hugonnet", missions2align2=["icesat2", "icesat"])
+function replace_with_model!(dh, nobs, geotiles2replace; missions2replace="hugonnet", missions2align2=["icesat2", "icesat"])
 
     dgeotile = dims(dh[first(keys(dh))], :geotile)
     dheight = dims(dh[first(keys(dh))], :height)
     ddate = dims(dh[first(keys(dh))], :date)
     dmissions = Dim{:mission}(missions2align2)
 
-    if isnothing(geotiles2replace) || isempty(geotiles2replace) || isempty(mission_replace)
+    if isnothing(geotiles2replace) || isempty(geotiles2replace) || isempty(missions2replace)
         return dh, nobs
     end
 
     geotiles2replace = intersect(geotiles2replace, dgeotile)
 
     Threads.@threads for geotile in geotiles2replace
+        for mission2replace in missions2replace
+            valid0 = falses(dmissions, ddate, dheight)
 
-        valid0 = falses(dmissions, ddate, dheight)
-
-        # in order for the data to be replaced with model, all missions2align2 must have data
-        for mission in missions2align2
-            valid1 = .!isnan.(dh[mission][geotile=At(geotile)])
-            if !any(valid1)
-                @warn "No data for $(mission_proper_name(mission)) for geotile: $(geotile), observations not replaced with model"
-                return dh
+            # in order for the data to be replaced with model, all missions2align2 must have data
+            for mission in missions2align2
+                valid1 = .!isnan.(dh[mission][geotile=At(geotile)])
+                if !any(valid1)
+                    @warn "No data for $(mission_proper_name(mission)) for geotile: $(geotile), observations not replaced with model"
+                    return dh
+                end
+                valid0[At(mission), :, :] = valid1
             end
-            valid0[At(mission), :, :] = valid1
+
+            # first missmissions2align2 is the perfered mission and will overwrite any overlaping data
+            _, _, vheight = validrange(valid0)
+            vdates, _, = validrange(.!isnan.(dh[mission2replace][At(geotile), :, vheight]))
+
+            dh0 = fill(NaN, ddate, dheight)
+            nobs0 = fill(NaN, ddate, dheight)
+            for mission in missions2align2 # first mission is the perfered mission
+                not_valid = isnan.(dh0)
+                dh0[not_valid] = dh[mission][At(geotile), :, :][not_valid]
+                nobs0[not_valid] = nobs[mission][At(geotile), :, :][not_valid]
+            end
+            valid0 = .!isnan.(dh0)
+
+            # replace data with model fit
+            t0 = decimalyear.(ddate)
+            t0 = repeat(t0, 1, length(dheight))
+
+            h0 = val(dheight)'
+            h0 = repeat(h0, length(ddate), 1)
+
+            t0 .-= mean(decimalyear.(parent(ddate)[vdates]))
+            h0 .-= mean(val(dheight[vheight]))
+
+            # some tiles have nobs == 0 where there is not icesat or iceast-2 data and the 
+            # geotile has been filled with with neighbor values.. for this reason we need to add
+            # one to all nobs
+            nobs0 .+= 1
+
+            # fit global model 
+            if length(vheight) == 1
+                fit1 = curve_fit(model3, t0[valid0], dh0[valid0], nobs0[valid0], p3)
+                dh[mission2replace][At(geotile), vdates, vheight] = model3(vec(t0[vdates, vheight]), fit1.param)
+            else
+                fit1 = curve_fit(model1, hcat(t0[valid0], h0[valid0]), dh0[valid0], nobs0[valid0], p1; lower=lb1, upper=ub1)
+                dh[mission2replace][At(geotile), vdates, vheight] = model1(hcat(vec(t0[vdates, vheight]), vec(h0[vdates, vheight])), fit1.param)
+            end
+
+            nobs[mission2replace][At(geotile), vdates, vheight] .= 9999
         end
-
-        # first missmissions2align2 is the perfered mission and will overwrite any overlaping data
-        _, _, vheight = validrange(valid0)
-        vdates, _, = validrange(.!isnan.(dh[mission_replace][At(geotile), :, vheight]))
-
-        dh0 = fill(NaN, ddate, dheight)
-        nobs0 = fill(NaN, ddate, dheight)
-        for mission in missions2align2 # first mission is the perfered mission
-            not_valid = isnan.(dh0)
-            dh0[not_valid] = dh[mission][At(geotile), :, :][not_valid]
-            nobs0[not_valid] = nobs[mission][At(geotile), :, :][not_valid]
-        end
-        valid0 = .!isnan.(dh0)
-
-        # replace data with model fit
-        t0 = decimalyear.(ddate)
-        t0 = repeat(t0, 1, length(dheight))
-
-        h0 = val(dheight)'
-        h0 = repeat(h0, length(ddate), 1)
-
-        t0 .-= mean(decimalyear.(parent(ddate)[vdates]))
-        h0 .-= mean(val(dheight[vheight]))
-
-        # some tiles have nobs == 0 where there is not icesat or iceast-2 data and the 
-        # geotile has been filled with with neighbor values.. for this reason we need to add
-        # one to all nobs
-        nobs0 .+= 1
-
-        # fit global model 
-        if length(vheight) == 1
-            fit1 = curve_fit(model3, t0[valid0], dh0[valid0], nobs0[valid0], p3)
-            dh[mission_replace][At(geotile), vdates, vheight] = model3(vec(t0[vdates, vheight]), fit1.param)
-        else
-            fit1 = curve_fit(model1, hcat(t0[valid0], h0[valid0]), dh0[valid0], nobs0[valid0], p1; lower=lb1, upper=ub1)
-            dh[mission_replace][At(geotile), vdates, vheight] = model1(hcat(vec(t0[vdates, vheight]), vec(h0[vdates, vheight])), fit1.param)
-        end
-
-        nobs[mission_replace][At(geotile), vdates, vheight] .= 9999
     end
     return dh, nobs
 end
@@ -856,7 +857,7 @@ function binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_m
     figure_suffix = replace(figure_suffix, ".jld2" => "")
     figure_suffix = replace(figure_suffix, "dh" => "dm")
 
-    return binned_filled_file, figure_suffix
+    return binned_filled_file
 end
 
 function binned2filled_filepath(;binned_file, amplitude_correct, fill_param)
@@ -897,7 +898,7 @@ Generate filepath for synthesized binned elevation change data.
 - `binned_synthesized_file`: Full filepath to the synthesized binned data file
 """
 function binned_synthesized_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, fill_param)
-    binned_filled_file, _ = binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, fill_param)
+    binned_filled_file = binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, fill_param)
     binned_synthesized_file = replace(binned_filled_file, ".jld2" => "_synthesized.jld2")
     return binned_synthesized_file
 end
@@ -928,6 +929,9 @@ naming convention used in the project.
 function binned_filled_fileparts(binned_filled_file)
 
     binned_folder = splitpath(replace(binned_filled_file, pathlocal[:data_dir] => ""))[1]
+
+    geotile_width = parse(Int, binned_filled_file[findfirst("deg/", binned_filled_file)[1]-1])
+
 
     binned_filled_file = splitpath(binned_filled_file)[end]
 
@@ -978,7 +982,7 @@ function binned_filled_fileparts(binned_filled_file)
 
     fill_param = parse(Int16, param[p][2])
 
-    out = (; binned_folder,surface_mask, dem, curvature_correct, binning_method, project_id, amplitude_correct, fill_param)
+    out = (; binned_folder, surface_mask, dem, curvature_correct, binning_method, project_id, amplitude_correct, fill_param, geotile_width)
     return out
 end
 
@@ -1128,7 +1132,7 @@ function binned_filled_filepaths(params; include_existing_files_only=false)
     path2runs = fill("", length(params))
 
     for i in eachindex(params)
-        path2runs[i], _ = binned_filled_filepath(; params[i]...)
+        path2runs[i] = binned_filled_filepath(; params[i]...)
     end
 
     if include_existing_files_only

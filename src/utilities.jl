@@ -1557,6 +1557,9 @@ function geotile_hypsometry(geotiles, surface_mask; dem_id=:cop30_v2, force_rema
         # Calculate hypsometry for each geotile combination
         surface_mask_geom = geotile_zonal_area_hyps(h, height_range, surface_mask_geom, geotiles.id; persistent_attribute)
 
+        # replace missing area_km2 with zeros
+        surface_mask_geom.area_km2 = coalesce.(surface_mask_geom.area_km2, Ref(zeros(length(height_center))))
+
         # Save results
         FileIO.save(geotile_hyps_file, Dict(surface_mask => surface_mask_geom))
     end
@@ -1594,6 +1597,18 @@ function _trim_data(f::Dict{String, Any}, geotile_ids)
     return f
 end
 
+"""
+    trim_files(path2runs, geotile_ids)
+
+Trim data files to only include specified geotiles, overwriting original files.
+
+# Arguments
+- `path2runs`: Vector of file paths to process
+- `geotile_ids`: Vector of geotile IDs to keep
+
+# Warning
+This function overwrites the original data files.
+"""
 function trim_files(path2runs, geotile_ids)
     @showprogress desc="Trimming data to only include geotiles with glacier coverage... !! WARNING DATA WILL BE OVERWRITTEN !!"  for path2file in path2runs
         f = load(path2file)::Dict{String, Any}
@@ -1622,7 +1637,7 @@ Load and align geotiles for a given surface mask.
 # Returns
 Tuple of (geotiles0, reg) where geotiles0 is the processed geotiles DataFrame and reg contains region information
 """
-function _geotile_load_align(; surface_mask="glacier", geotile_width=2, geotile_order=nothing)
+function _geotile_load_align(; surface_mask="glacier", geotile_width=2, geotile_order=nothing, only_geotiles_w_area_gt_0=true)
 
     # Generate geotiles for this mask
     geotiles0 = geotiles_mask_hyps(surface_mask, geotile_width)
@@ -1630,7 +1645,7 @@ function _geotile_load_align(; surface_mask="glacier", geotile_width=2, geotile_
     # Make geotiles mutually exclusive by RGI region
     geotiles0, reg = geotiles_mutually_exclusive_rgi!(copy(geotiles0))
 
-    # Rename area column to include surface mask
+    
     #rename!(geotiles0,"$(surface_mask)_area_km2" => "area_km2")
 
     if !isnothing(geotile_order)
@@ -1639,11 +1654,33 @@ function _geotile_load_align(; surface_mask="glacier", geotile_width=2, geotile_
 
         geotiles0 = geotiles0[gt_index, :]
     end
+
+    # Rename area column to include surface mask
+    rename!(geotiles0, "$(surface_mask)_area_km2" => "area_km2")
+
+    
+    if only_geotiles_w_area_gt_0
+        geotiles0 = geotiles0[sum.(geotiles0.area_km2) .> 0, :]
+    end
+
+    return geotiles0
 end
 
 
 
-function _geotile_area_km2(surface_mask, geotile_width)
+"""
+    _geotile_area_km2(; surface_mask="glacier", geotile_width=2)
+
+Create a DimArray of geotile areas in km² for each height bin.
+
+# Arguments
+- `surface_mask`: Surface mask type (e.g., "glacier") (default: "glacier")
+- `geotile_width`: Width of geotiles in degrees (default: 2)
+
+# Returns
+- DimArray with dimensions (geotile, height) containing area values in km²
+"""
+function _geotile_area_km2(; surface_mask = "glacier", geotile_width = 2)
     _, height_center = project_height_bins()
     geotiles = geotiles_mask_hyps(surface_mask, geotile_width)
 
@@ -1655,12 +1692,112 @@ function _geotile_area_km2(surface_mask, geotile_width)
 end
 
 
-function _geotile_extent(surface_mask, geotile_width)
+"""
+    _geotile_extent(; surface_mask="glacier", geotile_width=2)
+
+Create a DimArray of geotile extents.
+
+# Arguments
+- `surface_mask`: Surface mask type (e.g., "glacier") (default: "glacier")
+- `geotile_width`: Width of geotiles in degrees (default: 2)
+
+# Returns
+- DimArray with geotile dimension containing extent values
+"""
+function _geotile_extent(; surface_mask = "glacier", geotile_width = 2)
 
     geotiles = geotiles_mask_hyps(surface_mask, geotile_width)
     dgeotile = Dim{:geotile}(geotiles.id)
     
     extent = DimArray(geotiles[:, "extent"], dgeotile)
     return extent
+end
+
+"""
+    ts_seasonal_model(ts, interval)
+
+Fit a simple seasonal model to a time series and extract the amplitude and phase of the seasonal cycle.
+
+# Arguments
+- `ts`: A DimArray or similar time series object with a :date or :time dimension.
+- `interval`: A tuple of two DateTime objects specifying the interval over which to fit the model.
+
+# Returns
+- `amplitude`: The amplitude of the seasonal (annual) cycle.
+- `phase_peak_month`: The month (as an integer) when the seasonal peak occurs.
+
+# Description
+Fits a model of the form:
+    y = a + b*t + c*cos(2πt) + d*sin(2πt)
+to the time series over the specified interval, where t is in decimal years (centered).
+Returns the amplitude and the month of the seasonal peak.
+"""
+function ts_seasonal_model(ts; interval=nothing)
+    if hasdim(ts, :date)
+        ddate = dims(ts, :date)
+    elseif hasdim(ts, :time)
+        ddate = dims(ts, :time)
+    else
+        error("ts has no :date or :Ti dimension")
+    end
+
+    if isnothing(interval)
+        interval = (minimum(ddate), maximum(ddate))
+    end
+
+    decyear = decimalyear.(parent(values(ddate[interval[1]..interval[2]])))
+    decyear = decyear .- round(mean(decyear))
+
+    # construct design matrix
+    n = length(decyear)
+    M = hcat(ones(n), decyear, cos.(2π .* decyear), sin.(2π .* decyear))
+
+    # fit seasonal model
+    p = M \ ts[interval[1]..interval[2]]
+
+    amplitude = sqrt(p[3]^2 + p[4]^2)
+    phase_peak = 1 + (1 / 4) - (atan(p[4], p[3]) / (2π))
+    phase_peak_month = month(decimalyear2datetime(phase_peak))
+
+    trend = p[2]
+    return (;trend, amplitude, phase_peak_month)
+end
+
+
+# This is a Work In Progress.... need to move away from DataFames for geotile info... and the DimStack should be passed to functions... not read in for each function
+function geotile_fullservice(; surface_mask ="glacier", geotile_width=2, geotile_grouping_min_feature_area_km2 = 100, force_remake_before = nothing)
+
+    # Load and align geotiles with the synthesized data dimensions
+    geotiles = _geotile_load_align(;
+        surface_mask,
+        geotile_width,
+        only_geotiles_w_area_gt_0=true,
+    )
+
+    # Add in groups
+    geotiles_groups = geotile_grouping(; surface_mask, min_area_km2=geotile_grouping_min_feature_area_km2, geotile_width, force_remake_before)
+
+    # Add groups to geotiles
+    _, grp_index = intersectindices(geotiles.id, geotiles_groups.id)
+    geotiles[!, :group] = geotiles_groups[grp_index, :group]
+
+
+    geotiles[!, :rgi] .= 0
+    for rgi in 1:19
+        geotiles[geotiles[:,"rgi$rgi"].>0, :rgi] .= rgi
+        select!(geotiles, Not("rgi$rgi"))
+    end
+
+    dgeotile = Dim{:geotile}(geotiles.id)
+
+    select!(geotiles, Not([:geometry, :id]))
+   
+    varname = tuple(Symbol.(names(geotiles))...)
+    geotiles = DimStack(NamedTuple{varname}([DimVector(geotiles[:,name], dgeotile) for name in names(geotiles)]))
+end
+
+
+function gt_per_yr_to_m3_per_s(gt_per_yr)
+    return gt_per_yr * 1e9 / 365.25 / 24 / 60 / 60
 end
 

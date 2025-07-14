@@ -56,7 +56,7 @@
     reference_run = "binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized.jld2"
     glacier_flux_path = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
 
-    project_id = ["v01"]
+    project_id = "v01"
     surface_mask = ["glacier", "glacier_rgi7"]
     dem_id = ["best", "cop30_v2"]
     curvature_correct = [false, true]
@@ -76,7 +76,7 @@
 
     
     path2reference = joinpath(paths[:data_dir], reference_run)
-    glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
+    glacier_summary_file = GGA.pathlocal[:glacier_summary]
 
     # path2perglacier = replace(path2reference, ".jld2" => "_perglacier.jld2")
     path2discharge = joinpath(paths[:data_dir], "GlacierOutlines/GlacierDischarge/global_glacier_discharge.jld2")
@@ -84,13 +84,13 @@
 
     path2river_flux = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
-    param_nt = (;project_id, surface_mask, dem_id, curvature_correct, amplitude_correct, binning_method, fill_param, binned_folder)
+    param_nt = (;project_id = [project_id], surface_mask, dem_id, curvature_correct, amplitude_correct, binning_method, fill_param, binned_folder)
     params = GGA.ntpermutations(param_nt)
 
     # only include files that exist
     path2runs = String[]
     for param in params
-        binned_aligned_file, _ = GGA.binned_filled_filepath(; param...)
+        binned_aligned_file = GGA.binned_filled_filepath(; param...)
         if isfile(binned_aligned_file)
             push!(path2runs, binned_aligned_file)
         end
@@ -99,7 +99,7 @@
 end
 
 # pre-process data
-#@time begin #[10 min]
+@time begin #[10 min]
     # load discharge for each RGI [<1s]
     discharge_rgi = GGA.discharge_rgi(path2discharge, path2rgi_regions; fractional_error = discharge_fractional_error);
 
@@ -331,7 +331,7 @@ begin
 end
 
 # create plots
-begin
+# begin
     # set grace Antarctic and Greenland to NaNs othersise ice sheet will be plotted with glaciers
     regions["dm_grace"][At([5, 19]), :, :] .= NaN;
 
@@ -344,11 +344,11 @@ begin
     f, region_order, ylims = GGA.plot_multiregion_dvdm(
         regions;
         variables = ["dm_altim"], # last variable is plotted last
-        units = "Gt",
+        units = "Gt yr⁻¹",
         rgi_regions,
         showlines = false,
         fontsize = 15,
-        cmap = :Dark2_4,
+        colormap = :Dark2_4,
         daterange = DateTime(2000, 1, 1):Month(1):DateTime(2025, 1, 1),
         );
     display(f)
@@ -362,10 +362,10 @@ begin
     f, _, ylims = GGA.plot_multiregion_dvdm(
         regions;
         variables, # last variable is plotted last
-        units="Gt",
+        units = "Gt yr⁻¹",
         rgi_regions = setdiff(collect(dims(runs_rgi["dm_altim"], :rgi)), exclude_regions),
         fontsize=15,
-        cmap=:Dark2_4,
+        colormap=:Dark2_4,
         region_order = Dim{:rgi}(setdiff(region_order,  exclude_regions)),
         daterange=DateTime(2000, 1, 1):Month(1):DateTime(2025, 1, 1),
     );
@@ -378,10 +378,10 @@ begin
     f, _, ylims = GGA.plot_multiregion_dvdm(
         regions;
         variables, # last variable is plotted last
-        units="Gt",
+        units = "Gt yr⁻¹",
         rgi_regions,
         fontsize=15,
-        cmap=:Dark2_4,
+        colormap=:Dark2_4,
         region_order,
         all_error_bounds = true,
         daterange=DateTime(2000, 1, 1):Month(1):DateTime(2025, 1, 1),
@@ -399,7 +399,7 @@ begin
         units="Gt",
         rgi_regions,
         fontsize=15,
-        cmap=:Dark2_4,
+        colormap=:Dark2_4,
         region_order,
         all_error_bounds = true,
         daterange=dates_glambie_overlap,
@@ -417,7 +417,7 @@ begin
         units="Gt",
         rgi_regions,
         fontsize=15,
-        cmap=:Dark2_4,
+        colormap=:Dark2_4,
         region_order,
         daterange=DateTime(1980, 1, 1):Month(1):DateTime(2025, 1, 1),
     );
@@ -426,8 +426,8 @@ begin
 
 
     # GRACE rgi regions    
-    cmap = GGA.resample(:Dark2_4, length(region_order))
-    cmap = DimArray(cmap.colors, (region_order,))
+    colormap = GGA.resample(:Dark2_4, length(region_order))
+    colormap = DimArray(colormap.colors, (region_order,))
     
     title = "glacier mass change [Gt/yr]"
     xvar = "dm_grace"
@@ -449,13 +449,13 @@ begin
             x = region_fits_grace[At(xvar), At(rgi), At("trend"), At(false)]
             y = region_fits_grace[At(yvar), At(rgi), At("trend"), At(false)] 
             yscale = endorheic_scale_correction[At("dm"), At(rgi)]
-            scatter!(x, y .* yscale; label=GGA.rginum2label(rgi), markersize=15, color=cmap[At(rgi)])
+            scatter!(x, y .* yscale; label=GGA.rginum2label(rgi), markersize=15, color=colormap[At(rgi)])
         end
 
         for rgi = 98
-            scatter!(region_fits_grace[At(xvar), At(rgi), At("trend"), At(false)], region_fits_grace[At(yvar), At(rgi), At("trend"), At(false)]; label=nothing, markersize=15, color=cmap[At(rgi)], strokecolor=:black, strokewidth=3)
+            scatter!(region_fits_grace[At(xvar), At(rgi), At("trend"), At(false)], region_fits_grace[At(yvar), At(rgi), At("trend"), At(false)]; label=nothing, markersize=15, color=colormap[At(rgi)], strokecolor=:black, strokewidth=3)
 
-            scatter!(-20, -75; label=nothing, markersize=15, color=(cmap[At(rgi)], 0.0), strokecolor=:black, strokewidth=3)
+            scatter!(-20, -75; label=nothing, markersize=15, color=(colormap[At(rgi)], 0.0), strokecolor=:black, strokewidth=3)
 
             txt = "including endorheic"
             text!(-17, -75, text=txt, align=(:left, :center))
@@ -498,7 +498,7 @@ begin
             x = region_fits_grace[At(xvar), At(rgi), At("trend"), At(false)]
             y = region_fits_grace[At(yvar), At(rgi), At("trend"), At(false)]
             yscale = 1
-            scatter!(x, y .* yscale; label=GGA.rginum2label(rgi), markersize=15, color=cmap[At(rgi)])
+            scatter!(x, y .* yscale; label=GGA.rginum2label(rgi), markersize=15, color=colormap[At(rgi)])
         end
 
 
@@ -541,7 +541,7 @@ begin
             x = collect(region_fits_grace[At(xvar), At(rgi), At("trend"), At(false)])
             y = collect(runs_rgi_fits_grace[At(yvar), :, At(rgi), At("trend"), At(false)])
             yscale = endorheic_scale_correction[At("dm"), At(rgi)]
-            scatter!(x .* ones(length(y)), y .* yscale; label=GGA.rginum2label(rgi), markersize=15, color=cmap[At(rgi)])
+            scatter!(x .* ones(length(y)), y .* yscale; label=GGA.rginum2label(rgi), markersize=15, color=colormap[At(rgi)])
         end
 
 

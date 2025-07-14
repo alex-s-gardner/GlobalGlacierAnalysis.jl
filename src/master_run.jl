@@ -31,6 +31,7 @@
 
 begin
     import GlobalGlacierAnalysis as GGA
+    using GlobalGlacierAnalysis.MyUnits
     using Dates
 
     force_remake=false # it is best practice to delete files than to use force_remake
@@ -47,6 +48,7 @@ begin
     masks2extract_highres = [:glacier, :glacier_rgi7, :land]
     single_geotile_test = nothing
 end
+
 
 
 # [1] Build archives from satellite altimetry data (GEDI, ICESat-2, ICESat)
@@ -133,7 +135,7 @@ include("gemb_classes_binning.jl")
 
 # binning parameters
 begin
-    force_remake_before = DateTime(2025, 6, 20, 9, 0, 0) 
+    force_remake_before = DateTime(2025, 7, 1, 0, 0, 0) 
     update_geotile = true # Update select missions from previous results
     update_missions = nothing #["hugonnet"]
     warnings = false
@@ -152,10 +154,9 @@ begin
     amplitude_corrects = [true]
     remove_land_surface_trend = GGA.mission_land_trend()
     regions2replace_with_model = ["rgi19"]
-    mission_replace_with_model = "hugonnet"
+    missions2replace_with_model = ["hugonnet"]
     missions2align2 = ["icesat2", "icesat"]
 
-    process_time_show = false
     plots_show = false
     plots_save = false
     plot_save_format = ".png"
@@ -163,13 +164,14 @@ begin
     single_geotile_test = nothing #GGA.geotiles_golden_test[1] # nothing 
 end
 
+
+
 # [9] Perform statistical binning of elevation data for each geotile
 GGA.geotile_binning(;
     project_id,
     geotile_width,
     warnings,
     plots_show,
-    process_time_show=false,
 
     # run parameters
     force_remake_before,
@@ -192,11 +194,9 @@ GGA.geotile_binning(;
 )
 
 #[10] Fill, extrapolate, and adjust binned data
-GGA.geotile_binned_fill(;
-    project_id,
+GGA.geotile_binned_fill(; project_id,
     geotile_width,
-    force_remake_before=DateTime(2025, 7, 1, 1, 0, 0),
-    update_missions, # All missions must update if ICESat-2 updates
+    update_missions = ["hugonnet"], # All missions must update if ICESat-2 updates
 
     mission_reference_for_amplitude_normalization,
     all_permutations_for_glacier_only, 
@@ -209,21 +209,21 @@ GGA.geotile_binned_fill(;
     fill_params,
     amplitude_corrects, remove_land_surface_trend,
     regions2replace_with_model,
-    mission_replace_with_model,
+    missions2replace_with_model,
     missions2align2,
-    process_time_show, 
     plots_show,
     plots_save,
     plot_save_format,
     geotiles2plot,
     
-    single_geotile_test #GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
+    single_geotile_test,
+
+    force_remake_before=DateTime("2025-07-14T01:00:00") + GGA.local2utc
 )
 
 # to include in synthesis
 begin
     gemb_run_id = 4;
-    downscale_to_glacier_method = "area"
     path2runs_filled, params = GGA.binned_filled_filepaths(; 
         project_id, 
         surface_masks=["glacier", "glacier_rgi7"], 
@@ -243,73 +243,88 @@ end
 
 mission_error = GGA.binned_mad_mission(binned_file_for_over_land_mission_error)
 
-# Synthesize geotile data by combining multiple altimetry missions and applying error corrections
+# [11] Synthesize geotile data by combining multiple altimetry missions and applying error corrections
+# ~36 min for 192 runs 
 GGA.geotile_synthesize(path2runs_filled;
     error_file="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
     mission_error,
     update_missions=nothing,
-    force_remake_before,
-    missions2include=["hugonnet" "gedi" "icesat" "icesat2"],
+    force_remake_before=DateTime("2025-07-14T14:00:00") + GGA.local2utc,
 )
 
-# Calculate global glacier discharge, filled Antarctic data with modeled SMB
+#TODO: global_discharge_filled needs to be fixed.. not working right now
+# [12] Calculate global glacier discharge, filled Antarctic data with modeled SMB
 discharge = GGA.global_discharge_filled(;
     surface_mask="glacier",
     discharge_global_fn=GGA.pathlocal[:discharge_global],
-    downscale_to_glacier_method,
     gemb_run_id,
     discharge2smb_max_latitude=-60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
     pscale=1,
     Δheight=0,
     geotile_width=2,
-    force_remake_before=nothing
+    force_remake_before=DateTime("2025-07-14T14:00:00") + GGA.local2utc
 );
 
-# Calibrate GEMB (Glacier Energy and Mass Balance) model to altimetry data by finding optimal fits for grouped geotiles
+vars2load = ["runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze"]
+gemb = GGA.gemb_ensemble_dv(; gemb_run_id, vars2load)
+
+# [13] Calibrate GEMB (Glacier Energy and Mass Balance) model to altimetry data by finding optimal fits for grouped geotiles 
+# [3 hrs on 128 cores, 150GB of memory]
 GGA.gemb_calibration(
-    path2runs_synthesized; 
+    path2runs_synthesized, 
     discharge,
-    surface_mask_default="glacier", 
-    gemb_run_id, 
+    gemb;
     geotile_width,
     geotile_grouping_min_feature_area_km2=100, 
     single_geotile_test=nothing, 
-    force_remake_before
+    seasonality_weight=GGA.seasonality_weight,
+    distance_from_origin_penalty=GGA.distance_from_origin_penalty,
+    force_remake_before=DateTime("2025-07-14T14:00:00") + GGA.local2utc
 )
 
-# Calibrate GEMB model to altimetry data for each synthesized geotile dataset
+# [14] Calibrate GEMB model to altimetry data for each synthesized geotile dataset [23 min, 150GB of memory]
 GGA.geotile_synthesis_gembfit_dv(
     path2runs_synthesized, 
-    discharge; 
-    gemb_run_id, 
+    discharge,
+    gemb;
+    geotile_grouping_min_feature_area_km2=100, 
     geotile_width, 
-    force_remake_before
+    force_remake_before=DateTime("2025-07-14T14:00:00") + GGA.local2utc
 )
 
+binned_synthesized_dv_files = replace.(path2runs_synthesized, ".jld2" => "_gembfit_dv.jld2")
+binned_synthesized_dv_file_ref = "/mnt/bylot-r3/data/binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized_gembfit_dv.jld2"
 
+# [15] Generate glacier level summary nc file with key statistics and metrics for further analysis and sharing
+dstack = GGA.glacier_summary_file(
+    binned_synthesized_dv_files,
+    binned_synthesized_dv_file_ref;
+    error_quantile=0.95,
+    geotile_width,
+    error_scaling=2.0, 
+    reference_period=(DateTime(2000, 4, 1), DateTime(2024, 12, 31)), 
+    surface_mask="glacier",
+    force_remake_before=DateTime("2025-07-14T12") + GGA.local2utc
+    )
 
-
-# [11] Generate summary files with key statistics and metrics for further analysis and sharing
-include("summary_files.jl")
-
-# [12] Generate visualization plots and GIS outputs for data analysis and presentation
+# [16] Generate visualization plots and GIS outputs for data analysis and presentation
 include("synthesis_plots_gis.jl")
 
-# [13] Route land surface model runoff through river networks for river flux calculation
+# [17] Route land surface model runoff through river networks for river flux calculation
 include("land_surface_model_routing.jl")
 
-# [14] Route glacier runoff through river networks for glacier flux calculation
+# [18] Route glacier runoff through river networks for glacier flux calculation
 include("glacier_routing.jl")
 
-# [15] Calculate gmax (maximum glacier contribution to river flux)
+# [19] Calculate gmax (maximum glacier contribution to river flux)
 include("gmax_global.jl")
 
-# [16] Analyze population affected by glacier-fed river changes using buffer analysis
+# [20] Analyze population affected by glacier-fed river changes using buffer analysis
 include("river_buffer_population.jl")
 
-# [17] Generate point-based figures for gmax visualization
+# [21] Generate point-based figures for gmax visualization
 include("gmax_point_figure.jl")
 
-# [18] Generate regional results for further analysis and sharing
+# [22] Generate regional results for further analysis and sharing
 include("regional_results.jl")

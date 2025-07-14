@@ -1,9 +1,28 @@
-import GlobalGlacierAnalysis as GGA
-using DimensionalData
-using Dates
-using ProgressMeter
+# =============================================================================
+# This script generates the Extended Data Figures for the manuscript.
+#
+# It runs the full analysis pipeline for glacier height change, uncertainty,
+# discharge, and model calibration, using the GlobalGlacierAnalysis (GGA) package.
+#
+# The script is organized by Extended Data Figure number, with each section
+# corresponding to a figure or analysis step in the manuscript.
+#
+# Key steps include:
+#   - Setting up analysis parameters and file paths
+#   - Running geotile binning, filling, and synthesis
+#   - Calculating global glacier discharge
+#   - Calibrating the GEMB model
+#   - Running ensemble and sub-sampling experiments
+#
+# NOTE: Some sections (e.g., Extended Data Figure 3) may not run due to missing data.
+# =============================================================================
 
 begin
+    import GlobalGlacierAnalysis as GGA
+    using DimensionalData
+    using Dates
+    using ProgressMeter
+
     force_remake = false # it is best practice to delete files than to use force_remake
     project_id = :v01
     geotile_width = 2
@@ -25,30 +44,31 @@ begin
     amplitude_corrects = [true]
     remove_land_surface_trend = GGA.mission_land_trend()
     regions2replace_with_model = ["rgi19"]
-    mission_replace_with_model = "hugonnet"
+    missions2replace_with_model = ["hugonnet"]
     missions2align2 = ["icesat2", "icesat"]
     update_missions = nothing
-    process_time_show = false
     plots_show = true
-    plots_save = true
-    #plots_save = false
+    #plots_save = true
+    plots_save = false
     plot_save_format = ".png"
     geotiles2plot = GGA.geotiles_golden_test
-    single_geotile_test = GGA.geotiles_golden_test[1] # nothing
-    #single_geotile_test =  "lat[-32-30]lon[-072-070]"
+    single_geotile_test = GGA.geotiles_golden_test[7] # nothing
+    #single_geotile_test =  "lat[+54+56]lon[-126-124]"
 
     # for sub-sampling experiment
     nsamples = 100;
     subsample_fraction = 0.70;
 
-
-     missions2include=["hugonnet", "gedi", "icesat", "icesat2"]
+    missions2include=["hugonnet", "gedi", "icesat", "icesat2"]
     downscale_to_glacier_method = "area"
     gemb_run_id = 4
     binned_file_for_over_land_mission_error = "/mnt/bylot-r3/data/binned_unfiltered/2deg/land_dh_best_cc_nmad5_v01.jld2"
 
+    path2runs_filled, params = GGA.binned_filled_filepaths(; project_id, surface_masks, dem_ids, curvature_corrects, amplitude_corrects, binning_methods, fill_params, binned_folders, include_existing_files_only=true)
+    path2runs_synthesized = replace.(path2runs_filled, "aligned.jld2" => "synthesized.jld2")
+
     # file for synthesis error
-    path2runs_filled, params = GGA.binned_filled_filepaths(; 
+    path2runs_filled_all_ensembles, params = GGA.binned_filled_filepaths(; 
         project_id, surface_masks=["glacier", "glacier_rgi7"], 
         dem_ids=["best", "cop30_v2"], 
         curvature_corrects=[false, true], 
@@ -59,10 +79,12 @@ begin
         include_existing_files_only=true
         )
 
-end
+    path2runs_synthesized_all_ensembles = replace.(path2runs_filled_all_ensembles, "aligned.jld2" => "synthesized.jld2")
 
+end;
 
-# this is to make the curvature correction figure included in the methods section of the paper
+#[Extended Data Figure 3]
+# This is to make the curvature correction figure included in the methods section of the paper
 if false # !!! THIS CURRENTLY DOES NOT WORK BECAUSE ICESAT-2 RAW DATA WAS DELETED BY MISTAKE !!!
     GGA.geotile_binning(;
         project_id,
@@ -91,7 +113,7 @@ if false # !!! THIS CURRENTLY DOES NOT WORK BECAUSE ICESAT-2 RAW DATA WAS DELETE
     )
 end
 
-
+#[Extended Data Figure 4/5/6]
 GGA.geotile_binned_fill(;
     project_id,
     geotile_width,
@@ -106,9 +128,8 @@ GGA.geotile_binned_fill(;
     curvature_corrects, fill_params,
     amplitude_corrects, remove_land_surface_trend,
     regions2replace_with_model,
-    mission_replace_with_model,
+    missions2replace_with_model,
     missions2align2,
-    process_time_show,
     plots_show,
     plots_save,
     plot_save_format,
@@ -116,39 +137,77 @@ GGA.geotile_binned_fill(;
     single_geotile_test#GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
 )
 
-
-mission_error = GGA.binned_mad_mission(binned_file_for_over_land_mission_error)
-
-
-(dh_err, files_included) = GGA.geotile_synthesis_error(;
-    path2runs = path2runs_filled,
-    outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
-    mission_error,
-    update_missions=nothing,
-    single_geotile_test, #GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
-    force_remake_before=nothing,
-);
-
-
+#[Extended Data Figure 7]
 begin
-    
+    mission_error = GGA.binned_mad_mission(binned_file_for_over_land_mission_error)
 
-    path2runs_filled0, params = GGA.binned_filled_filepaths(; project_id, surface_masks, dem_ids, curvature_corrects, amplitude_corrects, binning_methods, fill_params, binned_folders, include_existing_files_only=true)
-    path2runs_synthesized = replace.(path2runs_filled0, "aligned.jld2" => "synthesized.jld2")
+    (dh_err, files_included) = GGA.geotile_synthesis_error(;
+        path2runs = path2runs_filled_all_ensembles,
+        outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
+        mission_error,
+        update_missions=nothing,
+        single_geotile_test, #GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
+        force_remake_before=nothing,
+    );
+
+    # example synthesis file
+    GGA.geotile_synthesize_runs(;
+        path2runs=path2runs_filled,
+        dh_err,
+        missions2include,
+        geotiles2plot=nothing,
+        single_geotile_test, #GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
+        plots_show=true,
+        plots_save=true,
+        force_remake_before=nothing
+    );
 end
 
-
-GGA.geotile_synthesize_runs(;
-    path2runs=path2runs_filled0,
-    dh_err,
-    missions2include,
-    geotiles2plot=nothing,
-    single_geotile_test, #GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
+# Calculate global glacier discharge, filled Antarctic data with modeled SMB
+discharge = GGA.global_discharge_filled(;
+    surface_mask="glacier",
+    discharge_global_fn=GGA.pathlocal[:discharge_global],
+    gemb_run_id,
+    discharge2smb_max_latitude=-60,
+    discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
+    pscale=1,
+    Δheight=0,
+    geotile_width=2,
     force_remake_before=nothing
 );
 
-# run sub-sampling experiment
-#begin
+vars2load = ["runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze"]
+gemb = GGA.gemb_ensemble_dv(; gemb_run_id, vars2load)
+
+# [Extended Data Figure 8]
+GGA.gemb_calibration(
+    path2runs_synthesized,
+    discharge,
+    gemb;
+    geotile_width,
+    geotile_grouping_min_feature_area_km2=100,
+    single_geotile_test,
+    seasonality_weight=GGA.seasonality_weight,
+    distance_from_origin_penalty=GGA.distance_from_origin_penalty,
+    plots_show=true,
+    plots_save=true,
+    force_remake_before=nothing
+)
+
+# [Extended Data Figure 9]
+begin
+    geotiles2extract = [single_geotile_test]
+
+    dh_area_averaged = GGA.ensemble_area_average_height_anomalies(path2runs_synthesized_all_ensembles; geotiles2extract=[single_geotile_test])
+
+    f = GGA.plot_area_average_height_anomaly_with_ensemble_spread(dh_area_averaged; path2runs_synthesized_reference=path2runs_synthesized, geotiles2plot=[single_geotile_test], ref_period=(Date(2000, 1, 1), Date(2001, 12, 31)), xtickspacing=5, p=0.95)
+
+    plots_show && display(f[single_geotile_test])
+    plots_save && GGA.CairoMakie.save(joinpath(GGA.pathlocal[:figures], "dh_area_averaged_ensemble_spread_$(single_geotile_test).png"), f[single_geotile_test])
+end
+
+# [Extended Data Figure 10]
+begin
     dh = GGA._simrun_init(;nsamples, missions2include, single_geotile_test)
 
     @showprogress desc = "Running sampling experiment ..." for i in 1:nsamples
@@ -169,9 +228,8 @@ GGA.geotile_synthesize_runs(;
             amplitude_corrects, 
             remove_land_surface_trend,
             regions2replace_with_model,
-            mission_replace_with_model,
+            missions2replace_with_model,
             missions2align2,
-            process_time_show,
             plots_show = false,
             plots_save = false,
             plot_save_format = nothing,
@@ -202,7 +260,7 @@ GGA.geotile_synthesize_runs(;
     fig_folder = joinpath(GGA.pathlocal[:figures], splitpath(binned_folders[1])[end-1])
     data_dir = joinpath(GGA.pathlocal[:project_dir], splitpath(binned_folders[1])[end-1])
     fname = replace(splitpath(path2runs_filled[1])[end], "aligned.jld2" => "synthesis_$(single_geotile_test)_simulation_sf$(subsample_fraction)_n$(nsamples).png")
-    save(joinpath(fig_folder, fname), f)
+    GGA.CairoMakie.save(joinpath(fig_folder, fname), f);
     
-    save(joinpath(data_dir, replace(fname, ".png" => ".jld2")), Dict("dh_area_average_median" => dh_area_average_median, "dh_area_average_error" => dh_area_average_error))
+    GGA.FileIO.save(joinpath(data_dir, replace(fname, ".png" => ".jld2")), Dict("dh_area_average_median" => dh_area_average_median, "dh_area_average_error" => dh_area_average_error))
 end

@@ -1,19 +1,17 @@
-"""
-    land_surface_model_routing.jl
-
-Process and route land surface model runoff through river networks.
-
-This script:
-1. Loads GLDAS land surface model data (CLSM, VIC, NOAH)
-2. Processes surface runoff, subsurface runoff, and snowmelt
-3. Routes water through river networks using a linear reservoir model
-4. Calculates river discharge for glacier-connected river reaches
-5. Validates results against independent river discharge estimates
-6. Saves processed data as NetCDF files for downstream analysis
-
-The routing accounts for time delays in subsurface runoff using a 45-day 
-concentration time parameter following Getirana et al. (2012).
-"""
+# land_surface_model_routing.jl
+#
+# Process and route land surface model runoff through river networks.
+#
+# This script:
+# 1. Loads GLDAS land surface model data (CLSM, VIC, NOAH)
+# 2. Processes surface runoff, subsurface runoff, and snowmelt
+# 3. Routes water through river networks using a linear reservoir model
+# 4. Calculates river discharge for glacier-connected river reaches
+# 5. Validates results against independent river discharge estimates
+# 6. Saves processed data as NetCDF files for downstream analysis
+#
+# The routing accounts for time delays in subsurface runoff using a 45-day 
+# concentration time parameter following Getirana et al. (2012).
 
 begin
     import GlobalGlacierAnalysis as GGA

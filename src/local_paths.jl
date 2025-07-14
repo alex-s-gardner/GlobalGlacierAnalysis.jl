@@ -20,15 +20,18 @@ manually and all dependent files will need to be downloaded and stored in the lo
 """
 function setpaths() 
     hostname = gethostname()
+    project_dir = "/mnt/bylot-r3/data/project_data/"
+    data_dir = "/mnt/bylot-r3/data/"
+
     if (hostname == "bylot.jpl.nasa.gov") || (hostname == "devon.jpl.nasa.gov") || (hostname == "baffin.jpl.nasa.gov")
 
         pathlocal = (
             
             # all altimetry and geotile data will be stored in a stucture within data_dir
-            data_dir = "/mnt/bylot-r3/data/",
+            data_dir = data_dir,
 
             # folder where random project data is stored
-            project_dir = "/mnt/bylot-r3/data/project_data/",
+            project_dir=project_dir,
 
             # figure output directory
             figures = "/mnt/bylot-r3/altim_figs/",
@@ -133,6 +136,8 @@ function setpaths()
 
             # discharge data for global discharge analysis [created as part of processing pipeline]
             discharge_global = "/mnt/bylot-r3/data/GlacierOutlines/GlacierDischarge/global_glacier_discharge.jld2",
+
+            glacier_summary = joinpath(project_dir, "gardner2025_glacier_summary.nc")
         )
 
         return pathlocal

@@ -813,9 +813,9 @@ version = "0.6.54"
 
 [[deps.DimensionalData]]
 deps = ["Adapt", "ArrayInterface", "ConstructionBase", "DataAPI", "Dates", "Extents", "Interfaces", "IntervalSets", "InvertedIndices", "IteratorInterfaceExtensions", "LinearAlgebra", "OrderedCollections", "PrecompileTools", "Random", "RecipesBase", "SparseArrays", "Statistics", "TableTraits", "Tables"]
-git-tree-sha1 = "d49e94d7ff9a76ac9741a19dc51279afeaa836ca"
+git-tree-sha1 = "ea9e2da6a0729ace75f3478f756fc55a29459072"
 uuid = "0703355e-b756-11e9-17c0-8b28908087d0"
-version = "0.29.16"
+version = "0.29.18"
 
     [deps.DimensionalData.extensions]
     DimensionalDataAlgebraOfGraphicsExt = "AlgebraOfGraphics"

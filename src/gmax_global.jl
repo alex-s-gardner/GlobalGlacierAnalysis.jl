@@ -1,19 +1,18 @@
-"""
-    gmax_global.jl
-
-Calculate the climatological maximum monthly fractional contribution of glacier runoff to total river flux (gmax).
-
-This script:
-1. Loads glacier runoff and river flux data from NetCDF files
-2. Calculates the fraction of total river flux contributed by glacier runoff
-3. Determines the maximum monthly contribution (gmax) for each river segment
-4. Processes river network data to identify terminal points (sinks)
-5. Adds glacier discharge data from external sources
-6. Writes results to GeoPackage files for further analysis
-
-The script handles time series data from 2000-2024 and focuses on peak runoff periods.
-"""
-
+# ============================================================================
+# gmax_global.jl
+#
+# Calculate the climatological maximum monthly fractional contribution of glacier runoff to total river flux (gmax).
+#
+# This script:
+# 1. Loads glacier runoff and river flux data from NetCDF files
+# 2. Calculates the fraction of total river flux contributed by glacier runoff
+# 3. Determines the maximum monthly contribution (gmax) for each river segment
+# 4. Processes river network data to identify terminal points (sinks)
+# 5. Adds glacier discharge data from external sources
+# 6. Writes results to GeoPackage files for further analysis
+#
+# The script handles time series data from 2000-2024 and focuses on peak runoff periods.
+# ============================================================================
 begin
     using NCDatasets
     using GeoDataFrames
@@ -28,13 +27,13 @@ begin
     using CairoMakie
     using Unitful
 
-    dates4trend = [DateTime(2000, 3, 1), DateTime(2024, 12, 15)]
+    dates4trend = [DateTime(2000, 3, 1), DateTime(2024, 10, 01)] # last day of river flux sata  = DateTime(2024, 10, 01)
 
     paths = GGA.pathlocal
 
-    glacier_summary_file = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
+    glacier_summary_file = GGA.pathlocal[:glacier_summary]
     glacier_summary_riverflux_file = replace(glacier_summary_file, ".nc" => "_riverflux.nc")
-    glacier_summary_gmax_file = replace(glacier_summary_file, ".nc" => "_gmax.pkg")
+    glacier_summary_gmax_file = replace(glacier_summary_file, ".nc" => "_gmax.gpkg")
 
     glacier_rivers_land_flux_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_Qs_acc_Qsb_acc.nc")
     glacier_rivers_snow_flux_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier_Qsm_acc.nc")
@@ -43,22 +42,22 @@ begin
     rivers_paths = GGA.allfiles(paths[:river]; fn_endswith="MERIT_Hydro_v07_Basins_v01.shp", fn_startswith="riv_pfaf")
     glacier_rivers_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
+   
     SECONDS_PER_DAY = 86400
+    gtyr2m3s = 1e9 / 365.25 / SECONDS_PER_DAY
 end
 
-"""
-Calculate the maximum monthly fractional contribution of glacier runoff to total river flux.
-
-This function:
-1. Loads glacier runoff and river flux data from NetCDF files
-2. Aligns time series data and ensures consistent dimensions
-3. Focuses on peak runoff periods (±2 months around maximum) for each river segment
-4. Calculates the fraction of total river flux contributed by glacier runoff
-5. Determines monthly averages and extremes (min/max) of glacier contribution
-6. Adds results to river network data for spatial analysis
-
-Returns a GeoDataFrame with river segments and their glacier runoff contribution metrics.
-"""
+# Calculate the maximum monthly fractional contribution of glacier runoff to total river flux.
+#
+# This block:
+# 1. Loads glacier runoff and river flux data from NetCDF files
+# 2. Aligns time series data and ensures consistent dimensions
+# 3. Focuses on peak runoff periods (±2 months around maximum) for each river segment
+# 4. Calculates the fraction of total river flux contributed by glacier runoff
+# 5. Determines monthly averages and extremes (min/max) of glacier contribution
+# 6. Adds results to river network data for spatial analysis
+#
+# Returns a GeoDataFrame with river segments and their glacier runoff contribution metrics.
 @time begin
     # load data from netcdf files
     glacier_flux_nc = NCDataset(glacier_summary_riverflux_file)
@@ -118,7 +117,7 @@ Returns a GeoDataFrame with river segments and their glacier runoff contribution
     end
 
     # calcualte the fraction of flux that is from glacier runoff
-    glacier_fraction = @d glacier_runoff ./ (glacier_runoff .+ river_flux)
+    glacier_fraction = @d (glacier_runoff ./ (glacier_runoff .+ river_flux))
     
     glacier_fraction[isnan.(glacier_fraction)] .= 0
     glacier_fraction = round.(Int8, glacier_fraction.*100)
@@ -175,6 +174,8 @@ Returns a GeoDataFrame with river segments and their glacier runoff contribution
 
     river_flux_monthly = groupby(river_flux, Ti => Bins(month, 8:9))
 
+    # This block selects river segments in Alaska with gmax > 50% for between 1 and 11 years,
+    # within a specified spatial extent, and plots their geometries and monthly river fluxes.
     begin
         min_count = 1
         max_count = 11
@@ -186,8 +187,6 @@ Returns a GeoDataFrame with river segments and their glacier runoff contribution
 
         index = index_spatial .& index_gmax
         plot(rivers[index, :geometry])
-
-    
 
         dmonth = dims(river_flux_monthly, :Ti)
         i = 1;
@@ -212,22 +211,20 @@ Returns a GeoDataFrame with river segments and their glacier runoff contribution
     GeoDataFrames.write(glacier_summary_gmax_file , rivers)
 end
 
-"""
-Create a point dataset of river sinks with discharge information.
-
-This function:
-1. Loads glacier river network data
-2. Identifies terminal rivers (sinks) where rivers end
-3. Converts river geometries to point centroids
-4. Adds runoff information from the rivers dataframe
-5. Incorporates discharge data from external sources
-6. Categorizes sinks by type (ocean terminating, inland, etc.)
-7. Calculates marker sizes based on runoff volume
-8. Saves the resulting point dataset to disk
-
-The output is a GeoPackage file containing point geometries for all river sinks
-with associated attributes for visualization and analysis.
-"""
+# Create a point dataset of river sinks with discharge information.
+#
+# This block:
+# 1. Loads glacier river network data
+# 2. Identifies terminal rivers (sinks) where rivers end
+# 3. Converts river geometries to point centroids
+# 4. Adds runoff information from the rivers dataframe
+# 5. Incorporates discharge data from external sources
+# 6. Categorizes sinks by type (ocean terminating, inland, etc.)
+# 7. Calculates marker sizes based on runoff volume
+# 8. Saves the resulting point dataset to disk
+#
+# The output is a GeoPackage file containing point geometries for all river sinks
+# with associated attributes for visualization and analysis.
 @time begin #[90s]
     # load glacier river paths
     glacier_rivers = GeoDataFrames.read(glacier_rivers_path)
@@ -252,7 +249,10 @@ with associated attributes for visualization and analysis.
     discharge0[!, :COMID] .= 0
     discharge0[!, :discharge] .= true
     discharge0[!, :ocean_terminating] .= true
-    discharge0[!, :runoff_max_avg] .= GGA.gt_per_yr_to_m3_per_s.(discharge.discharge_gtyr)
+
+    
+
+    discharge0[!, :runoff_max_avg] .= discharge.discharge_gtyr .* gtyr2m3s
 
     # join the discharge to the river sinks
     sinks = vcat(sinks, discharge0)
@@ -266,6 +266,6 @@ with associated attributes for visualization and analysis.
     sinks[sinks.discharge, :type] .= Int8(3)
     sinks[.!sinks.ocean_terminating, :type] .= Int8(2)
     # write to disk
-    sinks_path = replace(glacier_rivers_path, ".arrow" => "_sinks.pkg")
+    sinks_path = replace(glacier_rivers_path, ".arrow" => "_sinks.gpkg")
     GeoDataFrames.write(sinks_path, sinks)
 end
