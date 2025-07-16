@@ -1056,8 +1056,8 @@ The second panel shows step histograms of the model and altimetry-derived amplit
 """
 function plot_hist_gemb_altim_trend_amplitude(geotiles0)
     f = _publication_figure(columns=2, rows=1)
-    var1 = "dv_trend"
-    var2 = "dv_altim_trend"
+    var1 = "dh_trend"
+    var2 = "dh_altim_trend"
 
     ax1 = CairoMakie.Axis(f[1, 1]; xlabel="trend", ylabel="count")
     ax1.xtickformat = values -> ["$(round(Int,value))m yr⁻¹" for value in values]
@@ -1065,8 +1065,8 @@ function plot_hist_gemb_altim_trend_amplitude(geotiles0)
     CairoMakie.stephist!(geotiles0[:, var2], bins=-5:0.25:5; label="synthesis")
     axislegend(ax1, framevisible=false)
 
-    var1 = "dv_amplitude"
-    var2 = "dv_altim_amplitude"
+    var1 = "dh_amplitude"
+    var2 = "dh_altim_amplitude"
     ax2 = CairoMakie.Axis(f[1, 2]; xlabel="amplitude")
     ax2.xtickformat = values -> ["$(round(Int,value))m" for value in values]
 
@@ -1102,9 +1102,9 @@ function plot_hist_pscale_Δheight(gemb_fit)
     ax1 = CairoMakie.Axis(f[1, 1]; xlabel="precipitation scaling", ylabel="count")
     CairoMakie.hist!(ax1, gemb_fit[:, :pscale], bins=0.25:0.25:4)
     ylims!(low=0)
-    ax2 = CairoMakie.Axis(f[1, 2]; xlabel="height offset")
+    ax2 = CairoMakie.Axis(f[1, 2]; xlabel="height offset / melt scaling")
     ax2.xtickformat = values -> ["$(round(Int,value))m" for value in values]
-    CairoMakie.hist!(ax2, gemb_fit[:, :Δheight], bins=-3000:100:3000)
+    CairoMakie.hist!(ax2, gemb_fit[:, :Δheight], bins=-3000:200:3000)
     ylims!(low=0)
     #axislegend(ax1, framevisible = false)
     return f
@@ -1534,4 +1534,130 @@ function plot_dh_gemb_ensemble(gemb_dv, area_km2; geotile = "", title_prefix="")
     end
 
     return figures
+end
+
+
+
+"""
+    plot_point_location_river_flux(land_flux, glacier_flux; dates4plot, COMID, name)
+
+Plot river flux components (land and glacier) for a specific location, without snow flux.
+
+This is a convenience wrapper for `plot_point_location_river_flux` that omits the snow flux argument.
+
+# Arguments
+- `land_flux`: DimArray of land river flux (time × COMID).
+- `glacier_flux`: DimArray of glacier river flux (time × COMID).
+- `dates4plot`: Tuple of (start_date, end_date) for plotting.
+- `COMID`: Integer river reach identifier.
+- `name`: String for plot title.
+
+# Returns
+- `f`: Makie Figure object.
+"""
+function plot_point_location_river_flux(land_flux, glacier_flux; date_range, COMID, name, show_title=true)
+    f = plot_point_location_river_flux(land_flux, glacier_flux, nothing; date_range, COMID, name, show_title)
+    return f
+end
+
+"""
+    plot_point_location_river_flux(land_flux, glacier_flux, snow_flux; dates4plot, COMID, name)
+
+Plot river flux components and glacier contribution for a specific location.
+
+Creates a figure with:
+- Stacked area plots of land, glacier, and (optionally) snow river fluxes over time for a given COMID.
+- Glacier fraction of total river flux, with seasonal maximum (gmax) highlighted.
+
+# Arguments
+- `land_flux`: DimArray of land river flux (time × COMID).
+- `glacier_flux`: DimArray of glacier river flux (time × COMID).
+- `snow_flux`: DimArray of snow river flux (time × COMID), or `nothing` if not available.
+- `dates4plot`: Tuple of (start_date, end_date) for plotting.
+- `COMID`: Integer river reach identifier.
+- `name`: String for plot title.
+
+# Returns
+- `f`: Makie Figure object.
+"""
+function plot_point_location_river_flux(land_flux, glacier_flux, snow_flux; date_range, COMID, name, show_title=true)
+   
+
+    f = _publication_figure(columns=1, rows=1)
+
+    date_interval = date_range[1]..date_range[2]
+
+    land_flux0 = land_flux[Ti=date_interval, COMID=At(COMID)]
+    glacier_flux0 = glacier_flux[Ti=date_interval, COMID=At(COMID)]
+
+    if !isnothing(snow_flux)
+         seperate_out_snow = true
+         snow_flux0 = snow_flux[Ti = date_interval, COMID=At(COMID)]
+    else
+        seperate_out_snow = false
+    end
+
+    x = decimalyear.(val(dims(land_flux0, :Ti)))
+    xticks = collect(floor(minimum(x)/5)*5:5:ceil(maximum(x)/5)*5)
+
+    seperate_out_snow && (y_snow = parent(snow_flux0) ./ 1000)
+
+    ax1 = CairoMakie.Axis(f[1:2, 1]; xticklabelsvisible=false, xticksvisible=false, xticks=xticks)
+    if show_title
+        ax1.title = name
+    end
+
+    # plot land flux
+    y = parent(land_flux0) ./ 1000
+    seperate_out_snow && (y .-= y_snow)
+
+    x0 = vcat(x[1], x, x[end])
+    yunits = Unitful.unit(land_flux[1])
+    y = vcat(0 * yunits, y, 0 * yunits)
+    max_y = maximum(y)
+    poly!(ax1, GI.Point.(ustrip(x0), ustrip(y)); color=(:peru, 1), label="land")
+
+    # plot snow flux
+    if seperate_out_snow
+        y = y_snow
+        yunits = Unitful.unit(y[1])
+        y = vcat(0.0 * yunits, y, 0.0 * yunits)
+        max_y = max(maximum(y), max_y)
+        poly!(ax1, GI.Point.(x0, ustrip(y)); color=(:gray, 0.5), label="snow")
+    end
+
+    y = parent(glacier_flux0) ./ 1000
+    yunits = Unitful.unit(y[1])
+    y = vcat(0 * yunits, y, 0 * yunits)
+    poly!(ax1, GI.Point.(ustrip(x0), ustrip(y)); color=(:blue, 0.5), label="glacier")
+
+    axislegend(ax1; merge=true, backgroundcolor=(:white, 0), framevisible=false, position=:lt)
+    ax1.ylabel = "river flux (m³/s) x 10⁻³"
+    xlims!(ax1, minimum(xticks), maximum(xticks))
+    ylims!(ax1, 0, ustrip(max_y))
+
+    ax2 = CairoMakie.Axis(f[3, 1], xticks=xticks)
+    glacier_frac = glacier_flux0 ./ (land_flux0 .+ glacier_flux0) * 100
+
+    gmax = groupby(glacier_frac, Ti => Bins(month, 1:12))
+    gmax = mean.(gmax; dims=:Ti)
+    gmax = cat(gmax...; dims=dims(gmax, :Ti))
+    dTi = dims(gmax, :Ti)
+    gmax_month = dTi[argmax(gmax)]
+    gmax = round(Int8, maximum(gmax))
+
+    foo = glacier_frac[month.(dims(glacier_frac, :Ti)).==gmax_month]
+    gmax_min = round(Int8, minimum(foo))
+    gmax_max = round(Int8, maximum(foo))
+
+    lines!(ax2, x, parent(glacier_frac); color=(:blue, 0.5))
+    lines!(ax2, [minimum(x), maximum(x)], [gmax_min, gmax_min]; color=(:gray, 0.5), linestyle=:dash)
+    lines!(ax2, [minimum(x), maximum(x)], [gmax_max, gmax_max]; color=(:gray, 0.5), linestyle=:dash)
+    lines!(ax2, [minimum(x), maximum(x)], [gmax, gmax]; color=(:black, 1))
+    ax2.ylabel = "glacier fraction [%]"
+
+    xlims!(ax2, minimum(xticks), maximum(xticks))
+    text!(maximum(x), mean((gmax_max, gmax)), text="gmax = $gmax [$(Dates.monthname(gmax_month))] ", align=[:right, :center], color=(:black, 0.8), overdraw=true)
+
+    return f
 end

@@ -30,58 +30,120 @@ Pkg.add("https://github.com/alex-s-gardner/GlobalGlacierAnalysis.jl")
 
 ### 2. Run the Workflow
 
-The main workflow is orchestrated by `src/master_run.jl`:
+The main workflow is orchestrated by `src/run_all.jl`:
 
 ```bash
-julia --project src/master_run.jl
+julia --project src/run_all.jl
 ```
 
-This executes the complete pipeline:
-1. Build satellite altimetry archives
-2. Process glacier elevation change data
-3. Extract and validate DEMs, masks, and canopy height
-4. Perform hypsometric and statistical analyses
-5. Synthesize data into global/regional datasets
-6. Route runoff through river networks
-7. Analyze glacier contributions to rivers and affected populations
-8. Generate figures and regional results
+This executes the complete pipeline in the following sequence:
 
-**Processing times:**
+1. **Build satellite altimetry archives** - Processes GEDI, ICESat-2, ICESat data
+2. **Process Hugonnet glacier elevation change data** - Extracts and validates glacier change datasets
+3. **Validate existing ancillary data** - Checks existing DEMs, masks for geotiles
+4. **Extract DEM data** - Processes elevation data for each geotile with slope/curvature calculations
+5. **Extract mask data** - Processes glacier, land ice, and other surface masks
+6. **Extract canopy height data** - Processes vegetation height information
+7. **Perform hypsometric analysis** - Analyzes elevation distribution patterns
+8. **Create glacier model (GEMB) classes** - Generates glacier energy and mass balance classifications
+9. **Perform statistical binning** - Applies statistical methods to elevation change data
+10. **Fill, extrapolate, and adjust binned data** - Completes missing data using interpolation methods
+11. **Synthesize processed geotile data** - Combines multiple altimetry missions with error corrections
+12. **Calculate global glacier discharge** - Computes ice discharge with filled Antarctic data using modeled SMB
+13. **Calibrate GEMB model to altimetry data** - Optimizes glacier model parameters for grouped geotiles
+14. **Calibrate GEMB model for each synthesized geotile dataset** - Applies model calibration to individual datasets
+15. **Generate glacier-level summary files** - Creates key statistics and metrics for further analysis
+16. **Export geotile-level glacier change trends** - Produces GIS-compatible files with trends and amplitudes
+17. **Route land surface model runoff** - Processes terrestrial water fluxes through river networks
+18. **Route glacier runoff** - Processes glacier meltwater through river networks
+19. **Calculate gmax** - Determines maximum glacier contribution to river flux
+20. **Analyze population affected by glacier-fed river changes** - Quantifies population impact using buffer analysis
+21. **Generate point-based figures** - Creates gmax visualization plots
+22. **Produce regional results** - Generates regional analysis outputs for sharing
+23. **Generate extended data figures** - Produces manuscript-quality visualizations
+
+**Processing times (on RAID @ 100 MB/s):**
 - GEDI: ~4 days
-- ICESat-2: ~1 week
+- ICESat-2: ~1 week  
 - ICESat: ~3 hours
 - Full workflow: several days depending on data and hardware
 
-### 3. Customization
+### 3. Configuration
 
-- **Data paths:** Edit `src/local_paths.jl` to match your data storage locations
-- **Partial runs:** Comment/uncomment `include(...)` lines in `master_run.jl` to run specific steps
-- **Checkpoints:** The workflow implements checkpoint logic for efficient restarts
+The workflow can be customized by modifying parameters at the top of `src/run_all.jl` and parameters within scripts called by `src/run_all.jl`
 
-## Key Scripts
 
-Each processing step is implemented as a separate script in `src/`:
+### 4. Checkpoint System
 
-- `geotile_build_archive.jl` — Build altimetry archives
-- `geotile_build_hugonnet.jl` — Process Hugonnet glacier change data
-- `geotile_hyps.jl` — Hypsometric analysis
-- `geotile_binning.jl` — Statistical binning
-- `geotile_synthesis.jl` — Synthesize data
-- `glacier_routing.jl` — Route glacier runoff
-- `river_buffer_population.jl` — Analyze population affected by glacier-fed rivers
-- `regional_results.jl` — Produce regional results
+The workflow implements checkpoint logic to avoid redundant processing:
+- Set `force_remake = false` for normal operation
+- Use `force_remake_before` parameters for selective reprocessing
+- Comment/uncomment specific steps in `run_all.jl` for partial runs
+
+## Key Components
+
+### Core Processing Scripts
+- `run_all.jl` — Main workflow orchestrator
+- `gemb_classes_binning.jl` — Glacier model classification
+- `land_surface_model_routing.jl` — Terrestrial runoff routing
+- `glacier_routing.jl` — Glacier runoff routing
+- `gmax_global.jl` — Maximum glacier contribution analysis
+- `river_buffer_population.jl` — Population impact analysis
+- `gmax_point_figure.jl` — Visualization generation
+- `regional_results.jl` — Regional analysis outputs
+- `manuscript_extended_data_figures.jl` — Publication figures
+
+### Utility Modules
+
+The package includes 13 utility modules that provide specialized functionality:
+
+**Core Utilities:**
+- `utilities.jl` — General utility functions and helpers
+- `utilities_project.jl` — Project management and configuration utilities
+- `utilities_main.jl` — Main workflow and orchestration functions
+
+**Data Processing:**
+- `utilities_build_archive.jl` — Satellite altimetry archive building functions
+- `utilities_hugonnet.jl` — Hugonnet glacier elevation change data processing
+- `utilities_readers.jl` — Data reading and input/output functions
+- `utilities_binning.jl` — Statistical binning and data aggregation utilities
+- `utilities_binning_lowlevel.jl` — Low-level binning algorithms and functions
+
+**Analysis & Synthesis:**
+- `utilities_gemb.jl` — Glacier Energy and Mass Balance (GEMB) model utilities
+- `utilities_synthesis.jl` — Data synthesis and combination functions
+- `utilities_routing.jl` — River routing and hydrological analysis utilities
+
+**Output & Visualization:**
+- `utilities_postprocessing.jl` — Post-processing and data export functions
+- `utilities_plotting.jl` — Visualization and plotting utilities
+
+**Geospatial:**
+- `mapzonal.jl` — Zonal statistics and spatial analysis functions
 
 ## Dependencies
 
 Core dependencies include:
-- DimensionalData, Rasters, GeoInterface
-- CairoMakie, DataFrames, Statistics
-- FileIO, NCDatasets
+- **Geospatial:** Proj, GeoArrays, SpaceLiDAR, Geodesy, Rasters, Shapefile, LibGEOS, GeoInterface
+- **Data Processing:** DataFrames, Statistics, FileIO, Arrow, HTTP, MAT, CSV, NCDatasets, JLD2
+- **Visualization:** CairoMakie, ColorSchemes
+- **Scientific Computing:** NonlinearSolve, LsqFit, Distributions, LinearAlgebra
+- **Custom Packages:** RangeExtractor, GeoTiles, BinStatistics
 
 Install all dependencies with:
 ```julia
 Pkg.instantiate()
 ```
+
+## Data Outputs
+
+The workflow produces:
+- **Geotile-level data** - Processed elevation change and statistics
+- **Global datasets** - Synthesized glacier mass change estimates
+- **River routing results** - Glacier contribution to river systems
+- **Population analysis** - Affected population statistics
+- **GIS outputs** - Geospatial files for further analysis
+- **Visualization figures** - Publication-ready plots and maps
 
 ## License
 

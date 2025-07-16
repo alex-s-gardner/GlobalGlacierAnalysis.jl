@@ -906,8 +906,6 @@ function gemb_calibration(
             df.geometry = extent2rectangle.(df.extent)
             df = df[:, Not(:extent)]
 
-            println(nrow(df))
-    
             GeoDataFrames.write(synthesized_gemb_fit, df)
             println("\n $binned_synthesized_file optimal GEMB fit found: $(round(Int,time() -t1))s")
         end

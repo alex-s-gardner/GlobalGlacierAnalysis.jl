@@ -33,7 +33,7 @@
 # - Analysis of endorheic vs. ocean-draining glacier contributions
 
 # NOTE: errors are at the 95% confidence interval from the reference run for this study and 95% confidence interval from GRACE
-@time begin
+begin
     import GlobalGlacierAnalysis as GGA
     using DataFrames
     using FileIO
@@ -50,6 +50,9 @@
     import GeometryOps as GO
     using NCDatasets
     using CSV
+
+    error_quantile=0.95
+    error_scaling=1.5
 
     # to include in uncertainty
     paths = GGA.pathlocal
@@ -96,10 +99,12 @@
         end
     end
     path2runs = replace.(path2runs, "aligned.jld2" => "synthesized.jld2")
+
+    ocean_area_km2 = 362.5 * 1E6
 end
 
 # pre-process data
-@time begin #[10 min]
+begin #[10 min]
     # load discharge for each RGI [<1s]
     discharge_rgi = GGA.discharge_rgi(path2discharge, path2rgi_regions; fractional_error = discharge_fractional_error);
 
@@ -114,10 +119,10 @@ end
     GGA.check_for_all_nans(runs_rgi)
 
     # extract reference run and calculate 95% confidence interval
-    regions = GGA.runs_ref_and_err(runs_rgi, path2reference; p = 0.95);
+    regions = GGA.runs_ref_and_err(runs_rgi, path2reference; error_quantile, error_scaling);
     GGA.check_for_all_nans(regions)
 
-    region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, path2reference; p = 0.95, discharge = discharge_rgi)
+    region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, path2reference; error_quantile, error_scaling, discharge = discharge_rgi)
     GGA.check_for_all_nans(region_fits)
 
     # load GRACE data [95% confidence interval]
@@ -131,7 +136,7 @@ end
     regions["dm_glambie"][:,:,At(false)] = GGA.regions_center!(regions["dm_glambie"][:,:,At(false)], center_on_dates)
     GGA.check_for_all_nans(regions)
 
-    # add dicarge to region_fits
+    # add discarge to region_fits
     (dvarname, drgi, dparameters, derr) = dims(region_fits)
     region_fits = cat(region_fits, zeros(Dim{:varname}(["discharge"]), drgi, dparameters, derr), dims=:varname)
     region_fits[At("discharge"), :, At("trend"), At(false)] = discharge_rgi[:, At(false)]
@@ -150,7 +155,7 @@ end
     runs_rgi_fits_grace = GGA.rgi_trends(runs_rgi, discharge_rgi, dates_altim_grace_overlap);
     dvarname2 = Dim{:varname}([collect(dvarname)..., "dm_grace"])
     region_fits_grace = zeros(dvarname2, drgi, dparameters, derr)
-    region_fits_grace[At(collect(dvarname)), :, : ,:] = GGA.region_fit_ref_and_err(runs_rgi_fits_grace, path2reference; p=0.95, discharge = discharge_rgi)
+    region_fits_grace[At(collect(dvarname)), :, : ,:] = GGA.region_fit_ref_and_err(runs_rgi_fits_grace, path2reference; error_quantile, error_scaling, discharge = discharge_rgi)
 
     # regions 12 and 99 contain NaN so exclude them in trend calculation
     region_fits_grace[At("dm_grace"), At(setdiff(drgi, [12, 99])), : , At(false)] = GGA.rgi_trends(regions["dm_grace"][At(setdiff(drgi, [12, 99])),:, At(false)], dates_altim_grace_overlap);
@@ -159,14 +164,14 @@ end
     dvarname2 = Dim{:varname}([collect(dvarname)..., "dm_glambie"])
     region_fits_glambie = zeros(dvarname2, drgi, dparameters, derr)
     runs_rgi_fits_glambie = GGA.rgi_trends(runs_rgi, discharge_rgi, dates_glambie_overlap);
-    region_fits_glambie[At(collect(dvarname)), :, :, :] = GGA.region_fit_ref_and_err(runs_rgi_fits_glambie, path2reference; p=0.95, discharge = discharge_rgi)
+    region_fits_glambie[At(collect(dvarname)), :, :, :] = GGA.region_fit_ref_and_err(runs_rgi_fits_glambie, path2reference; error_quantile, error_scaling, discharge = discharge_rgi)
     region_fits_glambie[At("dm_glambie"), :, : , At(false)] = GGA.rgi_trends(regions["dm_glambie"][:,:, At(false)], dates_glambie_overlap);
 
     runs_rgi_noaltim = filter(p -> p[1] in setdiff(keys(runs_rgi), ["dm_altim", "dv_altim"]), runs_rgi)
     runs_rgi_fits_firstdecade = GGA.rgi_trends(runs_rgi_noaltim, discharge_rgi, dates_firstdecade);
-    region_fits_firstdecade = GGA.region_fit_ref_and_err(runs_rgi_fits_firstdecade, path2reference; p=0.95, discharge = discharge_rgi);
+    region_fits_firstdecade = GGA.region_fit_ref_and_err(runs_rgi_fits_firstdecade, path2reference; error_quantile, error_scaling, discharge = discharge_rgi);
     runs_rgi_fits_lastdecade = GGA.rgi_trends(runs_rgi_noaltim, discharge_rgi, dates_lastdecade);
-    region_fits_lastdecade = GGA.region_fit_ref_and_err(runs_rgi_fits_lastdecade, path2reference; p=0.95, discharge = discharge_rgi);
+    region_fits_lastdecade = GGA.region_fit_ref_and_err(runs_rgi_fits_lastdecade, path2reference; error_quantile, error_scaling, discharge = discharge_rgi);
 end;
 
 # create table with rgi results and error bars
@@ -219,9 +224,18 @@ begin
 
     varname = "dm";
     
+    println("Total glacier contibution to rivers and oceans: $(round(Int,region_fits[At("runoff"), At(99), At("trend"), At(false)] + region_fits[At("discharge"), At(99), At("trend"), At(false)]))) ± $(round(Int,sqrt(region_fits[At("dm"), At(99), At("trend"), At(true)].^2 + region_fits[At("discharge"), At(99), At("trend"), At(true)].^2))) Gt/yr")
+
     println("Total glacier loss: $(round(Int,region_fits[At("dm"), At(99), At("trend"), At(false)])) ± $(round(Int,region_fits[At("dm"), At(99), At("trend"), At(true)])) Gt/yr")
 
+    println("Total glacier runoff acceleration: $(round(region_fits[At("runoff"), At(99), At("acceleration"), At(false)], digits=1)) ± $(round(region_fits[At("runoff"), At(99), At("acceleration"), At(true)], digits=1)) Gt/yr²")
 
+    println("Total glacier accumulation acceleration: $(round(region_fits[At("acc"), At(99), At("acceleration"), At(false)], digits=1)) ± $(round(region_fits[At("acc"), At(99), At("acceleration"), At(true)], digits=1)) Gt/yr²")
+
+    println("Total glacier loss: $(round(Int, region_fits[At("dm"), At(99), At("trend"), At(false)])) ± $(round(Int, region_fits[At("dm"), At(99), At("trend"), At(true)])) Gt/yr")
+
+    println("Total glacier loss acceleration: $(round(region_fits[At("dm"), At(99), At("acceleration"), At(false)], digits=1)) ± $(round(region_fits[At("dm"), At(99), At("acceleration"), At(true)], digits=1)) Gt/yr²")
+   
     rgi_subset = [1, 5, 3, 98, 2, 17]
     fact_of_total = round(Int, sum(region_fits[At(varname),At(rgi_subset),At("trend"),At(false)]) ./ sum(region_fits[At(varname),At(rgis),At("trend"),At(false)]) *100)
     println("$(join(GGA.rginum2label.(rgi_subset), ", ")) comprise $(fact_of_total)% of total mass change")
@@ -241,14 +255,13 @@ begin
     end
     println("")
 
-
     # fraction of glacier loss that is endorheic
     for varname in ["dm", "runoff"]
         println("-----------------------------------$varname-----------------------------------------")
         dm_endhoric = round(Int, (1 - endorheic_scale_correction[At(varname), At(99)]) .* region_fits[At(varname), At(99), At("trend"), At(false)])
         dm_ocean = round(Int, (endorheic_scale_correction[At(varname), At(99)]) .* region_fits[At(varname), At(99), At("trend"), At(false)])
         dm_endhoric_frac = round((1 - endorheic_scale_correction[At(varname), At(99)])*100, digits=1)
-        println("$(100 - dm_endhoric_frac)% ($(dm_ocean) Gt/yr) of glacier $varname is ocean terminating")
+        println("$(100 - dm_endhoric_frac)% ($(dm_ocean) Gt/yr, $(round((dm_ocean / ocean_area_km2* 1E6), digits=2)) mm/yr SLR) of glacier $varname is ocean terminating")
         println("$(dm_endhoric_frac)% ($(dm_endhoric) Gt/yr) of glacier $varname is endhoric")
 
         hma_frac_of_total_endorheic = dm_gt_sinktype[At(varname), At(98), At(true)] / dm_gt_sinktype[At(varname), At(99), At(true)];
@@ -256,7 +269,7 @@ begin
         println("HMA comprises $(round(Int,hma_frac_of_total_endorheic*100))% ($hma_endorheic Gt/yr) of total endorheic $varname")
         
         na_frac_of_total_endorheic = dm_gt_sinktype[At(varname), At(12), At(true)] / dm_gt_sinktype[At(varname), At(99), At(true)];
-        na_endorheic = round((1 - endorheic_scale_correction[At(varname), At(12)]) .* region_fits[At(varname), At(12), At("trend"), At(false)], digits = 1)
+        na_endorheic = round(dm_gt_sinktype[At(varname), At(12), At(true)], digits = 1)
         println("$(round(Int,(1 - endorheic_scale_correction[At(varname), At(12)])*100))% ($na_endorheic Gt/yr) of North Asia is comprised endorheic $varname")
         println("North Asia comprises $(round(Int,na_frac_of_total_endorheic*100))% ($na_endorheic Gt/yr) of total endorheic $varname")
 
@@ -265,7 +278,6 @@ begin
         println("Of the total glacier $varname of $(dm_total) Gt/yr, $(dm_ocean) Gt/yr flows to the ocean")
     end
 
-    
     total_runoff = round(Int, region_fits[At("runoff"), At(99), At("trend"), At(false)])
     total_runoff_err = round(Int, region_fits[At("runoff"), At(99), At("trend"), At(true)])
     total_discharge = round(Int, region_fits[At("discharge"), At(99), At("trend"), At(false)])
@@ -299,14 +311,6 @@ begin
     println("$(round(Int, total_runoff/(total_runoff + total_discharge)*100))% ($(total_runoff) ± $(total_runoff_err)) Gt/yr came from runoff")
 
 
-    # compute amplitude and trend difference if using static fac 
-    amp_static_fac_frac = round.((region_fits[At("dv"), :, At("amplitude"), At(false)] * 0.85) ./ region_fits[At("dm"), :, At("amplitude"), At(false)] .- 1, digits = 2);
-    println("----------------------------------------------------------------------------")
-    println("Amplitude would be `x` times larger if static fac was applied")
-    println("----------------------------------------------------------------------------")
-    show(stdout, "text/plain", amp_static_fac_frac)
-    println("\n----------------------------------------------------------------------------\n")
-
 
     rgis = setdiff(drgi, [5, 19, 13, 14, 15, 99])
     for yvar = ["dm", "dm_altim"]
@@ -328,10 +332,56 @@ begin
         println("RMSE using static fac = $(round(rmse_static_fac, digits=1)) Gt/yr")
         println("----------------------------------------------------------------------------\n")
     end
+
+    println("\n----------------------------------------------------------------------------")
+    println("                  Firn Air Content")
+
+    println("Total glacier fac trend: $(round(region_fits[At("fac"), At(99), At("trend"), At(false)], digits=1)) ± $(round(region_fits[At("fac"), At(99), At("trend"), At(true)], digits=1)) km3/yr")
+    println("Total glacier fac trend Alaska: $(round(region_fits[At("fac"), At(1), At("trend"), At(false)], digits=1)) ± $(round(region_fits[At("fac"), At(1), At("trend"), At(true)], digits=1)) km3/yr")
+    println("Total glacier fac trend Canada Arctic North: $(round(region_fits[At("fac"), At(3), At("trend"), At(false)], digits=1)) ± $(round(region_fits[At("fac"), At(3), At("trend"), At(true)], digits=1)) km3/yr")
+    println("Total glacier fac trend Antarctic: $(round(region_fits[At("fac"), At(19), At("trend"), At(false)], digits=1)) ± $(round(region_fits[At("fac"), At(19), At("trend"), At(true)], digits=1)) km3/yr")
+
+    
+    rgis = setdiff(drgi, [13, 14, 15])
+    for rgi in rgis
+        println("Volume to mass conversion $(GGA.rginum2label(rgi)): $(round(Int, region_fits[At("dm"), At(rgi), At("trend"), At(false)] / (region_fits[At("dv"), At(rgi), At("trend"), At(false)]) * 1000)) kg m⁻³")
+    end
+
+     for rgi in rgis
+        println("seasonal volume change from FAC $(GGA.rginum2label(rgi)): $(GGA.rginum2label(rgi)): $(round(Int,region_fits[At("fac"), At(rgi), At("amplitude"), At(false)]/(region_fits[At("dv"), At(rgi), At("amplitude"), At(false)]) * 100))%")
+    end
+
+
+    # compute amplitude and trend difference if using static fac 
+    amp_static_fac_frac = round.((region_fits[At("dv"), :, At("amplitude"), At(false)] * 0.85) ./ region_fits[At("dm"), :, At("amplitude"), At(false)] .- 1, digits=2)
+    println()
+    println("Amplitude would be `x` times larger if static fac was applied")
+    show(stdout, "text/plain", amp_static_fac_frac)
+    println("\n----------------------------------------------------------------------------\n")
+
+    println("\n----------------------------------------------------------------------------")
+    println("                  rates for GlamBIE overlap period (2000-2024)")
+
+   
+
+    for rgi in rgis
+        println("$(GGA.rginum2label(rgi)): $(round(Int, region_fits_glambie[At("dm"), At(rgi), At("trend"), At(false)])) ± $(round(Int, region_fits_glambie[At("dm"), At(rgi), At("trend"), At(true)])) Gt/yr")
+    end
+
+    println("\n                  acceleration for GlamBIE overlap period (2000-2024)")
+
+    rgi = 99
+    println("$(GGA.rginum2label(rgi)): $(round(region_fits_glambie[At("dm"), At(rgi), At("acceleration"), At(false)], digits=1)) ± $(round(region_fits_glambie[At("dm"), At(rgi), At("acceleration"), At(true)], digits=1)) Gt/yr²")
+    println("----------------------------------------------------------------------------\n")
+
+
+    println("net accumulation $(GGA.rginum2label(99)): $(round(Int, region_fits[At("net_acc"), At(99), At("trend"), At(false)])) ± $(round(Int, region_fits[At("net_acc"), At(99), At("trend"), At(true)])) Gt/yr")
+    println("mass loss $(GGA.rginum2label(99)): $(round(Int, region_fits[At("dm"), At(99), At("trend"), At(false)])) ± $(round(Int, region_fits[At("dm"), At(99), At("trend"), At(true)])) Gt/yr")
+
 end
 
 # create plots
-# begin
+begin
     # set grace Antarctic and Greenland to NaNs othersise ice sheet will be plotted with glaciers
     regions["dm_grace"][At([5, 19]), :, :] .= NaN;
 
@@ -396,7 +446,7 @@ end
     f, _, ylims = GGA.plot_multiregion_dvdm(
         regions;
         variables, # last variable is plotted last
-        units="Gt",
+        units = "Gt yr⁻¹",
         rgi_regions,
         fontsize=15,
         colormap=:Dark2_4,
@@ -414,7 +464,7 @@ end
     f, _, ylims = GGA.plot_multiregion_dvdm(
         regions;
         variables, # last variable is plotted last
-        units="Gt",
+        units = "Gt yr⁻¹",
         rgi_regions,
         fontsize=15,
         colormap=:Dark2_4,

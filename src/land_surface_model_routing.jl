@@ -250,7 +250,6 @@ for i in eachindex(runoff_vars)
     end
 end
 
-
 # sanity check
 validate_output = false
 if validate_output # [5 min]
@@ -270,7 +269,7 @@ if validate_output # [5 min]
     @showprogress dt = 5 desc = "Load river discharge from Collin's et al. 2024..." for fn in river_Q_files
     #fn = river_Q_files[1]
         
-        Dataset(fn, "r") do ds
+        Dataset(fn, "c") do ds
         #ds = Dataset(fn, "r")
         
             # need to read into memory first to make this efficient

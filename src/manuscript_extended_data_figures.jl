@@ -19,6 +19,9 @@
 
 begin
     import GlobalGlacierAnalysis as GGA
+    using CairoMakie
+    using GeoDataFrames
+    using FileIO
     using DimensionalData
     using Dates
     using ProgressMeter
@@ -46,7 +49,7 @@ begin
     regions2replace_with_model = ["rgi19"]
     missions2replace_with_model = ["hugonnet"]
     missions2align2 = ["icesat2", "icesat"]
-    update_missions = nothing
+    missions2update = nothing
     plots_show = true
     #plots_save = true
     plots_save = false
@@ -95,7 +98,7 @@ if false # !!! THIS CURRENTLY DOES NOT WORK BECAUSE ICESAT-2 RAW DATA WAS DELETE
         # run parameters
         force_remake_before=Date(2026, 6, 3),
         geotiles2update=GGA.geotiles_golden_test[1:1],
-        update_missions=nothing, #["icesat"],
+        missions2update=nothing, #["icesat"],
 
         # run parameters
         all_permutations_for_glacier_only,
@@ -118,7 +121,7 @@ GGA.geotile_binned_fill(;
     project_id,
     geotile_width,
     force_remake_before,
-    update_missions, # All missions must update if ICESat-2 updates
+    missions2update, # All missions must update if ICESat-2 updates
     mission_reference_for_amplitude_normalization,
     all_permutations_for_glacier_only,
     surface_masks,
@@ -145,7 +148,7 @@ begin
         path2runs = path2runs_filled_all_ensembles,
         outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
         mission_error,
-        update_missions=nothing,
+        missions2update=nothing,
         single_geotile_test, #GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
         force_remake_before=nothing,
     );
@@ -194,6 +197,26 @@ GGA.gemb_calibration(
     force_remake_before=nothing
 )
 
+# [Extended Data Figure 9 & 10]
+begin
+    outfile_prefix = "geotiles_rates"
+
+    geotiles0 = GeoDataFrames.read(joinpath(GGA.pathlocal.data_dir, "project_data", "$(outfile_prefix)_m3yr.gpkg"))
+
+    # plot a histogram of the rates
+    f = GGA.plot_hist_gemb_altim_trend_amplitude(geotiles0)
+    display(f)
+
+    outfile = joinpath(GGA.pathlocal[:figures], "hist_gemb_altim_trend_amplitude.png")
+    CairoMakie.save(outfile, f)
+
+    f = GGA.plot_hist_pscale_Δheight(geotiles0)
+    display(f)
+
+    outfile = joinpath(GGA.pathlocal[:figures], "hist_pscale_dheight.png")
+    CairoMakie.save(outfile, f)
+end
+
 # [Extended Data Figure 9]
 begin
     geotiles2extract = [single_geotile_test]
@@ -216,7 +239,7 @@ begin
             project_id,
             geotile_width,
             force_remake_before = nothing,
-            update_missions = nothing, # All missions must update if ICESat-2 updates
+            missions2update = nothing, # All missions must update if ICESat-2 updates
             mission_reference_for_amplitude_normalization,
             all_permutations_for_glacier_only,
             surface_masks,

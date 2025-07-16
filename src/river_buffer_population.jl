@@ -68,6 +68,13 @@ begin
     glacier_summary_gmax_file = replace(glacier_summary_file, ".nc" => "_gmax.gpkg")
 
     population_file = joinpath(paths[:project_dir], "gardner2025_gmax_buffer_population.nc")
+
+    scenario = Dict(
+        "low" => (gmax=50, buffer=10_000, runoff=10),
+        "mid" => (gmax=50, buffer=30_000, runoff=10),
+        "high" => (gmax=25, buffer=50_000, runoff=1),
+    )
+
 end
 
 begin
@@ -103,19 +110,18 @@ begin
     # exclude rivers at high latitudes and near the dateline
     rivers = rivers[rivers[:, :midlatitude], :];
 
-
     # load in river glacier runoff data
     glacier_gmax = GeoDataFrames.read(glacier_summary_gmax_file)[:, [:COMID, :gmax_avg, :runoff_max_avg]];
     glacier_gmax[!, :runoff_max_avg] = coalesce.(glacier_gmax.runoff_max_avg, 0.0)
     # add gmax to rivers
     if issorted(glacier_gmax.COMID)
-        index = [searchsortedfirst(glacier_gmax[:, :COMID], comid) for comid in rivers[!, :COMID]];
-        rivers[!, :gmax_avg] = glacier_gmax[index, :gmax_avg];
-        rivers[!, :runoff_max_avg] = glacier_gmax[index, :runoff_max_avg];
+        index0 = [searchsortedfirst(glacier_gmax[:, :COMID], comid) for comid in rivers[!, :COMID]];
+        rivers[!, :gmax_avg] = glacier_gmax[index0, :gmax_avg];
+        rivers[!, :runoff_max_avg] = glacier_gmax[index0, :runoff_max_avg];
     else
-        index = [findfirst(==(comid), glacier_gmax.COMID) for comid in rivers[!, :COMID]];
-        rivers[!, :gmax_avg] = glacier_gmax[index, :gmax_avg];
-        rivers[!, :runoff_max_avg] = glacier_gmax[index, :runoff_max_avg];
+        index0 = [findfirst(==(comid), glacier_gmax.COMID) for comid in rivers[!, :COMID]];
+        rivers[!, :gmax_avg] = glacier_gmax[index0, :gmax_avg];
+        rivers[!, :runoff_max_avg] = glacier_gmax[index0, :runoff_max_avg];
     end
 
     country_polygons = GeoDataFrames.read(paths[:countries]);
@@ -131,7 +137,7 @@ begin
     replace!(country_polygons[!, :country], "United Republic of Tanzania" => "Tanzania")
 end;
 
-if !isfile(population_file)
+if !isfile(population_file) || (unix2datetime(mtime(population_file)) < unix2datetime(mtime(glacier_summary_gmax_file)))
     # load population raster
     gpw_ras0 = Raster(gpw_file)
     #gpw_ras is small enought that if can be read into memory
@@ -141,7 +147,7 @@ if !isfile(population_file)
     gpw_ras = (Rasters.cellarea(gpw_ras0) / 1E6) .* gpw_ras0;
 
     # compute population for each country as a function of maximum glacier fraction and buffer radius
-    gmax =[25, 50]# [25, 50]
+    gmax =[25, 50]
     buffer_radii = [1_000, 5_000, 10_000, 15_000, 20_000, 25_000, 30_000, 40_000, 50_000]
     runoff = [0, 1.0, 2.5, 5.0, 10.0, 100.0, 1000.0] # runoff threshold [m³/s]
 
@@ -162,40 +168,25 @@ else
     population = GGA.netcdf2dimarray(population_file; varname=nothing)
 end
 
+begin
 
-# low values
-gmax_low = 50
-buffer_low = 10_000
-runoff_low = 10
+    dcountry = dims(data, :country)
+    dscenario = Dim{:scenario}(collect(keys(scenario)))
 
-data = population[gmax=At(gmax_low), buffer=At(buffer_low), runoff=At(runoff_low)];
-data = data[data .> 0]
-dcountry = dims(data, :country)
-dscenario = Dim{:scenario}(["low", "mid", "high"])
-data = zeros(dcountry, dscenario)
+    for k in keys(scenario)
 
-data[At(val(dcountry)), At("low")] = population[country=At(val(dcountry)), gmax=At(gmax_low), buffer=At(buffer_low), runoff=At(runoff_low)]
-println("low: $(round(Int, sum(population[gmax=At(gmax_low), buffer=At(buffer_low), runoff=At(runoff_low)])/1E6)) million")
+        data = population[gmax=At(scenario[k].gmax), buffer=At(scenario[k].buffer), runoff=At(scenario[k].runoff)]
+        data = data[data .> 0];
+       
+        data = zeros(dcountry, dscenario);
 
-# mid values
-gmax_mid = 50
-buffer_mid = 30_000
-runoff_mid = 10
-
-data[At(val(dcountry)), At("mid")] = population[country=At(val(dcountry)), gmax=At(gmax_mid), buffer=At(buffer_mid), runoff=At(runoff_mid)]
-println("mid: $(round(Int, sum(population[gmax=At(gmax_mid), buffer=At(buffer_mid), runoff=At(runoff_mid)])/1E6)) million")
-
-# high values
-gmax_high = 25
-buffer_high = 50_000
-runoff_high = 1
-
-data[At(val(dcountry)), At("high")] = population[country=At(val(dcountry)), gmax=At(gmax_high), buffer=At(buffer_high), runoff=At(runoff_high)]
-println("high: $(round(Int, sum(population[gmax=At(gmax_high), buffer=At(buffer_high), runoff=At(runoff_high)])/1E6)) million")
-
-sort_idx = sortperm(parent(data[scenario=At("mid")]); rev = false)
-data = data[sort_idx,:]
-
+        data[At(val(dcountry)), At("low")] = population[country=At(val(dcountry)), gmax=At(scenario[k].gmax), buffer=At(scenario[k].buffer), runoff=At(scenario[k].runoff)]
+        println("$(string(k)): $(round(Int, sum(population[gmax=At(scenario[k].gmax), buffer=At(scenario[k].buffer), runoff=At(scenario[k].runoff)])/1E6)) million")
+    end
+    
+    sort_idx = sortperm(parent(data[scenario=At("mid")]); rev = false);
+    data = data[sort_idx,:];
+end;
 
 begin
     fig = Figure(size = (400, 700))
@@ -244,38 +235,35 @@ begin
 end
 
 # create a table of results
-countries = collect(val(dims(population, :country)));
-country2continent = Dict(country => country_polygons.continent[findfirst(country_polygons.country .== country)] for country in countries);
+begin
+    countries = collect(val(dims(population, :country)));
+    country2continent = Dict(country => country_polygons.continent[findfirst(country_polygons.country .== country)] for country in countries);
 
-df = DataFrame(country=countries)
-df[!, :continent] = getindex.(Ref(country2continent), df[!, :country]);
-index = falses(nrow(df))
-
-
-runoff = 10;
-buffer = 30_000;
-gmax = 50;
+    df = DataFrame(country=countries)
+    df[!, :continent] = getindex.(Ref(country2continent), df[!, :country]);
+    index0 = falses(nrow(df))
 
 
-for gmax in [gmax_low, gmax_mid, gmax_high]
-    df[!, "gmax ≥ $gmax"] = parent(population[gmax=At(gmax), buffer=At(buffer), runoff=At(runoff)])
-    index .|= df[!, "gmax ≥ $gmax"] .> 0
-end
-df = df[index,:]
+    for k in keys(scenario)
+        df[!, "gmax ≥ $(scenario[k].gmax)"] = parent(population[gmax=At(scenario[k].gmax), buffer=At(scenario[k].buffer), runoff=At(scenario[k].runoff)])
+        index0 .|= df[!, "gmax ≥ $(scenario[k].gmax)"] .> 0
+    end
+    df = df[index0,:]
 
-sort!(df, ["continent", "gmax ≥ 50"])
+    sort!(df, ["continent", "gmax ≥ 50"])
 
-df[!, :geometry] .= [country_polygons.geometry[3]];
+    df[!, :geometry] .= [country_polygons.geometry[3]];
 
-for dr in eachrow(df)
-    index = findall(==(dr.country), country_polygons.country);
-    area = GO.area.(country_polygons.geometry[index]);
-    dr.geometry = country_polygons.geometry[index[argmax(area)]] 
-end
+    for dr in eachrow(df)
+        index0 = findall(==(dr.country), country_polygons.country);
+        area = GO.area.(country_polygons.geometry[index0]);
+        dr.geometry = country_polygons.geometry[index0[argmax(area)]] 
+    end
+end;
 
-
+k = "mid"
 with_theme(theme_dark()) do
-    data = dropdims(sum(population[gmax=At(gmax), runoff=At(runoff)], dims=:country), dims=:country)
+    data = dropdims(sum(population[gmax=At(scenario[k].gmax), runoff=At(scenario[k].runoff)], dims=:country), dims=:country)
 
     fig = Figure(fontcolor=:green, fontsize = 24)
     
@@ -296,7 +284,7 @@ with_theme(theme_dark()) do
     ylims!(low=0)
 
     ax.ylabel =  "population [million]"
-    ax.xlabel = "distance [km] from river with gmax ≥ $gmax%"
+    ax.xlabel = "distance [km] from river with gmax ≥ $(scenario[k].gmax)%"
    
     outfile = joinpath(paths[:figures], "river_buffer_population.png")
 
@@ -307,51 +295,40 @@ with_theme(theme_dark()) do
     display(fig)
 end
 
+begin
+    k = "mid"
 
+    runoff = 10;
+    buffer = 30_000;
+    gmax = 50;
 
-pop = population[gmax=At(gmax), buffer=At(buffer), runoff=At(runoff)];
-pop = pop[pop.>0];
-sort_idx = sortperm(parent(pop); rev=true);
-continents = [country_polygons.continent[findfirst(country_polygons.country .== country)] for country in collect(val(dims(pop, :country)))]
+    pop = population[gmax=At(scenario[k].gmax), buffer=At(scenario[k].buffer), runoff=At(scenario[k].runoff)];
+    pop = pop[pop.>0];
+    sort_idx = sortperm(parent(pop); rev=true);
+    continents = [country_polygons.continent[findfirst(country_polygons.country .== country)] for country in collect(val(dims(pop, :country)))];
 
-total_pop = sum(pop)
-println("total population: $(round(Int, total_pop/1E6)) million: gmax ≥ $(gmax), buffer = $(maximum(buffer)) km, runoff > $(runoff) m³/s")
-
-for continent in unique(continents)
-    index = continents .== continent
-    println("$(continent): $(round(Int, sum(pop[index])/total_pop *100))%")
-end
-
-
-runoff = 1;
-buffer = 50_000;
-gmax = 25;
-pop = population[gmax=At(gmax), buffer=At(buffer), runoff=At(runoff)];
-pop = pop[pop.>0];
-sort_idx = sortperm(parent(pop); rev=true);
-continents = [country_polygons.continent[findfirst(country_polygons.country .== country)] for country in collect(val(dims(pop, :country)))]
-
-total_pop = sum(pop)
-println("total population: $(round(Int, total_pop/1E6)) million: gmax ≥ $(gmax), buffer = $(maximum(buffer)) km, runoff > $(runoff) m³/s")
-for continent in unique(continents)
-    index = continents .== continent
-    println("$(continent): $(round(Int, sum(pop[index])/total_pop *100))%")
-end
-
-
-subset = rivers[rivers.gmax_avg .>= gmax, :];
-total_river_length = sum(subset.lengthkm);
-println("for gmax ≥ $gmax");
-println("total river length: $(round(Int, total_river_length/1E3)) thousand km");
-println("for buffer = $buffer km");
-println("total population: $(round(Int, sum(pop))) million");
-
-total_length = sum(subset.lengthkm)
-gdf = groupby(subset, :continent)
-println("total river length: $(round(Int, total_length/1E3)) thousand km")
-for g in gdf
-    continent_length = sum(g.lengthkm)
-    if continent_length .> 1E3
-        println("$(g.continent[1]): $(round(Int, sum(g.lengthkm)/total_length*100)) % of total river length")
+    total_pop = sum(pop);
+    println("total population: $(round(Int, total_pop/1E6)) million: gmax ≥ $(scenario[k].gmax), buffer = $(scenario[k].buffer) km, runoff > $(scenario[k].runoff) m³/s")
+    for continent in unique(continents)
+        index0 = continents .== continent;
+        println("$(continent): $(round(Int, sum(pop[index0])/total_pop *100))%")
     end
-end 
+
+
+    subset = rivers[rivers.gmax_avg .>= scenario[k].gmax, :];
+    total_river_length = sum(subset.lengthkm);
+    println("for gmax ≥ $(scenario[k].gmax)");
+    println("total river length: $(round(Int, total_river_length/1E3)) thousand km");
+    println("for buffer = $(scenario[k].buffer) km");
+    println("total population: $(round(Int, sum(pop))) million");
+
+    total_length = sum(subset.lengthkm);
+    gdf = groupby(subset, :continent);
+    println("total river length: $(round(Int, total_length/1E3)) thousand km")
+    for g in gdf
+        continent_length = sum(g.lengthkm)
+        if continent_length .> 1E3
+            println("$(g.continent[1]): $(round(Int, sum(g.lengthkm)/total_length*100)) % of total river length")
+        end
+    end 
+end

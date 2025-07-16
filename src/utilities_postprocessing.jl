@@ -262,7 +262,7 @@ based on the quantile of absolute differences between all values and the referen
 When "net_acc" is present, the function also calculates error propagation for the glacier state index (gsi)
 using standard error propagation formulas.
 """
-function region_fit_ref_and_err(region_fit, path2reference; p = 0.95, discharge = nothing)
+function region_fit_ref_and_err(region_fit, path2reference; error_quantile=0.95, error_scaling=1.0, discharge=nothing)
     derror = Dim{:error}([false, true])
     (dvarname, _, drgi, dparameter) = dims(region_fit)
     regions_fit = fill(NaN, dvarname, drgi, dparameter, derror)
@@ -272,7 +272,7 @@ function region_fit_ref_and_err(region_fit, path2reference; p = 0.95, discharge 
                 v = region_fit[At(varname), At(path2reference), At(rgi), At(param)]
                 regions_fit[At(varname), At(rgi), At(param), At(false)] = v
 
-                err0 = quantile(abs.(region_fit[At(varname), :, At(rgi), At(param)] .- v), p)
+                err0 = quantile(abs.(region_fit[At(varname), :, At(rgi), At(param)] .- v), error_quantile) * error_scaling
                 regions_fit[At(varname), At(rgi), At(param), At(true)] = err0
             end
         end
@@ -444,12 +444,12 @@ Create a dictionary containing reference values and error estimates for glacier 
 This function calculates deviations from a reference run, computes quantile-based
 error estimates, and combines them into a single data structure with an error dimension.
 """
-function runs_ref_and_err(runs_rgi, path2reference; p = 0.95)
+function runs_ref_and_err(runs_rgi, path2reference; error_quantile=0.95, error_scaling=1.0)
     # remove reference run
     runs_rgi_delta = runs_delta!(deepcopy(runs_rgi), path2reference)
 
     # get 95% confidence interval
-    regions_err = runs_quantile(runs_rgi_delta, p; on_abs=true)
+    regions_err = runs_quantile(runs_rgi_delta, error_quantile; on_abs=true)
 
     # selected run as reference
     regions_ref = runs_select(runs_rgi, path2reference)
@@ -459,7 +459,7 @@ function runs_ref_and_err(runs_rgi, path2reference; p = 0.95)
     for k in keys(regions_ref)
         regions[k] = zeros(dims(regions_ref[k])..., derror)
         regions[k][:,:,At(false)] = regions_ref[k]
-        regions[k][:,:,At(true)] = regions_err[k]
+        regions[k][:, :, At(true)] = regions_err[k] * error_scaling
     end
 
     return regions
@@ -926,12 +926,14 @@ function glacier_summary_file(
     binned_synthesized_dv_files, 
     binned_synthesized_dv_file_ref; 
     error_quantile=0.95, 
-    error_scaling=2.0, 
+    error_scaling=1.0, 
     reference_period=(DateTime(2000, 4, 1), DateTime(2024, 12, 31)), 
     surface_mask="glacier", 
     force_remake_before=nothing, 
     geotile_width=2
     )
+
+    # having strange issues with custom unitful units... 
 
     glacier_summary_file = pathlocal[:glacier_summary]
 
@@ -1044,4 +1046,68 @@ function glacier_summary_file(
 
         println("glacier output saved to $glacier_summary_file")
     end
+end
+
+
+"""
+    gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="geotiles_rates", datelimits=(DateTime(2000, 3, 1), DateTime(2025, 1, 1)))
+
+Export geotile-level glacier change trends and amplitudes to GIS-compatible files.
+
+This function processes a GEMB fit output file containing geotile-level glacier change data,
+fits temporal trends to all relevant variables, and exports the results to Arrow and GeoPackage (GPKG) formats.
+It produces both total rates (in km³/yr) and area-averaged rates (in m/yr), suitable for GIS analysis.
+
+# Arguments
+- `binned_synthesized_dv_file::AbstractString`: Path to the input file containing geotile-level glacier change data.
+- `outfile_prefix::AbstractString`: Prefix for output files (default: "geotiles_rates").
+- `datelimits::Tuple{DateTime, DateTime}`: Date range for fitting temporal trends (default: (2000-03-01, 2025-01-01)).
+
+# Outputs
+- Arrow file with total rates in km³/yr.
+- GeoPackage files with total rates (km³/yr) and area-averaged rates (m/yr), excluding raw time series columns.
+
+# Notes
+- The function fits trends to all time series variables, then computes area-averaged rates by dividing by geotile area.
+- Variable names containing "dv" are converted to "dh" for area-averaged rates.
+- Only non-time-series columns and derived trend/amplitude columns are exported to GIS files.
+"""
+function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="geotiles_rates", datelimits=(DateTime(2000, 3, 1), DateTime(2025, 1, 1)))
+    # export trends and amplitudes for reference_run
+
+    geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
+
+    vars_no_write = setdiff(names(geotiles0), ["id", "glacier_frac", "landice_frac", "floating_frac", "geometry", "group", "pscale", "Δheight", "mie2cubickm", "rgiid"])
+    vars_ts = setdiff(vars_no_write, ["extent", "area_km2"])
+
+    # Fit temporal trends to all variables
+    source_crs1 = GFT.EPSG(4326)
+    geotiles0 = df_tsfit!(geotiles0, vars_ts; datelimits)
+    geotiles0[!, :area_km2] = sum.(geotiles0[!, :area_km2])
+
+    outfile = joinpath(paths.data_dir, "project_data", "$(outfile_prefix)_km3yr.arrow")
+    GeoDataFrames.write(outfile, geotiles0[:, Not(vars_no_write)]; crs=source_crs1)
+
+    # Export results, excluding raw time series
+    isvec = []
+    for i = 1:ncol(geotiles0)
+        push!(isvec, typeof(geotiles0[1, 12]) >: Vector)
+    end
+
+    GeoDataFrames.write(joinpath(paths.data_dir, "project_data", "$(outfile_prefix)_km3yr.gpkg"), geotiles0[:, Not(vcat(vars_ts, vars_no_write))]; crs=source_crs1)
+
+    # now do the same but for area averaged rates of change [from volume to meters]
+    for varname in names(geotiles0)
+        if any(occursin.(vars_ts, Ref(varname)))
+            geotiles0[:, varname] ./= (geotiles0[:, :area_km2] / 1e3)
+            if occursin("dv", varname)
+                rename!(geotiles0, varname => replace(varname, "dv" => "dh"))
+            end
+        end
+    end
+    vars_ts = replace.(vars_ts, "dv" => "dh")
+    vars_no_write = replace.(vars_no_write, "dv" => "dh")
+
+    println(vcat(vars_ts, vars_no_write))
+    GeoDataFrames.write(joinpath(paths.data_dir, "project_data", "$(outfile_prefix)_m3yr.gpkg"), geotiles0[:, Not(vcat(vars_ts, vars_no_write))]; crs=source_crs1)
 end

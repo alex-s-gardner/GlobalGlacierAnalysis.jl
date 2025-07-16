@@ -67,7 +67,7 @@ Process satellite altimetry data into geotiles by elevation and time.
 - `plots_show`: Show plots (default: false)
 - `force_remake_before`: Date to force file regeneration (default: nothing)
 - `update_geotile`: Update existing geotiles (default: false)
-- `update_missions`: Missions to update (default: ["icesat2"])
+- `missions2update`: Missions to update (default: ["icesat2"])
 - `all_permutations_for_glacier_only`: Process all parameter combinations for glacier mask (default: true)
 - `surface_masks`: Surface types to process (default: [:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km])
 - `binned_folders`: Output directories (default: ("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"))
@@ -88,9 +88,8 @@ function geotile_binning(;
 
     # run parameters
     force_remake_before = nothing,
-    update_geotile = false, # this will load in prevous results to update select missions
-    geotiles2update = nothing,
-    update_missions = ["icesat2"],
+    geotiles2update=nothing,# this will load in prevous results to update select missions
+    missions2update = ["icesat2"],
 
     # run parameters
     all_permutations_for_glacier_only = true,
@@ -184,13 +183,12 @@ function geotile_binning(;
             # 10hr for land for all glaciers, all missions/datasets on 96 threads
 
             # initialize dimensional arrays
-            # update_geotile = true
-            if isfile(binned_file) && update_geotile
+            if isfile(binned_file) && !(isnothing(missions2update))
                 # load exisiting
                 dh_hyps = FileIO.load(binned_file, "dh_hyps")
                 nobs_hyps = FileIO.load(binned_file, "nobs_hyps")
                 curvature_hyps = FileIO.load(binned_file, "curvature_hyps")
-                missions = String.(update_missions);
+                missions = String.(missions2update);
             else
                 dh_hyps = Dict();
                 nobs_hyps = Dict();
@@ -454,7 +452,7 @@ end
         project_id=:v01,
         geotile_width=2,
         force_remake_before=nothing,
-        update_missions=["icesat2"],
+        missions2update=["icesat2"],
         mission_reference_for_amplitude_normalization="icesat2",
         all_permutations_for_glacier_only=true,
         surface_masks=[:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km],
@@ -481,7 +479,7 @@ Process and fill gaps in binned altimetry data.
 - `project_id`: Project identifier
 - `geotile_width`: Width of geotiles in degrees
 - `force_remake_before`: Skip files created after this date
-- `update_missions`: Missions to update 
+- `missions2update`: Missions to update 
 - `mission_reference_for_amplitude_normalization`: Reference mission for amplitude normalization
 - `all_permutations_for_glacier_only`: Process all parameter combinations for glacier surfaces
 - `surface_masks`: Surface types to process
@@ -509,7 +507,7 @@ function geotile_binned_fill(;
     project_id=:v01,
     geotile_width=2,
     force_remake_before=nothing,
-    update_missions=nothing, #["icesat2"],
+    missions2update=nothing, #["icesat2"],
     mission_reference_for_amplitude_normalization="icesat2",
     all_permutations_for_glacier_only=true,
     surface_masks=[:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km],
@@ -540,12 +538,12 @@ function geotile_binned_fill(;
     params = ntpermutations(param_nt)
 
 
-    if any(mission_reference_for_amplitude_normalization .== update_missions) && any(amplitude_corrects)
+    if any(mission_reference_for_amplitude_normalization .== missions2update) && any(amplitude_corrects)
         error("can not update mission_reference_for_amplitude_normalization [$(mission_reference_for_amplitude_normalization)] without updating all other missions")
     end
 
-    if .!isnothing(subsample_fraction) && !isnothing(update_missions)
-        error("subsampling should not be used with update_missions: set `update_missions = nothing`")
+    if .!isnothing(subsample_fraction) && !isnothing(missions2update)
+        error("subsampling should not be used with missions2update: set `missions2update = nothing`")
     end
 
     if .!isnothing(subsample_fraction) && isnothing(single_geotile_test)
@@ -617,21 +615,19 @@ function geotile_binned_fill(;
                     continue
                 end
 
-                if !isnothing(update_missions)
-                    printstyled("\n   -> Filling and aligning binned data for select missions [$(update_missions)]: $(binned_filled_file)"; color=:light_gray)
+                if !isnothing(missions2update)
+                    printstyled("\n   -> Filling and aligning binned data for select missions $(missions2update): $(binned_filled_file)"; color=:light_gray)
                 else
                     printstyled("\n   -> Filling and aligning binned data for all missions: $(binned_filled_file)"; color=:light_gray)
                 end
-
-                printstyled("\n   -> Filling and aligning binned data: $(binned_filled_file)    "; color=:light_gray)
 
                 dh1 = deepcopy(dh11)
                 nobs1 = deepcopy(nobs11)
 
                 param_filling = binned_filling_parameters[fill_param]
                 
-                if !isnothing(update_missions) && isfile(binned_filled_file)
-                    missions2update = update_missions
+                if !isnothing(missions2update) && isfile(binned_filled_file)
+                    missions2update = missions2update
                 else
                     missions2update = keys(dh1)
                 end
@@ -676,10 +672,10 @@ function geotile_binned_fill(;
                 end
 
                 # replace non-updated missions with previous results
-                if !isnothing(update_missions)
+                if !isnothing(missions2update)
                     (dh_hyps, nobs_hyps, model_param) = FileIO.load(binned_filled_file, ("dh_hyps", "nobs_hyps", "model_param"))
 
-                    for k in setdiff(keys(dh1), update_missions)
+                    for k in setdiff(keys(dh1), missions2update)
                         dh1[k] = dh_hyps[k]
                         nobs1[k] = nobs_hyps[k]
                         params_fill[k] = model_param[k]
@@ -870,7 +866,6 @@ function geotile_binned_fill(;
 
                 # fill geotiles with model
                 begin
-                    println(intersect([missions2replace_with_model], missions2update))
                     dh1, nobs1 = replace_with_model!(dh1, nobs1, geotiles2replace; missions2replace=intersect(missions2replace_with_model, missions2update), missions2align2)
 
                     if plots_show || plots_save

@@ -104,86 +104,20 @@ begin #[50s]
         (25005999, "Mo i Rana, Norway")
     ]
 
-
     date_interval = dates4plot[1]..dates4plot[2]
 end
 
 
 #for location in locations
 begin
-location = locations[1]
 
-    COMID = location[1]
-    name = location[2]
+    COMID = locations[1][1]
+    name = locations[1][2]
 
-    fig = Figure()
+    dates4plot
 
-    xticks = collect(year(dates4plot[1]):5:(year(dates4plot[2]) + year(1)));
-
-    
-    seperate_out_snow && (y_snow = collect(snow_flux[date_interval, At(COMID)]) ./ 1000)
-
-    ax1 = Axis(fig[1:2, 1]; xticklabelsvisible=false, xticksvisible=false, title = name, xticks = xticks)
-    
-    # plot land flux
-    y = collect(land_flux[date_interval, At(COMID)])./1000
-
-    seperate_out_snow && (y .-= y_snow)
-
-    x = GGA.decimalyear.(collect(dims(land_flux, :Ti)[date_interval]))
-    x = vcat(x[1],x, x[end])
-    yunits = Unitful.unit(land_flux[1])
-    y = vcat(0*yunits, y, 0*yunits)
-    max_y = maximum(y)
-    p = poly!(ax1, GGA.GI.Point.(ustrip(x), ustrip(y)); color=(:peru, 1), label="land")
-
-    # plot snow flux
-    if seperate_out_snow
-        y = y_snow;
-        x = GGA.decimalyear.(collect(dims(land_flux, :Ti)[date_interval]))
-        x = vcat(x[1], x, x[end])
-        yunits = Unitful.unit(y[1])
-        y = vcat(0.0*yunits , y, 0.0*yunits)
-        max_y = max(maximum(y),max_y)
-        p = poly!(ax1, GGA.GI.Point.(x, ustrip(y)); color=(:gray, 0.5), label="snow")
-    end
-
-    y = collect(glacier_flux[date_interval,At(COMID)])./1000
-    yunits = Unitful.unit(y[1])
-    x = GGA.decimalyear.(collect(dims(glacier_flux, :Ti)[date_interval]))
-    x = vcat(x[1],x, x[end])
-    y = vcat(0*yunits, y, 0*yunits)
-    poly!(ax1, GGA.GI.Point.(ustrip(x), ustrip(y)); color=(:blue, 0.5), label="glacier")
-
-    axislegend(ax1; merge=true, backgroundcolor=(:white, 0), framevisible=false, position=:lt)
-    #xlabel!(p.axis[1], "Year")
-    ax1.ylabel = "river flux (m³/s) x 10⁻³"
-    xlims!(ax1, minimum(xticks), maximum(xticks))
-    ylims!(ax1, 0, ustrip(max_y))
-
-    ax2 = Axis(fig[3, 1],  xticks = xticks)
-    glacier_frac = glacier_flux[date_interval,At(COMID)] ./ (land_flux[date_interval,At(COMID)] .+ glacier_flux[date_interval,At(COMID)])*100
-    x = GGA.decimalyear.(collect(dims(glacier_flux, :Ti)[date_interval]))
-    gmax = groupby(glacier_frac, Ti => Bins(month, 1:12))
-    gmax = mean.(gmax; dims=:Ti)
-    gmax = cat(gmax...; dims=dims(gmax, :Ti))
-    dTi = dims(gmax, :Ti)
-    gmax_month = dTi[argmax(gmax)]
-    gmax = round(Int8, maximum(gmax))
-
-    foo = glacier_frac[month.(dims(glacier_frac, :Ti)) .== gmax_month]
-    gmax_min = round(Int8, minimum(foo))
-    gmax_max = round(Int8, maximum(foo))
-
-    x = GGA.decimalyear.(collect(dims(glacier_flux, :Ti)[date_interval]))
-    lines!(ax2, collect(x), collect(glacier_frac); color = (:blue, 0.5))
-    lines!(ax2, [GGA.decimalyear(dates4plot[1]), GGA.decimalyear(dates4plot[end])], [gmax_min, gmax_min]; color = (:gray, 0.5), linestyle = :dash)
-    lines!(ax2, [GGA.decimalyear(dates4plot[1]), GGA.decimalyear(dates4plot[end])], [gmax_max, gmax_max]; color=(:gray, 0.5), linestyle=:dash)
-    lines!(ax2, [GGA.decimalyear(dates4plot[1]), GGA.decimalyear(dates4plot[end])], [gmax, gmax]; color=(:black, 1))
-    ax2.ylabel = "glacier fraction [%]"
-
-    xlims!(ax2, minimum(xticks), maximum(xticks))
-    text!(GGA.decimalyear(dates4plot[end]), mean((gmax_max, gmax)), text="gmax = $gmax [$(Dates.monthname(gmax_month))] ", align=[:right, :center], color=(:black, 0.8), overdraw=true)
+    date_range = (DateTime(2000,3,1), DateTime(2024,10,1))
+    fig = GGA.plot_point_location_river_flux(land_flux, glacier_flux; date_range, COMID, name, show_title=false)
     display(fig)
 
     out_name = replace(split(name, ",")[1], " " => "_")

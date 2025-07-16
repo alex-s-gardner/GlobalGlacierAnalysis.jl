@@ -411,7 +411,11 @@ begin # [4 minutes]
 
     dstack = DimStack(getindex.(Ref(river_flux), vars2route); name=Symbol.(vars2route))
     
-    # save to netcdf
+    # save to netcdf [having permission issues]
+    if isfile(glacier_summary_riverflux_file)
+        rm(glacier_summary_riverflux_file)
+    end
+
     NCDataset(glacier_summary_riverflux_file, "c") do ds
 
         data_dims = dims(dstack)

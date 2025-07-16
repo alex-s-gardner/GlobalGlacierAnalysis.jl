@@ -112,8 +112,8 @@ end
         month_max = collect((month_max - dt):(month_max + dt))
         month_max[month_max .>12] .= month_max[month_max .>12] .- 12
         month_max[month_max .<1] .= month_max[month_max .<1] .+ 12
-        index = .!in.(ti_month, Ref(month_max))
-        glacier_runoff[index, At(comid)] .= 0 * u"m^3/s"
+        index0 = .!in.(ti_month, Ref(month_max))
+        glacier_runoff[index0, At(comid)] .= 0 * u"m^3/s"
     end
 
     # calcualte the fraction of flux that is from glacier runoff
@@ -185,14 +185,14 @@ end
         ext = GGA.extent2rectangle(Extent(X = (-140, -120), Y = (50, 60)))
         index_spatial = GO.intersects.(pts, Ref(ext)) .& index_gmax
 
-        index = index_spatial .& index_gmax
-        plot(rivers[index, :geometry])
+        index0 = index_spatial .& index_gmax
+        plot(rivers[index0, :geometry])
 
         dmonth = dims(river_flux_monthly, :Ti)
         i = 1;
-        p = lines(vec(sum(river_flux_monthly[At(dmonth[i])][:, index], dims = :COMID)); label = "$(dmonth[i])");
+        p = lines(vec(sum(river_flux_monthly[At(dmonth[i])][:, index0], dims = :COMID)); label = "$(dmonth[i])");
         for i in 2:length(river_flux_monthly)
-            lines!(vec(sum(river_flux_monthly[At(dmonth[i])][:, index], dims = :COMID)); label = "$(dmonth[i])"); p
+            lines!(vec(sum(river_flux_monthly[At(dmonth[i])][:, index0], dims = :COMID)); label = "$(dmonth[i])"); p
         end; 
         axislegend(); p
     end
@@ -249,8 +249,6 @@ end
     discharge0[!, :COMID] .= 0
     discharge0[!, :discharge] .= true
     discharge0[!, :ocean_terminating] .= true
-
-    
 
     discharge0[!, :runoff_max_avg] .= discharge.discharge_gtyr .* gtyr2m3s
 

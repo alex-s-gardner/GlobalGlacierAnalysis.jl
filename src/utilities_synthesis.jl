@@ -1,5 +1,5 @@
 """
-    geotile_synthesize(path2runs; error_file, mission_error, update_missions, force_remake_before, missions2include)
+    geotile_synthesize(path2runs; error_file, mission_error, missions2update, force_remake_before, missions2include)
 
 Synthesize elevation change data across multiple satellite missions for improved spatial coverage and temporal consistency.
 
@@ -7,7 +7,7 @@ Synthesize elevation change data across multiple satellite missions for improved
 - `path2runs`: Vector of file paths to binned altimetry data files
 - `error_file`: Path to save geotile synthesis error assessment (default: "/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2")
 - `mission_error`: Mission-specific error estimates for data quality assessment
-- `update_missions`: Force update of mission-specific geotile data (default: nothing)
+- `missions2update`: Force update of mission-specific geotile data (default: nothing)
 - `force_remake_before`: Date before which to force recreation of existing files (default: nothing)
 - `missions2include`: Array of mission names to include in synthesis (default: ["hugonnet", "gedi", "icesat", "icesat2"])
 
@@ -21,17 +21,18 @@ The synthesis improves spatial coverage and temporal consistency by leveraging m
 function geotile_synthesize(path2runs;
     error_file="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
     mission_error = fill(0.0, Dim{:mission}(["hugonnet", "gedi", "icesat", "icesat2"])),
-    update_missions=nothing,
+    missions2update=nothing,
     single_geotile_test=nothing,
     missions2include=nothing,
     force_remake_before=nothing,
 )
+
     # Calculate geotile synthesis error to assess data quality and consistency across missions
     dh_hyps_error, _ = geotile_synthesis_error(;
         path2runs,
         outfile=error_file,
         mission_error,
-        update_missions,
+        missions2update,
         force_remake_before,
         single_geotile_test,
     )
@@ -85,7 +86,7 @@ end
         path2runs,
         outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
         mission_error,
-        update_missions=nothing,
+        missions2update=nothing,
         single_geotile_test=nothing,
         force_remake_before=nothing
     )
@@ -96,7 +97,7 @@ Calculate standard deviation across model runs as an error metric for each satel
 - `path2runs`: Vector of paths to input data files containing binned elevation change data
 - `outfile`: Path for saving computed error metrics and file tracking information
 - `mission_error`: Floor error values for each mission to ensure minimum error estimates
-- `update_missions`: Optional list of specific missions to update instead of processing all missions
+- `missions2update`: Optional list of specific missions to update instead of processing all missions
 - `single_geotile_test`: Single geotile identifier for testing purposes (output not saved to file)
 - `force_remake_before`: DateTime threshold for forcing recalculation of existing results
 
@@ -112,7 +113,7 @@ function geotile_synthesis_error(;
     path2runs,
     outfile="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
     mission_error = fill(0.0, Dim{:mission}(["hugonnet", "gedi", "icesat", "icesat2"])),
-    update_missions=nothing,
+    missions2update=nothing,
     single_geotile_test=nothing, #geotiles_golden_test[1], #geotiles_golden_test[2],
     geotile_width = 2,
     force_remake_before=nothing,
@@ -122,7 +123,7 @@ function geotile_synthesis_error(;
         @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!"
     end
 
-    if isfile(outfile) && isnothing(force_remake_before) && isnothing(update_missions) && isnothing(single_geotile_test)
+    if isfile(outfile) && isnothing(force_remake_before) && isnothing(missions2update) && isnothing(single_geotile_test)
 
         if !issetequal(path2runs, load(outfile, "files_included"))
             @warn "Updating all missions in geotile_synthesis_error as input file list does not match exisiting"
@@ -146,6 +147,19 @@ function geotile_synthesis_error(;
         printstyled("    -> Computing $(outfile) \n"; color=:light_green)
     end
 
+    
+
+    if isfile(outfile) && !isnothing(missions2update) && issetequal(path2runs, load(outfile, "files_included")) && isnothing(single_geotile_test)
+        missions2update = missions2update
+        printstyled("\n    -> Updating selected missions in geotile_synthesis_error: $(missions2update)\n")
+    elseif isfile(outfile) && !isnothing(missions2update) && !issetequal(path2runs, load(outfile, "files_included"))
+        @warn "Updating all missions in geotile_synthesis_error as input file list does not match exisiting: $(outfile)"
+    end
+
+    if .!isnothing(single_geotile_test)
+        dgeotile = Dim{:geotile}([single_geotile_test])
+    end
+
     # load example file to get dimension and mission info
     dh = FileIO.load(path2runs[1], "dh_hyps")
     missions = collect(keys(dh))
@@ -154,22 +168,13 @@ function geotile_synthesis_error(;
     dgeotile = dims(dh[missions[1]], :geotile)
     dfile = Dim{:file}(path2runs)
 
-    missions2update = missions
-
-    if isfile(outfile) && !isnothing(update_missions) && issetequal(path2runs, load(outfile, "files_included")) && isnothing(single_geotile_test)
-        missions2update = update_missions
-        printstyled("\n    -> Updating selected missions in geotile_synthesis_error: $(update_missions)")
-    elseif isfile(outfile) && !isnothing(update_missions) && !issetequal(path2runs, load(outfile, "files_included"))
-        @warn "Updating all missions in geotile_synthesis_error as input file list does not match exisiting: $(outfile)"
-    end
-
-    if .!isnothing(single_geotile_test)
-        dgeotile = Dim{:geotile}([single_geotile_test])
+    if isnothing(missions2update)
+        missions2update = missions
     end
 
     # initialize output
     dh_all_std = Dict()
-    if !isnothing(update_missions)
+    if !isnothing(missions2update)
         dh_all_std = load(outfile, "dh_hyps_error")
     else
         dh_all_std = Dict()
@@ -1048,7 +1053,7 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width,
         binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
 
         if isfile(binned_synthesized_dv_file) && (isnothing(force_remake_before) || (Dates.unix2datetime(mtime(binned_synthesized_dv_file)) > force_remake_before))
-            printstyled("    -> Skipping $(binned_synthesized_dv_file) because it was created after force_remake_before:$force_remake_before\n"; color=:light_green)
+            printstyled("    -> Skipping $(binned_synthesized_dv_file) because it was created after force_remake_before: $force_remake_before\n"; color=:light_green)
             continue
         else
             run_parameters = binned_filled_fileparts(binned_synthesized_file)

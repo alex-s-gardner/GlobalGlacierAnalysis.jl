@@ -1222,6 +1222,10 @@ Convert a DimensionalData.DimArray to a NetCDF file.
 """
 function dimarray2netcdf(da, filename; name = "var", units = nothing, global_attributes = nothing)
     
+    if isfile(filename)
+        rm(filename)
+    end
+    
     NCDataset(filename, "c") do ds
         # get dimensions
         da_dims = dims(da)
