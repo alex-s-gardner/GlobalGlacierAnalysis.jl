@@ -96,9 +96,7 @@ begin
     glacier_sinks_grouped_path = joinpath(paths[:data_dir], "glacier_sinks_grouped.fgb")
 
 
-    # TODO: I need to update to use the new glacier_flux path
-    # glacier_flux = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
-    
+   
     glacier_vars_fns = reduce(vcat,GGA.allfiles.(["/mnt/bylot-r3/data/binned_unfiltered/2deg/", "/mnt/bylot-r3/data/binned/2deg/"]; fn_endswith="synthesized_perglacier.jld2"))
     # glacier_vars_fns = ["/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_dh_best_cc_nmad3_v01_filled_ac_p1_synthesized_perglacier.jld2"]
 

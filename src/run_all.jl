@@ -36,14 +36,13 @@
 #   - GEDI: ~4 days
 #   - ICESat-2: ~1 week
 #   - ICESat: ~3 hours
-
 begin
     import GlobalGlacierAnalysis as GGA
     using Unitful
-    Unitful.register(GGA.MyUnits)
-    
+    Unitful.register(GGA.MyUnits)    
     using Dates
 
+    # Downloading and preprocessing elevation data
     force_remake=false # it is best practice to delete files than to use force_remake
     project_id=:v01
     geotile_width=2
@@ -58,7 +57,7 @@ begin
     masks2extract_highres = [:glacier, :glacier_rgi7, :land]
     single_geotile_test = nothing
 
-    # binning parameters
+    # Binning parameters
     force_remake_before = DateTime(2025, 7, 1, 0, 0, 0)
     update_geotile = true # Update select missions from previous results
     missions2update = nothing #["hugonnet"]
@@ -66,6 +65,7 @@ begin
     max_canopy_height = 1
     dh_max = 200
 
+    # Filling parameters
     mission_reference_for_amplitude_normalization = "icesat2"
     all_permutations_for_glacier_only = true
     surface_masks = [:glacier, :glacier_rgi7] #[:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
@@ -74,20 +74,18 @@ begin
     dem_ids = [:best, :cop30_v2]
     curvature_corrects = [true, false]
     fill_params = [1, 2, 3, 4]
-
     amplitude_corrects = [true]
     remove_land_surface_trend = GGA.mission_land_trend()
     regions2replace_with_model = ["rgi19"]
     missions2replace_with_model = ["hugonnet"]
     missions2align2 = ["icesat2", "icesat"]
-
     plots_show = false
     plots_save = false
     plot_save_format = ".png"
     geotiles2plot = GGA.geotiles_golden_test
     single_geotile_test = nothing #GGA.geotiles_golden_test[1] # nothing 
 
-    # to include in synthesis
+    # Synthesis parameters
     gemb_run_id = 4
     path2runs_filled, params = GGA.binned_filled_filepaths(;
         project_id,
@@ -104,6 +102,9 @@ begin
     path2runs_synthesized = replace.(path2runs_filled, "aligned.jld2" => "synthesized.jld2")
 
     binned_file_for_over_land_mission_error = "/mnt/bylot-r3/data/binned_unfiltered/2deg/land_dh_best_cc_nmad5_v01.jld2"
+
+    binned_synthesized_dv_files = replace.(path2runs_synthesized, ".jld2" => "_gembfit_dv.jld2")
+    binned_synthesized_dv_file_ref = "/mnt/bylot-r3/data/binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized_gembfit_dv.jld2"
 end
 
 # 1. Build archives from satellite altimetry data (GEDI, ICESat-2, ICESat)
@@ -291,8 +292,6 @@ GGA.geotile_synthesis_gembfit_dv(
 )
 
 # 15. Generate glacier level summary nc file with key statistics and metrics for further analysis and sharing
-binned_synthesized_dv_files = replace.(path2runs_synthesized, ".jld2" => "_gembfit_dv.jld2")
-binned_synthesized_dv_file_ref = "/mnt/bylot-r3/data/binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized_gembfit_dv.jld2"
 
 _ = GGA.glacier_summary_file(
     binned_synthesized_dv_files,
@@ -306,7 +305,10 @@ _ = GGA.glacier_summary_file(
 )
     
 # 16. Export geotile-level glacier change trends and amplitudes to GIS-compatible files
-GGA.gembfit_dv2gpkg(binned_synthesized_dv_file_ref; outfile_prefix="geotiles_rates", datelimits=(DateTime(2000, 3, 1), DateTime(2025, 1, 1)))
+GGA.gembfit_dv2gpkg(binned_synthesized_dv_file_ref; 
+    outfile_prefix="Gardner2025_geotiles_rates", 
+    datelimits=(DateTime(2000, 3, 1), DateTime(2025, 1, 1))
+)
 
 # 17. Route land surface model runoff through river networks for river flux calculation
 include("land_surface_model_routing.jl")

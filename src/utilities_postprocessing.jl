@@ -113,6 +113,7 @@ function runs2rgi(path2runs, vars2sum=["dv_altim", "runoff", "fac", "smb", "rain
 
     return regional_sum
 end
+
 """
     rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
 
@@ -153,7 +154,7 @@ function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
             end
 
             x = decimalyear.(ddate)
-            x = x .- mean(x)
+            x = x .- ceil(mean(x))
 
             
             for rgi in drgi
@@ -171,7 +172,10 @@ function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
                 dm_fit = curve_fit(offset_trend_acceleration_seasonal2, x, y, p3)
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("acceleration")] = dm_fit.param[3]
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("amplitude")] = hypot(dm_fit.param[4], dm_fit.param[5])
-                region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("phase")] = 365.25 * (mod(0.25 - atan(dm_fit.param[5], dm_fit.param[4]) / (2π), 1))
+
+
+                phase0 = 365.25 * mod(((atan(dm_fit.param[4], dm_fit.param[5]) + π/2) / 2π), 1)
+                region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("phase")] = phase0
             end
         end
     end
@@ -192,8 +196,7 @@ function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
 
     return region_fit
 end
-"""
-    rgi_trends(da::AbstractDimArray, daterange)
+""" rgi_trends(da::AbstractDimArray, daterange)
 
 Calculate trend, acceleration, amplitude, and phase parameters for each RGI region in a time series.
 
@@ -220,7 +223,7 @@ function rgi_trends(da::AbstractDimArray, daterange)
     ddate = dims(da[:,minimum(daterange)..maximum(daterange)], :date)
 
     d = decimalyear.(ddate)
-    d = d .- mean(d)
+    d = d .- ceil(mean(d))
 
     region_fit = zeros(drgi, dparameter)
 
@@ -234,7 +237,9 @@ function rgi_trends(da::AbstractDimArray, daterange)
         dm_fit = curve_fit(offset_trend_acceleration_seasonal2, d, da[At(rgi), minimum(daterange)..maximum(daterange)], p3)
         region_fit[At(rgi), At("acceleration")] = dm_fit.param[3]
         region_fit[At(rgi), At("amplitude")] = hypot(dm_fit.param[4], dm_fit.param[5])
-        region_fit[At(rgi), At("phase")] = 365.25 * (mod(0.25 - atan(dm_fit.param[5], dm_fit.param[4]) / (2π), 1))
+
+        phase0 = 365.25 * mod(((atan(dm_fit.param[4], dm_fit.param[5]) + π/2) / 2π), 1)
+        region_fit[At(rgi), At("phase")] = phase0
     end
 
     return region_fit
@@ -466,6 +471,86 @@ function runs_ref_and_err(runs_rgi, path2reference; error_quantile=0.95, error_s
 end
 
 
+function dimarray2netcdf(dict::Dict, filename; units=nothing, global_attributes=nothing)
+
+    if isfile(filename)
+        rm(filename)
+    end
+
+    NCDataset(filename, "c") do ds
+
+        # all Dict items must have the same dimensions
+        da = dict[first(keys(dict))]
+        
+        # get dimensions
+        da_dims = dims(da)
+
+        # step 1: define dimensions
+        for dim in da_dims
+            dname = string(DimensionalData.name(dim))
+            defDim(ds, dname, length(dim))
+        end
+
+        # step 2: add dim variables & metadata
+        for dim in da_dims
+            dname = string(DimensionalData.name(dim))
+
+            dim_val = val(val(dim));
+            if eltype(dim_val) == Bool
+                dim_val = UInt8.(dim_val)
+            end
+  
+            d = defVar(ds, dname, dim_val, (dname,))
+
+            if eltype(dim) <: Number
+                d.attrib["units"] = string(Unitful.unit(dim[1]))
+            end
+
+            # add metadata
+            for (k, v) in DD.metadata(dim)
+                d.attrib[k] = v
+            end
+        end
+
+        for k in keys(dict)
+            da = dict[k]
+            name = string(k)
+
+            # step 3: add variable
+
+            val0 = ustrip.(parent(da))
+            if eltype(val0) == Bool
+                val0 = UInt8.(val0)
+            end
+
+            v = defVar(ds, name, val0, string.(DimensionalData.name.(da_dims)))
+
+            # step 4: add variable metadata
+            if units == nothing
+                if eltype(da) <: Number
+                    v.attrib["units"] = string(Unitful.unit(da[1]))
+                end
+            else
+                v.attrib["units"] = string(units)
+            end
+
+            for (k, v) in DD.metadata(da)
+                d.attrib[k] = v
+            end
+        end
+
+        # step 5: add global attributes
+        if global_attributes != nothing
+            for (k, v) in global_attributes
+                ds.attrib[k] = v
+            end
+        end
+
+        return filename
+    end
+end
+
+
 """
     rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend=nothing)
 
@@ -562,7 +647,7 @@ function rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend=nothin
     return glacier_dm_gt
 end
 """
-    error_bar_table(region_fits, varnames, params, rgis; digits=2)
+    error_bar_table(region_fits, varnames, fit_params, rgi_regions; digits=2)
 
 Create a formatted table of regional glacier parameter values with error estimates.
 
@@ -570,8 +655,8 @@ Create a formatted table of regional glacier parameter values with error estimat
 - `region_fits`: DimensionalArray containing fitted parameters with dimensions for variable name, 
                  RGI region, parameter type, and error
 - `varnames`: List of variable names to include in the table
-- `params`: List of parameters to include (e.g., "trend", "acceleration", "amplitude", "phase")
-- `rgis`: List of RGI region IDs to include in the table
+- `fit_params`: List of parameters to include (e.g., "trend", "acceleration", "amplitude", "phase")
+- `rgi_regions`: List of RGI region IDs to include in the table
 - `digits`: Number of decimal places for rounding numeric values (default: 2)
 
 # Returns
@@ -581,21 +666,44 @@ Create a formatted table of regional glacier parameter values with error estimat
 The function automatically determines appropriate units for each parameter type and includes
 them in the column headers.
 """
-function error_bar_table(region_fits, varnames, params, rgis; digits=2)
+function error_bar_table(region_fits; varnames=nothing, fit_params=["trend", "acceleration", "amplitude", "phase"], rgi_regions=nothing, digits=2)
 
-    rgi_labels = rginum2label.(rgis)
+    rgi_labels = rginum2label.(rgi_regions)
 
-    regional_results = DataFrames.DataFrame(rgi = rgis, region_name = rgi_labels)
+    regional_results = DataFrames.DataFrame(rgi = rgi_regions, region_name = rgi_labels)
+
+    if isnothing(varnames)
+        varnames = val(dims(region_fits, :varname))
+    end
+
+    if isnothing(rgi_regions)
+        rgi_regions = val(dims(region_fits, :rgi))
+    end
+
+
+    if fit_params == nothing
+        fit_params = dims(region_fits, :fit_param)
+    end
+
+    ismass = falses(dims(region_fits, :varname))
+    for varname in varnames
+        ismass[varname = At(varname)] = !(occursin("dv", varname) || occursin("fac", varname))
+    end
+
+
 
     for varname in varnames
+
+        ismass[varname=At(varname)] ? base_unit = "Gt" : base_unit = "km^3"
+
         #println("    $(varname)")
-        for param in params
+        for param in fit_params
             if param in ["acceleration"]
-                unit = "Gt/yr^2"
+                unit = "$(base_unit)/yr^2"
             elseif param in ["trend"]
-                unit = "Gt/yr"
+                unit = "$(base_unit)/yr"
             elseif param in ["amplitude"]
-                unit = "Gt"
+                unit = "$(base_unit)"
             elseif param in ["phase"]
                 unit = "day_of_max"
             end
@@ -605,11 +713,12 @@ function error_bar_table(region_fits, varnames, params, rgis; digits=2)
         end
     end
 
-    for (i, rgi) in enumerate(rgis)
+    for (i, rgi) in enumerate(rgi_regions)
         #println("$(rginum2label(rgi))")
         for varname in varnames
+            ismass[varname=At(varname)] ? base_unit = "Gt" : base_unit = "km^3"
             #println("    $(varname)")
-            for param in params
+            for param in fit_params
                 v = region_fits[At(varname), At(rgi), At(param), At(false)]
                 err = region_fits[At(varname), At(rgi), At(param), At(true)]
                 
@@ -617,11 +726,11 @@ function error_bar_table(region_fits, varnames, params, rgis; digits=2)
                 if param in ["acceleration"]
                     v = v
                     err = err
-                    unit = "Gt/yr^2"
+                    unit = "$(base_unit)/yr^2"
                 elseif param in ["trend"]
-                    unit = "Gt/yr"
+                    unit = "$(base_unit)/yr"
                 elseif param in ["amplitude"]
-                    unit = "Gt"
+                    unit = "$(base_unit)"
                 elseif param in ["phase"]
                     unit = "day_of_max"
                 end
@@ -1072,21 +1181,36 @@ It produces both total rates (in km³/yr) and area-averaged rates (in m/yr), sui
 - Variable names containing "dv" are converted to "dh" for area-averaged rates.
 - Only non-time-series columns and derived trend/amplitude columns are exported to GIS files.
 """
-function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="geotiles_rates", datelimits=(DateTime(2000, 3, 1), DateTime(2025, 1, 1)))
+function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="Gardner2025_geotiles_rates", datelimits=(DateTime(2000, 3, 1), DateTime(2025, 1, 1)))
     # export trends and amplitudes for reference_run
 
+    # data is in units of km3 assuming an ice density of 910 kg/m3
     geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
 
-    vars_no_write = setdiff(names(geotiles0), ["id", "glacier_frac", "landice_frac", "floating_frac", "geometry", "group", "pscale", "Δheight", "mie2cubickm", "rgiid"])
-    vars_ts = setdiff(vars_no_write, ["extent", "area_km2"])
+    colnames = names(geotiles0)
+    altim_cols = colnames[occursin.("_altim", colnames)]
+    rename!(geotiles0, altim_cols .=> replace.(altim_cols, "_altim" => "_synthesis"))
 
-    # Fit temporal trends to all variables
+    vars_no_write = setdiff(names(geotiles0), ["id", "geometry", "group", "pscale", "Δheight", "area_km2", "rgiid"])
+    geotiles0[!, :area_km2] = sum.(geotiles0[:, :area_km2])
+
+    # Fit temporal trends to all variables with dates in metadata
+    vars_ts = String[]
+    for col in names(geotiles0)
+        meta = colmetadata(geotiles0, col)
+        if haskey(meta, "date")
+            push!(vars_ts, col)
+        end
+    end
+
     source_crs1 = GFT.EPSG(4326)
     geotiles0 = df_tsfit!(geotiles0, vars_ts; datelimits)
-    geotiles0[!, :area_km2] = sum.(geotiles0[!, :area_km2])
 
-    outfile = joinpath(paths.data_dir, "project_data", "$(outfile_prefix)_km3yr.arrow")
-    GeoDataFrames.write(outfile, geotiles0[:, Not(vars_no_write)]; crs=source_crs1)
+    colname = names(geotiles0)
+    coloffset = colname[occursin.(Ref("_offset"), names(geotiles0))]
+    vars_no_write = vcat(vars_no_write, coloffset)
+    vars_no_write = vcat(vars_no_write, ["discharge_amplitude", "discharge_phase"])
+    geotiles0 = geotiles0[:, Not(vcat(vars_ts, vars_no_write))]
 
     # Export results, excluding raw time series
     isvec = []
@@ -1094,20 +1218,28 @@ function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="geotiles_ra
         push!(isvec, typeof(geotiles0[1, 12]) >: Vector)
     end
 
-    GeoDataFrames.write(joinpath(paths.data_dir, "project_data", "$(outfile_prefix)_km3yr.gpkg"), geotiles0[:, Not(vcat(vars_ts, vars_no_write))]; crs=source_crs1)
+    outfile_km3yr = joinpath(pathlocal[:data_dir], "project_data", "$(outfile_prefix)_km3yr.gpkg")
+    GeoDataFrames.write(outfile_km3yr, geotiles0; crs=source_crs1)
 
     # now do the same but for area averaged rates of change [from volume to meters]
+    
     for varname in names(geotiles0)
         if any(occursin.(vars_ts, Ref(varname)))
+
+            if occursin("_phase", varname)
+                rename!(geotiles0, varname => replace(varname, "dv" => "dh"))
+                continue
+            end
+
             geotiles0[:, varname] ./= (geotiles0[:, :area_km2] / 1e3)
             if occursin("dv", varname)
                 rename!(geotiles0, varname => replace(varname, "dv" => "dh"))
             end
         end
     end
-    vars_ts = replace.(vars_ts, "dv" => "dh")
-    vars_no_write = replace.(vars_no_write, "dv" => "dh")
 
-    println(vcat(vars_ts, vars_no_write))
-    GeoDataFrames.write(joinpath(paths.data_dir, "project_data", "$(outfile_prefix)_m3yr.gpkg"), geotiles0[:, Not(vcat(vars_ts, vars_no_write))]; crs=source_crs1)
+    outfile_myr = joinpath(pathlocal[:data_dir], "project_data", "$(outfile_prefix)_myr.gpkg")
+    GeoDataFrames.write(outfile_myr, geotiles0; crs=source_crs1)
+
+    return outfile_km3yr, outfile_myr
 end

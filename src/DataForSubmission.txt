@@ -1,0 +1,7 @@
+# Files to include with paper
+
+Gardner2025_geotiles_rates_myr.gpkg           # GeoPackage: Geotile-level glacier change rates (area-averaged, m/yr)
+Gardner2025_regional_timseries.nc             # NetCDF: Regional time series of glacier mass and volume change
+Gardner2025_endorheic_fraction.csv            # CSV: Fraction of glacier mass change and runoff draining to endorheic (inland) basins by region
+Gardner2025_regional_results.csv              # CSV: Summary (trend, amplitude, and phase with errors) of regional glacier change variables
+Gardner2025_gmax_buffer_population.nc         # NetCDF: Gridded data of population affected by glacier-fed river changes (buffer analysis)

@@ -67,7 +67,7 @@ begin
     glacier_summary_file = GGA.pathlocal[:glacier_summary]
     glacier_summary_gmax_file = replace(glacier_summary_file, ".nc" => "_gmax.gpkg")
 
-    population_file = joinpath(paths[:project_dir], "gardner2025_gmax_buffer_population.nc")
+    population_file = joinpath(paths[:project_dir], "Gardner2025_gmax_buffer_population.nc")
 
     scenario = Dict(
         "low" => (gmax=50, buffer=10_000, runoff=10),
@@ -137,7 +137,7 @@ begin
     replace!(country_polygons[!, :country], "United Republic of Tanzania" => "Tanzania")
 end;
 
-if !isfile(population_file) || (unix2datetime(mtime(population_file)) < unix2datetime(mtime(glacier_summary_gmax_file)))
+if true; #!isfile(population_file) || (unix2datetime(mtime(population_file)) < unix2datetime(mtime(glacier_summary_gmax_file)))
     # load population raster
     gpw_ras0 = Raster(gpw_file)
     #gpw_ras is small enought that if can be read into memory
@@ -160,8 +160,8 @@ if !isfile(population_file) || (unix2datetime(mtime(population_file)) < unix2dat
 
     name = "population"
     global_attributes = Dict(
-        "title" => "population living within a buffer distance of a river with a gmax threshold",
-        "version" => "beta - " * Dates.format(now(), "yyyy-mm-dd"),
+        "title" => "population living within a given buffer distance of a river with a gmax and glacier runoff thresholds",
+        "version" => "final - " * Dates.format(now(), "yyyy-mm-dd"),
         )
     fn = GGA.dimarray2netcdf(population, population_file; name, units=nothing, global_attributes)
 else
@@ -313,7 +313,6 @@ begin
         index0 = continents .== continent;
         println("$(continent): $(round(Int, sum(pop[index0])/total_pop *100))%")
     end
-
 
     subset = rivers[rivers.gmax_avg .>= scenario[k].gmax, :];
     total_river_length = sum(subset.lengthkm);

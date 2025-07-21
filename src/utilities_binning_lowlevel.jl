@@ -57,8 +57,8 @@ begin
         offset_trend_seasonal2(t, p) =
             p[1] .+
             p[2] .* t .+
-            p[3] .* sin.(2π .* t) .+
-            p[4] .* cos.(2π .* t)
+            p[3] .* cos.(2π .* t) .+
+            p[4] .* sin.(2π .* t) 
 
 
     offset_trend_acceleration_seasonal2::Function =
@@ -66,8 +66,8 @@ begin
             p[1] .+
             p[2] .* t .+
             p[3] .* t .^ 2 .+
-            p[4] .* sin.(2π .* t) .+
-            p[5] .* cos.(2π .* t)
+            p[4] .* cos.(2π .* t) .+
+            p[5] .* sin.(2π .* t) 
 
     const p_offset_trend_seasonal = zeros(4)
 end

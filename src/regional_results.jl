@@ -50,6 +50,10 @@ begin
     import GeometryOps as GO
     using NCDatasets
     using CSV
+    
+    using Unitful
+    Unitful.register(GGA.MyUnits)
+    using GlobalGlacierAnalysis.MyUnits
 
     error_quantile=0.95
     error_scaling=1.5
@@ -57,7 +61,7 @@ begin
     # to include in uncertainty
     paths = GGA.pathlocal
     reference_run = "binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized.jld2"
-    glacier_flux_path = joinpath(paths[:project_dir], "gardner2025_glacier_summary.nc")
+    glacier_flux_path = GGA.pathlocal[:glacier_summary]
 
     project_id = "v01"
     surface_mask = ["glacier", "glacier_rgi7"]
@@ -174,13 +178,32 @@ begin #[10 min]
     region_fits_lastdecade = GGA.region_fit_ref_and_err(runs_rgi_fits_lastdecade, path2reference; error_quantile, error_scaling, discharge = discharge_rgi);
 end;
 
-# create table with rgi results and error bars
+# CREATE OUTPUTS FOR PAPER
 begin
+    geotiles = GGA._geotile_load_align(; surface_mask="glacier")
+
     exclude_regions = [13, 14, 15]
-    varnames = ["acc", "runoff", "dm_altim", "dm", "ec", "dv_altim", "fac", "net_acc", "gsi"]
-    varnames = ["dm_altim", "dm", "acc", "runoff", "ec", "fac", "net_acc", "gsi", "discharge"]
     params = ["trend", "acceleration", "amplitude", "phase"]
-    regional_results = GGA.error_bar_table(region_fits, varnames, params, setdiff(drgi, exclude_regions));
+    regional_results = GGA.error_bar_table(region_fits; fit_params = params, rgi_regions = setdiff(drgi, exclude_regions));
+
+    altim_cols = names(regional_results)[occursin.("_altim", names(regional_results))]
+    rename!(regional_results, altim_cols .=> replace.(altim_cols, "_altim" => "_synthesis"))
+    
+    rename!(regional_results, "gsi_trend_[Gt/yr]" => "gsi")
+
+    # add area_km2 to regional_results
+    regional_results[!, :area_km2] .= 0.0
+    for dfr in eachrow(regional_results)
+        if dfr.rgi == 98
+            index_rgi = (geotiles[:, "rgi13"] .> 0) .| (geotiles[:, "rgi14"] .> 0) .| (geotiles[:, "rgi15"] .> 0)
+        elseif dfr.rgi == 99
+            index_rgi = trues(nrow(geotiles))
+        else
+            index_rgi = geotiles[:, "rgi$(dfr.rgi)"].>0
+        end
+
+        dfr.area_km2 = sum(sum(geotiles.area_km2[index_rgi]))
+    end
 
     # dump table to console
     GGA.show_error_bar_table(regional_results)
@@ -202,7 +225,79 @@ begin
     end
 
     output_file = joinpath(paths[:project_dir], "Gardner2025_regional_results.csv")
-    CSV.write(output_file, regional_results_out)
+    CSV.write(output_file, regional_results_out; bom=true)
+
+    endorheic_fraction = DataFrame() 
+    endorheic_fraction[!, :rgi] = val(dims(endorheic_scale_correction, :rgi))
+    endorheic_fraction[!, :region_name] = GGA.rginum2label.(endorheic_fraction[!, :rgi])
+    endorheic_fraction[!, :dm_endorheic_fraction] = GGA.rginum2label.(endorheic_fraction[!, :rgi])
+    for varname in dims(endorheic_scale_correction, :varname)
+        col_name = "$(varname)_endorheic_fraction"
+        endorheic_fraction[!, col_name] = 1 .- endorheic_scale_correction[varname = At(varname)]
+    end
+
+    include_regions = .!in.(endorheic_fraction.rgi, Ref(exclude_regions))
+    CSV.write(joinpath(paths[:project_dir], "Gardner2025_endorheic_fraction.csv"), endorheic_fraction[include_regions, :]; bom=true)
+
+
+    # remove regions, trim dates
+    regions_out = deepcopy(regions);
+    date_range = DateTime(2000, 1, 1).. DateTime(2025, 1, 15)
+
+    # ensure dimensions conform
+    var0 = "dm"
+    drgi = dims(regions_out[var0], :rgi)
+    ddate = dims(regions_out[var0][date=date_range], :date)
+    decyear = GGA.decimalyear.(val(ddate))
+    derror = dims(regions_out[var0], :error)
+
+    for k in keys(regions_out)
+        #k = first(keys(regions_out))
+
+        var1 = regions_out[k][rgi=At(setdiff(drgi, exclude_regions)), date=date_range]
+        ddate1 = dims(var1, :date)
+
+        if ddate != ddate1
+            var2 = fill(NaN, drgi, ddate, derror)
+            decyear2 = GGA.decimalyear.(val(dims(var1, :date)))
+
+            for rgi in drgi
+
+                if !(rgi in val(dims(var1, :rgi)))
+                    continue
+                end
+                
+                for error in derror
+                    ts = var1[rgi = At(rgi), error = At(error)]
+                    ts_interp = DataInterpolations.LinearInterpolation(ts, decyear2;extrapolation = ExtrapolationType.Constant)
+                    var2[rgi = At(rgi), error = At(error)] = ts_interp(decyear)
+                end
+            end
+        end
+
+        # add units
+        if k == "fac" || occursin("dv", k)
+            unit = 1u"km^3/yr"
+        else
+            unit = 1u"Gt/yr"
+        end
+
+        var1 *= unit
+        regions_out[k] = var1[rgi = At(setdiff(drgi, exclude_regions))]
+    end
+
+    global_attributes = Dict(
+        "title" => "glacier mass and volume change time series",
+        "version" => "final - " * Dates.format(now(), "yyyy-mm-dd"),
+    )
+
+    filename0 = joinpath(paths[:project_dir], "Gardner2025_regional_timseries.nc")
+
+    GGA.dimarray2netcdf(regions_out, filename0; global_attributes)
+
+
+    # copy data readme file to project directory
+    cp("/home/gardnera/Documents/GitHub/GlobalGlacierAnalysis.jl/src/Gardner2025_DataReadMe.txt", joinpath(paths[:project_dir], "Gardner2025_DataReadMe.txt"); force=true)
 end
 
 begin
@@ -363,7 +458,6 @@ begin
     println("                  rates for GlamBIE overlap period (2000-2024)")
 
    
-
     for rgi in rgis
         println("$(GGA.rginum2label(rgi)): $(round(Int, region_fits_glambie[At("dm"), At(rgi), At("trend"), At(false)])) ± $(round(Int, region_fits_glambie[At("dm"), At(rgi), At("trend"), At(true)])) Gt/yr")
     end

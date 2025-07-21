@@ -199,7 +199,7 @@ GGA.gemb_calibration(
 
 # [Extended Data Figure 9 & 10]
 begin
-    outfile_prefix = "geotiles_rates"
+    outfile_prefix = "Gardner2025_geotiles_rates"
 
     geotiles0 = GeoDataFrames.read(joinpath(GGA.pathlocal.data_dir, "project_data", "$(outfile_prefix)_m3yr.gpkg"))
 

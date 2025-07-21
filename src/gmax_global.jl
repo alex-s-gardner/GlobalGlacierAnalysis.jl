@@ -197,7 +197,6 @@ end
         axislegend(); p
     end
 
-
     # add the glacier fraction maximum to the rivers dataframe
     rivers[!, :runoff_max_avg] = ustrip.(vec(parent(glacier_max)))
     rivers[!, :runoff_max_month] = ustrip.(vec(parent(glacier_max_month)))

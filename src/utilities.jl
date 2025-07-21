@@ -982,9 +982,10 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
     prog = progress ? ProgressMeter.Progress(length(tsvars); desc="Fitting LSQ model to timeseries...") : nothing
 
     for tsvar in tsvars
+
         ddate = colmetadata(df, tsvar, "date")
         x = decimalyear.(ddate)
-        x = x .- mean(x)
+        x = x .- ceil(mean(x))
 
         out_var_offset = string(tsvar)*"_offset"
         out_var_trend = string(tsvar)*"_trend"
@@ -1003,6 +1004,7 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
         end
 
         Threads.@threads for g in eachrow(df)
+        
             y = g[tsvar];
             valid = .!isnan.(y) .& date_index
 
@@ -1016,7 +1018,7 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
             g[out_var_offset] = fit.param[1]
             g[out_var_trend] = fit.param[2]
             g[out_var_amp] = hypot(fit.param[3], fit.param[4])
-            g[out_var_phase] = 365.25 * (mod(0.25 - atan(fit.param[4], fit.param[3]) / (2π), 1))
+            g[out_var_phase] = 365.25 * (mod((atan(fit.param[3], fit.param[4]) + π/2) / (2π), 1))
         end
 
         # Update the progress meter
@@ -1220,7 +1222,7 @@ Convert a DimensionalData.DimArray to a NetCDF file.
 # Returns
 - Path to the created NetCDF file
 """
-function dimarray2netcdf(da, filename; name = "var", units = nothing, global_attributes = nothing)
+function dimarray2netcdf(da::DimArray, filename; name = "var", units = nothing, global_attributes = nothing)
     
     if isfile(filename)
         rm(filename)
@@ -1276,6 +1278,66 @@ function dimarray2netcdf(da, filename; name = "var", units = nothing, global_att
 
         return filename
     end;
+end
+
+
+
+function dimarray2netcdf(da, filename; name="var", units=nothing, global_attributes=nothing)
+
+    if isfile(filename)
+        rm(filename)
+    end
+
+    NCDataset(filename, "c") do ds
+        # get dimensions
+        da_dims = dims(da)
+
+        # step 1: define dimensions
+        for dim in da_dims
+            dname = string(DimensionalData.name(dim))
+            defDim(ds, dname, length(dim))
+        end
+
+        # step 2: add dim variables & metadata
+        for dim in da_dims
+            dname = string(DimensionalData.name(dim))
+            d = defVar(ds, dname, val(val(dim)), (dname,))
+
+            if eltype(dim) <: Number
+                d.attrib["units"] = string(Unitful.unit(dim[1]))
+            end
+
+            # add metadata
+            for (k, v) in DD.metadata(dim)
+                d.attrib[k] = v
+            end
+        end
+
+        # step 3: add variable
+        v = defVar(ds, name, ustrip.(parent(da)), string.(DimensionalData.name.(da_dims)))
+
+        # step 4: add variable metadata
+        if units == nothing
+            if eltype(da) <: Number
+                v.attrib["units"] = string(Unitful.unit(da[1]))
+            end
+        else
+            v.attrib["units"] = string(units)
+        end
+
+        for (k, v) in DD.metadata(da)
+            d.attrib[k] = v
+        end
+
+        # step 5: add global attributes
+        if global_attributes != nothing
+            for (k, v) in global_attributes
+                ds.attrib[k] = v
+            end
+        end
+
+        return filename
+    end
 end
 
 
@@ -1760,7 +1822,8 @@ function ts_seasonal_model(ts; interval=nothing)
     p = M \ ts[interval[1]..interval[2]]
 
     amplitude = sqrt(p[3]^2 + p[4]^2)
-    phase_peak = 1 + (1 / 4) - (atan(p[4], p[3]) / (2π))
+
+    phase_peak = mod(((atan(p[4], p[3]) + π/2) / 2π), 1) 
     phase_peak_month = month(decimalyear2datetime(phase_peak))
 
     trend = p[2]

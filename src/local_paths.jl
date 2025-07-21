@@ -137,7 +137,7 @@ function setpaths()
             # discharge data for global discharge analysis [created as part of processing pipeline]
             discharge_global = "/mnt/bylot-r3/data/GlacierOutlines/GlacierDischarge/global_glacier_discharge.jld2",
 
-            glacier_summary = joinpath(project_dir, "gardner2025_glacier_summary.nc")
+            glacier_summary = joinpath(project_dir, "Gardner2025_glacier_summary.nc")
         )
 
         return pathlocal
