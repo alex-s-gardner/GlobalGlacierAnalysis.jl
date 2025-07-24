@@ -107,14 +107,10 @@ begin #[50s]
     date_interval = dates4plot[1]..dates4plot[2]
 end
 
-
-#for location in locations
-begin
-
-    COMID = locations[1][1]
-    name = locations[1][2]
-
-    dates4plot
+for location in locations
+#location = locations[1]
+    COMID = location[1]
+    name = location[2]
 
     date_range = (DateTime(2000,3,1), DateTime(2024,10,1))
     fig = GGA.plot_point_location_river_flux(land_flux, glacier_flux; date_range, COMID, name, show_title=false)
@@ -124,4 +120,6 @@ begin
     
     output_path = joinpath(paths[:figures], "riverflux_$out_name.png")
     save(output_path, fig)
+
+    println(output_path)
 end

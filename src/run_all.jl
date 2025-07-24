@@ -292,7 +292,6 @@ GGA.geotile_synthesis_gembfit_dv(
 )
 
 # 15. Generate glacier level summary nc file with key statistics and metrics for further analysis and sharing
-
 _ = GGA.glacier_summary_file(
     binned_synthesized_dv_files,
     binned_synthesized_dv_file_ref;
