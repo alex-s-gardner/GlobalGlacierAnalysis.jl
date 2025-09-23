@@ -312,10 +312,10 @@ function geotile_synthesize_runs(;
     end
     mission_specs = project_products(; project_id=:v01)
     
-    dgeotile = dims(dh_err[first(missions2include)], :geotile)
-    geotile_rectangles = extent2rectangle.(geotile_extent.(collect(dgeotile)))
-
-    if !isnothing(single_geotile_test)
+    
+    if isnothing(single_geotile_test)
+        dgeotile = dims(dh_err[first(missions2include)], :geotile)
+    else
         dgeotile = Dim{:geotile}([single_geotile_test])
         dheight = dims(dh_err[first(missions2include)], :height)
         ddate = dims(dh_err[first(missions2include)], :date)
@@ -326,6 +326,8 @@ function geotile_synthesize_runs(;
         end
     end
 
+    geotile_rectangles = extent2rectangle.(geotile_extent.(collect(dgeotile)))
+    
     # convert error to weights
     w = copy(dh_err)
 

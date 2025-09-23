@@ -55,8 +55,8 @@ begin
     plots_save = false
     plot_save_format = ".png"
     geotiles2plot = GGA.geotiles_golden_test
-    single_geotile_test = GGA.geotiles_golden_test[7] # nothing
-    #single_geotile_test =  "lat[+54+56]lon[-126-124]"
+    #single_geotile_test = GGA.geotiles_golden_test[7] # nothing
+    single_geotile_test = "lat[+78+80]lon[+010+012]"
 
     # for sub-sampling experiment
     nsamples = 100;

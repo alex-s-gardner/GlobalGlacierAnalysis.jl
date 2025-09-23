@@ -600,7 +600,7 @@ function mask_rasterize(feature, extent::Extent, resolution; target_crs=EPSG(432
     setcrs(A, target_crs)
 
     # NOTE: count method is fastest
-    mask = Rasters.rasterize!(count, A, feature; threaded=false, shape=:polygon, progress=false, verbos=false, boundary=boundary) .> 0
+    mask = Rasters.rasterize!(count, A, feature; threaded=false, shape=:polygon, progress=false, verbose=false, boundary=boundary) .> 0
 
     return mask
 end
@@ -620,7 +620,7 @@ Calculate the fraction of glacier, land ice, floating ice, and RGI regions in ea
 # Returns
 - `DataFrame`: Contains geotile information with added columns for coverage fractions
 """
-function geotiles_w_mask(geotile_width; resolution = (X=.001, Y= .001), remake = false)
+function geotiles_w_mask(geotile_width; remake=false, scale = 100)
 
     if .!isdir(analysis_paths(; geotile_width).binned)
         mkpath(analysis_paths(; geotile_width).binned)
@@ -629,44 +629,63 @@ function geotiles_w_mask(geotile_width; resolution = (X=.001, Y= .001), remake =
     path2file = joinpath(analysis_paths(; geotile_width).binned, "geotiles_$(geotile_width)deg.arrow")
 
     if remake || !isfile(path2file)
-        geotiles = project_geotiles(; geotile_width);
+        geotiles = project_geotiles(; geotile_width)
+
         masks = [:glacier, :landice, :floating]
 
-        Threads.@threads for mask in masks
-            sym = Symbol("$(mask)_shp");
+        # create global raster for mask coverage calculation
+        lon, lat = X(DimensionalData.Dimensions.Lookups.Sampled(-180+geotile_width/2:geotile_width:180-geotile_width/2, sampling=DimensionalData.Dimensions.Lookups.Intervals(DimensionalData.Dimensions.Lookups.Center()))), Y(DimensionalData.Dimensions.Lookups.Sampled(-90+geotile_width/2:geotile_width:90-geotile_width/2, sampling=DimensionalData.Dimensions.Lookups.Intervals(DimensionalData.Dimensions.Lookups.Center())))
+
+        ras = Raster(zeros(lon, lat))
+
+        # map coverage to geotiles
+        x_center = mean.(getindex.(geotiles.extent, :X))
+        y_center = mean.(getindex.(geotiles.extent, :Y))
+        pts = GeoInterface.PointTuple.(tuple.(x_center, y_center))
+
+        for mask in masks
+            sym = Symbol("$(mask)_frac")
+            geotiles[!, sym] .= 0.
+        end
+
+        for mask in masks
+
+            println(mask)
+
+            sym = Symbol("$(mask)_shp")
+
             feature = Shapefile.Handle(pathlocal[sym])
 
-            sym = Symbol("$(mask)_frac")
-            geotiles[!,sym] = zeros(nrow(geotiles))
+            covsum1 = coverage!(ras, feature; threaded=false, scale, verbose=false)
 
-            # Threads causes issues 
-            for geotile in eachrow(geotiles)
-                mask = mask_rasterize(feature, geotile.extent, resolution; target_crs=EPSG(4326), source_crs=EPSG(4326), boundary = :center);
-                geotile[sym] = sum(mask) / length(mask)
-            end
+            sym = Symbol("$(mask)_frac")
+
+            # extract coverage from raster
+            val0 = Rasters.extract(covsum1, pts; index=false, geometry=false)
+            geotiles[:, sym] = getindex.(val0, 1)
+
         end
 
         regions = [:rgi6_regions]
         for region in regions
+            println(region)
+
             sym = Symbol("$(region)_shp")
-            feature = Shapefile.Table(pathlocal[sym])
+            feature = GeoDataFrames.read(pathlocal[sym])
 
             ids = unique(feature.RGI_CODE)
-            rgi_ids =  "rgi" .* string.(ids)
+            rgi_ids = "rgi" .* string.(ids)
 
             for rgi_id in rgi_ids
-                geotiles[!,rgi_id] .= 0.
+                geotiles[!, rgi_id] .= 0.
             end
 
-            for geotile in eachrow(geotiles)
-                for (id, rgi_id) in zip(ids, rgi_ids)
-                    idx = feature.RGI_CODE .== id
-                    mask = mask_rasterize(feature.geometry[idx], geotile.extent, (X=.01, Y= .01); target_crs=EPSG(4326), source_crs=EPSG(4326), boundary=:center)
+            for (id, rgi_id) in zip(ids, rgi_ids)
+                idx = feature.RGI_CODE .== id
+                covsum1 = coverage!(ras, feature[idx,:]; threaded=false, scale, verbose=false)
+                val0 = Rasters.extract(covsum1, pts; index=false, geometry=false)
 
-                    if any(mask)
-                        geotile[rgi_id] = sum(mask) / length(mask)
-                    end
-                end
+                geotiles[:, rgi_id] = getindex.(val0, 1)
             end
         end
 
@@ -1208,7 +1227,7 @@ end
 """
     dimarray2netcdf(da, filename; name="var", units=nothing, global_attributes=nothing) -> String
 
-Convert a DimensionalData.DimArray to a NetCDF file.
+Convert a DimensionalData.DimArray -or- DimensionalData.DimStack to a NetCDF file.
 
 # Arguments
 - `da`: DimensionalData.DimArray to convert
@@ -1229,6 +1248,7 @@ function dimarray2netcdf(da::DimArray, filename; name = "var", units = nothing, 
     end
     
     NCDataset(filename, "c") do ds
+        
         # get dimensions
         da_dims = dims(da)
 
@@ -1257,7 +1277,7 @@ function dimarray2netcdf(da::DimArray, filename; name = "var", units = nothing, 
         v = defVar(ds, name, ustrip.(parent(da)), string.(DimensionalData.name.(da_dims)))
         
         # step 4: add variable metadata
-        if units == nothing
+        if isnothing(units)
             if eltype(da) <: Number
                 v.attrib["units"] = string(Unitful.unit(da[1]))
             end
@@ -1270,7 +1290,7 @@ function dimarray2netcdf(da::DimArray, filename; name = "var", units = nothing, 
         end
 
         # step 5: add global attributes
-        if global_attributes != nothing
+        if !isnothing(global_attributes)
             for (k,v) in global_attributes
                 ds.attrib[k] = v
             end
@@ -1282,62 +1302,120 @@ end
 
 
 
-function dimarray2netcdf(da, filename; name="var", units=nothing, global_attributes=nothing)
+"""
+    dimstack2netcdf(ds::DimStack, filename; kwargs...) -> String
 
-    if isfile(filename)
-        rm(filename)
-    end
+Write a `DimStack` to a NetCDF file, preserving all dimensions, data, and metadata.
 
-    NCDataset(filename, "c") do ds
+# Arguments
+- `ds::DimStack`: The DimStack to be saved. Each entry should be a `DimArray` with associated dimensions and metadata.
+- `filename`: Path (as a `String`) to the output NetCDF file.
+
+# Keywords
+- `kwargs...`: Additional keyword arguments passed to `defVar` for each variable (e.g., `attrib`, `fillvalue`).
+
+# Returns
+- `String`: The filename of the written NetCDF file.
+
+# Details
+- All dimensions in the `DimStack` are defined as NetCDF dimensions.
+- Each dimension variable is written, including its metadata.
+- All variables in the `DimStack` are written to the file, with their metadata and any optional fill values or attributes.
+- Global attributes from the `DimStack` metadata are added to the NetCDF file.
+- The function overwrites any existing file at `filename`.
+"""
+function dimstack2netcdf(ds::DimStack, filename; kwargs...)
+
+    NCDataset(filename, "c"; format=:netcdf4) do nc
         # get dimensions
-        da_dims = dims(da)
+        ds_dims = dims(ds)
 
         # step 1: define dimensions
-        for dim in da_dims
+        for dim in ds_dims
             dname = string(DimensionalData.name(dim))
-            defDim(ds, dname, length(dim))
+            defDim(nc, dname, length(dim))
         end
 
         # step 2: add dim variables & metadata
-        for dim in da_dims
+        for dim in ds_dims
             dname = string(DimensionalData.name(dim))
-            d = defVar(ds, dname, val(val(dim)), (dname,))
+            d = defVar(nc, dname, val(val(dim)), (dname,))
 
-            if eltype(dim) <: Number
-                d.attrib["units"] = string(Unitful.unit(dim[1]))
-            end
-
-            # add metadata
+            # add dimension attributes from dimension metadata
             for (k, v) in DD.metadata(dim)
                 d.attrib[k] = v
             end
         end
 
         # step 3: add variable
-        v = defVar(ds, name, ustrip.(parent(da)), string.(DimensionalData.name.(da_dims)))
+        varnames = keys(ds)
+        for name in varnames
 
-        # step 4: add variable metadata
-        if units == nothing
-            if eltype(da) <: Number
-                v.attrib["units"] = string(Unitful.unit(da[1]))
-            end
-        else
-            v.attrib["units"] = string(units)
-        end
-
-        for (k, v) in DD.metadata(da)
-            d.attrib[k] = v
-        end
-
-        # step 5: add global attributes
-        if global_attributes != nothing
-            for (k, v) in global_attributes
-                ds.attrib[k] = v
+            var_meta = DD.metadata(ds[name]);
+            v = defVar(nc, string(name), ustrip.(parent(ds[name])), string.(DimensionalData.name.(dims(ds[name]))); kwargs...)
+     
+            # step 4: add variable attributes from variable metadata
+            for (k, var0) in var_meta
+                v.attrib[k] = var0
             end
         end
 
-        return filename
+        # step 5: add global attributes from global metadata
+        for (k, val) in DD.metadata(ds)
+            nc.attrib[string(k)] = val
+        end
     end
+
+    return filename
+end
+
+
+"""
+    netcdf2dimstack(filename) -> DimStack
+
+Load a NetCDF file and convert it to a `DimStack`, preserving dimensions, data, and metadata.
+
+# Arguments
+- `filename`: Path to the NetCDF file.
+
+# Returns
+- `DimStack`: A DimStack containing all non-dimension variables from the NetCDF file, with associated dimensions and metadata.
+"""
+function netcdf2dimstack(filename)
+    ds0 = NCDataset(filename)
+    ds = ncdataset2dimstack(ds0)
+    return ds
+end
+
+
+"""
+    ncdataset2dimstack(ds0) -> DimStack
+
+Convert an open NCDataset (from NCDatasets.jl) to a DimStack, preserving dimensions, data, and metadata.
+
+# Arguments
+- `ds0`: An open NCDataset object.
+
+# Returns
+- `DimStack`: A DimStack containing all non-dimension variables from the dataset, with associated dimensions and metadata.
+
+# Notes
+- Dimension variables are detected and used to construct Dim objects.
+- All global and variable-level attributes are preserved in the resulting DimStack and DimArrays.
+"""
+function ncdataset2dimstack(ds0)
+    # get the dimension names
+    dnames = NCDatasets.dimnames(ds0)
+
+    dim0 = Dict()
+    for dim in dnames
+        dim0[dim] = Dim{Symbol(dim)}(ds0[dim])
+    end
+
+    vnames = tuple(setdiff(keys(ds0), dnames)...)
+    ds = DimStack((; zip(Symbol.(vnames), [DimArray(ds0[vname], getindex.(Ref(dim0), dimnames(ds0[vname])); metadata=Dict(zip(keys(ds0[vname].attrib), getindex.(Ref(ds0[vname].attrib), keys(ds0[vname].attrib))))) for vname in vnames])...); metadata=Dict(zip(keys(ds0.attrib), getindex.(Ref(ds0.attrib), keys(ds0.attrib)))))
+    
+    return ds
 end
 
 
@@ -1572,6 +1650,7 @@ function geotiles_mutually_exclusive_rgi!(geotiles)
     end
     return geotiles, reg
 end
+
 
 
 """
@@ -1868,3 +1947,56 @@ function gt_per_yr_to_m3_per_s(gt_per_yr)
     return gt_per_yr * 1e9 / 365.25 / 24 / 60 / 60
 end
 
+"""
+    calculate_slope(data::DimArray)
+
+Calculate the linear slope of a line from a DimensionalData vector with time dimension.
+
+# Arguments
+- `data`: DimArray with time dimension (Ti)
+
+# Returns
+- `slope`: The calculated slope value
+
+# Examples
+```julia
+using DimensionalData
+
+# Create time dimension
+ti = Ti(1:10)
+data = DimArray(collect(1:10), ti)
+
+# Calculate slope
+slope = calculate_slope(data)
+```
+"""
+function calculate_slope(data::DimArray)
+    # Extract time dimension and data
+    ti_dim = dims(data, :Ti)
+    time_values = decimalyear.(collect(val(ti_dim)))
+    data_values = collect(data)
+
+    # Remove any NaN values
+    valid_mask = .!isnan.(data_values)
+    if sum(valid_mask) < 2
+        error("Need at least 2 valid data points to calculate slope")
+    end
+
+    time_clean = time_values[valid_mask]
+    data_clean = data_values[valid_mask]
+
+    # Calculate slope using least squares formula
+    n = length(time_clean)
+    x̄ = mean(time_clean)
+    ȳ = mean(data_clean)
+
+    numerator = sum((time_clean .- x̄) .* (data_clean .- ȳ))
+    denominator = sum((time_clean .- x̄) .^ 2)
+
+    if denominator == 0
+        error("Cannot calculate slope: all time values are identical")
+    end
+
+    slope = numerator / denominator
+    return slope
+end

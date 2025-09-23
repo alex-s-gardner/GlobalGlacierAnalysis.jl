@@ -1140,7 +1140,6 @@ function glacier_summary_file(
             v.attrib["units"] = string(Unitful.unit(dstack[vaname][1]))
         end
 
-
         v = defVar(ds, "glacier_area", ustrip.(glaciers.area_km2), string.(DimensionalData.name.(data_dims[1:1])))
         v.attrib["units"] = "km^2"
 
