@@ -55,8 +55,8 @@ begin
     plots_save = false
     plot_save_format = ".png"
     geotiles2plot = GGA.geotiles_golden_test
-    #single_geotile_test = GGA.geotiles_golden_test[7] # nothing
-    single_geotile_test = "lat[+78+80]lon[+010+012]"
+    single_geotile_test = GGA.geotiles_golden_test[1] # nothing
+    #single_geotile_test = "lat[+78+80]lon[+010+012]"
 
     # for sub-sampling experiment
     nsamples = 100;
@@ -83,7 +83,6 @@ begin
         )
 
     path2runs_synthesized_all_ensembles = replace.(path2runs_filled_all_ensembles, "aligned.jld2" => "synthesized.jld2")
-
 end;
 
 #[Extended Data Figure 3]

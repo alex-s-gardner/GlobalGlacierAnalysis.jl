@@ -47,7 +47,7 @@ begin
     reference_period = (DateTime(1979, 1, 1), DateTime(1979, 12, 31))
 
     if geotile_width < geotile_width_out
-        error("geotile_width_out must be smaller than geotile_width")
+        error("geotile_width_out must be smaller or equal to geotile_width")
     end
 
     # load in raw synthesis data with errors 
@@ -75,6 +75,7 @@ begin
     for gt in eachrow(geotiles_out)
         glacier_area[X=gt.extent.X[1] .. gt.extent.X[2], Y=gt.extent.Y[1] .. gt.extent.Y[2]] .= gt.glacier_frac
     end
+    
     glacier_area = glacier_area .* cell_areas # area in m^2
 
     # check that the glacier area is the same as the original geotiles
@@ -177,7 +178,9 @@ begin
     end
 
     for k in keys(ds)
-        if hasdim(ds[k], :Ti)
+        if k == :area
+            continue
+        elseif hasdim(ds[k], :Ti)
             for var in eachslice(ds[k], dims=Ti)
                 var .*= glacier_area # [kg/m2 * m2 = kg]
             end
@@ -208,11 +211,13 @@ begin
     kg2Gt = 1e-12
     runoff_rate_downscaled = GGA.calculate_slope(cumsum(global_runoff, dims=:Ti)) * kg2Gt # Gt/yr
 
-
+    gts = GGA.geotiles_mask_hyps("glacier", geotile_width)
     (ia, ib) = GGA.intersectindices(collect(dims(geotiles0, :geotile)), gts.id)
 
-    foo = geotiles0[varname=At("runoff"), error=At(false)]*1E6 .* gts[ib, :glacier_area_km2]
-    runoff_rate_original = GGA.calculate_slope(ustrip(dropdims(sum(foo; dims=:geotile), dims=:geotile))) * kg2Gt # Gt/yr
+    foo = geotiles0[varname=At("runoff"), error=At(false)]*1E6 .* sum.(gts[ib, :glacier_area_km2])    
+    foo = ustrip(dropdims(sum(foo; dims=:geotile), dims=:geotile))
+
+    runoff_rate_original = GGA.calculate_slope(foo) * kg2Gt # Gt/yr
 
     if (abs(runoff_rate_downscaled - runoff_rate_original) / runoff_rate_original) < 1.5E-3
         printstyled("Average runoff rate of downscaled and original data are within 0.15% of each other\n"; color=:light_green)

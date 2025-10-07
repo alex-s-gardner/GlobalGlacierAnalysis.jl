@@ -142,6 +142,22 @@ struct UnitCartesianFromGeographic <: CoordinateTransformations.Transformation
 end
 
 # median time 19 ns
+"""
+    (::UnitCartesianFromGeographic)(geographic_point)
+
+Convert a geographic point (longitude, latitude) to a unit Cartesian 3D point on the sphere.
+
+# Arguments
+- `geographic_point`: A point with longitude (x) and latitude (y) in degrees.
+
+# Returns
+- `GeometryBasics.Point3`: The corresponding 3D point on the unit sphere.
+
+# Notes
+- Longitude is mapped to the azimuthal angle θ (in degrees).
+- The polar angle ϕ is computed as 90° minus the latitude.
+- Uses `sincosd` for efficient and numerically stable computation.
+"""
 function (::UnitCartesianFromGeographic)(geographic_point)
     # Longitude is directly translatable to a spherical coordinate
     # θ (azimuth)
@@ -230,6 +246,20 @@ function spherical_cap_edge_points(cap::UnitSphericalCap{T}, num_points::Int=100
 end
 
 
+"""
+    to_latlong_polygon(cap::UnitSphericalCap, n_points::Int)
+
+Convert a `UnitSphericalCap` to a geographic (latitude/longitude) polygon.
+
+# Arguments
+- `cap::UnitSphericalCap`: The spherical cap to convert.
+- `n_points::Int`: Number of points to use for approximating the polygon edge.
+
+# Returns
+- `GI.Polygon`: A polygon in latitude/longitude (EPSG:4326) representing the cap.
+
+The function samples `n_points` along the edge of the cap, converts them to geographic coordinates, and returns a polygon.
+"""
 function to_latlong_polygon(cap::UnitSphericalCap, n_points::Int)
     points = GeographicFromUnitCartesian().(spherical_cap_edge_points(cap, n_points))
     return GI.Polygon([GI.LinearRing(points)]; crs=GFT.EPSG(4326))
