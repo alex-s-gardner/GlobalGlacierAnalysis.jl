@@ -232,7 +232,7 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
 
     missions = mission_proper_name.(collect(keys(dh)))
     dheight = dims(dh[first(keys(dh))], :height)
-    Δheight = val(dheight)[2] - val(dheight)[1]
+    ΔT = val(dheight)[2] - val(dheight)[1]
     ddate = dims(dh[first(keys(dh))], :date)
     
     valid = falses(size(dh[first(keys(dh))]))
@@ -297,8 +297,8 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
         xlims!(ax[i], xlims)
     end
 
-    height_min = max(0.0, (floor(height_min / Δheight) * Δheight) - Δheight)
-    height_max = ceil(height_max / Δheight) * Δheight .+ Δheight
+    height_min = max(0.0, (floor(height_min / ΔT) * ΔT) - ΔT)
+    height_max = ceil(height_max / ΔT) * ΔT
 
     for (i, mission) in enumerate(mission_order)
         ylims!(ax[i], (height_min, height_max))
@@ -331,7 +331,7 @@ function plot_hypsometry!(ax, area_km2)
     ax.title="glacier area-elevation distribution"
 
     dheight = dims(area_km2, :height)
-    Δheight = val(dheight)[2] - val(dheight)[1]
+    ΔT = val(dheight)[2] - val(dheight)[1]
 
     pts0 = Point2f.(collect(area_km2), parent(val(dheight)))
     pts = similar(pts0, (length(pts0) * 2)+2)
@@ -351,7 +351,7 @@ function plot_hypsometry!(ax, area_km2)
     end
 
     poly!(ax, pts, color=:skyblue2, strokecolor=:black, strokewidth=1)
-    xlims!(ax, (0, ceil(maximum(area_km2)*1.05 / Δheight) * Δheight))
+    xlims!(ax, (0, ceil(maximum(area_km2)*1.05 / ΔT) * ΔT))
     ax.ygridvisible = false
     ax.xgridvisible = false
     ax.yticklabelsvisible = false
@@ -406,14 +406,18 @@ function plot_area_average_height_anomaly!(ax, dh0, area_km2; colormap=:thermal,
 
     for (i, mission) in enumerate(mission_order)
         y =  collect(dh_area_average(dh0[mission], area_km2))
-        y_median = round(median(y[.!isnan.(y)]), digits=1)
+        valid = .!isnan.(y)
+        y_median = round(median(y[valid]), digits=1)
+        
+        dm_fit = curve_fit(offset_trend_seasonal2, x[valid], y[valid], p3)
+        y_amplitude = round(hypot(dm_fit.param[3], dm_fit.param[4]), digits=1)
 
         if !in(mission, keys(dh0))
             continue
         end
 
         if median_in_label
-            label = "$(mission_proper_name(mission)): $(y_median)m"
+            label = "$(mission_proper_name(mission)) x͂:$(y_median)m, A:$(y_amplitude)m"
         else
             label = "$(mission_proper_name(mission))"
         end
@@ -659,7 +663,7 @@ function plot_area_average_height_anomaly_with_ensemble_spread(
             ref_mean = mean(dh_area_averaged0[date=ref_period[1] .. ref_period[2]], dims=:date)
             @d dh_area_averaged0 .-= ref_mean
 
-            figures[geotile2plot] = f = _publication_figure(columns=1, rows=1)
+            figures[geotile2plot] = _publication_figure(columns=1, rows=1)
             ax = CairoMakie.Axis(figures[geotile2plot][1, 1])
 
             plot_ensemble_spread!(ax, dh_area_averaged0; path2runs_synthesized_reference, xtickspacing, p)
@@ -703,7 +707,7 @@ function plot_ensemble_spread!(ax, dh_area_averaged0; path2runs_synthesized_refe
     drun, ddate = dims(dh_area_averaged0)
     x = collect(val(ddate))
 
-    mid0 = collect(dh_area_averaged0[run=At(path2runs_synthesized_reference)])
+    mid0 = vec(collect(dh_area_averaged0[run=At(path2runs_synthesized_reference)]))
     low = mid0 .- dh_area_averaged_spread
     high = mid0 .+ dh_area_averaged_spread
 
@@ -900,6 +904,35 @@ function plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median
     return ax
 end
 
+
+function plot_model_fit(gemb, discharge, dv_altim, cost, geotile;colormap=:thermal)
+
+    gemb0 = gemb[geotile=At(geotile)]
+    discharge0 = discharge[:discharge][geotile=At(geotile)]
+    dv_altim0 = dv_altim[geotile=At(geotile)]
+
+    # align dv_altim and dv_gemb
+    ddate_gemb = dims(gemb0, :date)
+    ex = extrema(dims(dv_altim, :date))
+    index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
+    gemb0 = gemb0[date=At(ddate_gemb[index_gemb].val)]
+
+    discharge0 = ((decimalyear.(dims(gemb0, :date)) .- decimalyear.(dims(gemb0, :date))[1]) .+ (decimalyear.(dims(gemb0, :date))[2] .- decimalyear.(dims(gemb0, :date))[1]))  .* discharge0
+
+    index_minimum = argmin(cost)
+    pscale_best = DimPoints(cost)[index_minimum][1]
+    ΔT_best = DimPoints(cost)[index_minimum][2]
+
+    best_smb = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:smb]);
+    best_fac = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:fac]);
+    best_fit = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:dv]);
+
+    f = plot_model_fit(best_smb, best_fac, discharge0, best_fit, dv_altim0, cost; colormap)
+    return f
+end
+
+
+
 """
     plot_model_fit(best_smb, best_fac, best_discharge, best_fit, dv0, cost_metric; xlims, xtickspacing, colormap=:thermal)
 
@@ -922,14 +955,13 @@ Create a two-panel figure visualizing the model fit and cost metric for glacier 
     - Right: Contour plot of the cost metric as a function of model parameters.
 
 """
-function plot_model_fit(best_smb, best_fac, best_discharge, best_fit, dv0, cost_metric; xlims, xtickspacing, colormap=:thermal)
+function plot_model_fit(best_smb, best_fac, best_discharge, best_fit, dv0, cost_metric; colormap=:thermal)
     f = _publication_figure(columns=2, rows=1)
     ax1 = CairoMakie.Axis(f[1, 1])
     ax2 = CairoMakie.Axis(f[1, 2])
 
-   
 
-    plot_best_fit!(ax1, best_smb, best_fac, best_discharge, best_fit, dv0; xlims, xtickspacing, colormap)
+    plot_best_fit!(ax1, best_smb, best_fac, best_discharge, best_fit, dv0; colormap)
     ax2, crange = plot_cost_metric!(ax2, cost_metric; colormap)
     Colorbar(f[1, 3]; limits=crange, colormap)#label="cost"
 
@@ -961,7 +993,7 @@ This function normalizes all time series to a common reference period (the first
 the SMB, FAC, discharge, observed, and modeled height anomalies as lines on the provided axis.
 A legend is added for clarity.
 """
-function plot_best_fit!(ax, best_smb, best_fac, best_discharge, best_fit, dv0; xlims, xtickspacing, colormap=:thermal)
+function plot_best_fit!(ax, best_smb, best_fac, best_discharge, best_fit, dv0; colormap=:thermal)
 
     ddate = dims(best_smb, :date)
     decyear = decimalyear.(collect(val(ddate)))
@@ -975,9 +1007,9 @@ function plot_best_fit!(ax, best_smb, best_fac, best_discharge, best_fit, dv0; x
 
     ax.ylabel="height anomaly"
     ax.ytickformat=values -> ["$(round(Int,value))m" for value in values]
-    ax.xticks = xlims[1]:xtickspacing:xlims[2]
-    xlims!(ax, xlims)
-    #title="best fit for $single_geotile_test [pscale = $pscale0, Δheight = $Δheight0, mad = $(round(cost_metric_minimum; digits=2))]"
+    #ax.xticks = xlims[1]:xtickspacing:xlims[2]
+    #xlims!(ax, xlims)
+    #title="best fit for $single_geotile_test [pscale = $pscale0, ΔT = $ΔT0, mad = $(round(cost_metric_minimum; digits=2))]"
 
     CairoMakie.lines!(ax, decyear, parent(dv0); label="observed", color=clrs[1])
     CairoMakie.lines!(ax, decyear, parent(best_fac); label="FAC", color=clrs[2])
@@ -992,11 +1024,11 @@ end
 """
     plot_cost_metric!(ax, cost_metric; colormap=:thermal)
 
-Plot a contour map of the cost metric as a function of precipitation scale (pscale) and Δheight.
+Plot a contour map of the cost metric as a function of precipitation scale (pscale) and ΔT.
 
 # Arguments
 - `ax`: A CairoMakie Axis object to plot on.
-- `cost_metric`: 2D array (or NamedDimsArray) of cost metric values, with dimensions :pscale and :Δheight.
+- `cost_metric`: 2D array (or NamedDimsArray) of cost metric values, with dimensions :pscale and :ΔT.
 
 # Keyword Arguments
 - `colormap`: Colormap to use for the contour plot (default: `:thermal`).
@@ -1004,35 +1036,56 @@ Plot a contour map of the cost metric as a function of precipitation scale (psca
 # Returns
 - `(ax, crange)`: The modified axis object and the color range tuple used for the plot.
 
-This function creates a contour plot of the cost metric over the parameter space of precipitation scale and Δheight.
+This function creates a contour plot of the cost metric over the parameter space of precipitation scale and ΔT.
 It highlights the minimum cost location with a marker and label, and adds a colorbar for reference.
 """
 function plot_cost_metric!(ax, cost_metric; colormap=:thermal)
-    
-    ax.xlabel = "precipitation scaling"
-    ax.ylabel = "height offset / melt scaling"
-    ax.ytickformat = values -> ["$(round(Int,value))m" for value in values]
     dpscale = dims(cost_metric, :pscale)
-    dΔheight = dims(cost_metric, :Δheight)
+    dΔT = dims(cost_metric, :ΔT)
 
+    ax.xlabel = "precipitation scaling"
+    ax.ylabel = "melt scaling"
+    
+   
+    if all(dpscale .> 0)
+        dxtick = ceil(Int, length(dpscale) / 10)
+        ax.xticks = (eachindex(dpscale)[1:dxtick:end], string.(round.(collect(val(dpscale))[1:dxtick:end], digits=2)))
+    end
 
-    step = ceil(Int, minimum(cost_metric)/4)
-    crange = (0, step*6)
-    contour!(ax, collect(val(dpscale)), collect(val(dΔheight)), parent(cost_metric); colorrange=crange, levels=0:step:maximum(cost_metric), colormap)
-    #heatmap!(ax, cost_metric; colorrange=(0, 50))
+    if all(dΔT .> 0)
+        dytick = ceil(Int, length(dΔT) / 10)
+        ax.yticks = (eachindex(dΔT)[1:dytick:end], string.(round.(collect(val(dΔT))[1:dytick:end], digits=2)))
+    else
+        ax.ytickformat = values -> ["$(round(Int,value))°" for value in values]
+    end
 
-    xlims!(ax, extrema(collect(val(dpscale))))
-    ylims!(ax, extrema(collect(val(dΔheight))))
+    # normalize cost metric to 0-1
+    cost_metric .-= minimum(cost_metric[.!isinf.(cost_metric)])
+    cost_metric ./= maximum(cost_metric[.!isinf.(cost_metric)])
+
+    cost_metric[isinf.(cost_metric)] .= 9999
+    step = 1/50
+    crange = (0, 1)
+   
+    if all(dΔT .> 0)
+        contour!(ax, eachindex(dpscale),eachindex(dΔT), parent(cost_metric); colorrange=crange, levels=0:step:maximum(cost_metric), colormap)
+        ylims!(ax, extrema(collect(eachindex(dΔT))))
+    else
+        contour!(ax, eachindex(dpscale), collect(val(dΔT)), parent(cost_metric); colorrange=crange, levels=0:step:maximum(cost_metric), colormap)
+        ylims!(ax, extrema(collect(val(dΔT))))
+    end
+
+    xlims!(ax, extrema(collect(eachindex(dpscale))))
 
     index_minimum = argmin(cost_metric)
     pscale_best = DimPoints(cost_metric)[index_minimum][1]
-    Δheight_best = DimPoints(cost_metric)[index_minimum][2]
+    ΔT_best = DimPoints(cost_metric)[index_minimum][2]
 
-    scatter!(ax, pscale_best, Δheight_best; color=:black, markersize=15, marker=:xcross)
-    text!(ax, pscale_best, Δheight_best,
-        text="  cost = $(round(cost_metric[index_minimum]; digits=1))",
-        align=(:left, :center)
-    )
+     if all(dΔT .> 0)
+        scatter!(ax, findfirst(pscale_best .== dpscale), findfirst(ΔT_best .== dΔT); color=:black, markersize=15, marker=:xcross)
+    else
+        scatter!(ax, findfirst(pscale_best .== dpscale), ΔT_best; color=:black, markersize=15, marker=:xcross)
+    end
     return ax, crange
 end
 
@@ -1057,7 +1110,7 @@ The second panel shows step histograms of the model and altimetry-derived amplit
 function plot_hist_gemb_altim_trend_amplitude(geotiles0)
     f = _publication_figure(columns=2, rows=1)
     var1 = "dh_trend"
-    var2 = "dh_altim_trend"
+    var2 = "dh_synthesis_trend"
 
     ax1 = CairoMakie.Axis(f[1, 1]; xlabel="trend", ylabel="count")
     ax1.xtickformat = values -> ["$(round(Int,value))m yr⁻¹" for value in values]
@@ -1066,7 +1119,7 @@ function plot_hist_gemb_altim_trend_amplitude(geotiles0)
     axislegend(ax1, framevisible=false)
 
     var1 = "dh_amplitude"
-    var2 = "dh_altim_amplitude"
+    var2 = "dh_synthesis_amplitude"
     ax2 = CairoMakie.Axis(f[1, 2]; xlabel="amplitude")
     ax2.xtickformat = values -> ["$(round(Int,value))m" for value in values]
 
@@ -1080,31 +1133,37 @@ end
 
 
 """
-    plot_hist_pscale_Δheight(gemb_fit)
+    plot_hist_pscale_ΔT(gemb_fit)
 
-Plot histograms of precipitation scaling and height offset parameters from GEMB fit results.
+Plot histograms of precipitation scaling and melt scaling parameters from GEMB fit results.
 
 # Arguments
-- `gemb_fit`: A DataFrame or table containing columns `:pscale` (precipitation scaling) and `:Δheight` (height offset).
+- `gemb_fit`: A DataFrame or table containing columns `:pscale` (precipitation scaling) and `:ΔT` (melt scaling).
 
 # Returns
 - `f`: A CairoMakie Figure object with two panels:
     - Left: Histogram of precipitation scaling values.
-    - Right: Histogram of height offset values.
+    - Right: Histogram of melt scaling values.
 
 # Description
 Creates a two-panel figure. The first panel shows a histogram of precipitation scaling factors (`pscale`).
-The second panel shows a histogram of height offset values (`Δheight`). Both histograms have counts on the y-axis,
+The second panel shows a histogram of melt scaling values (`ΔT`). Both histograms have counts on the y-axis,
 and the y-axis is set to start at zero.
 """
-function plot_hist_pscale_Δheight(gemb_fit)
+function plot_hist_pscale_ΔT(gemb_fit)
     f = _publication_figure(columns=2, rows=1)
     ax1 = CairoMakie.Axis(f[1, 1]; xlabel="precipitation scaling", ylabel="count")
-    CairoMakie.hist!(ax1, gemb_fit[:, :pscale], bins=0.25:0.25:4)
+    CairoMakie.hist!(ax1, gemb_fit[:, :pscale], bins=0.25:0.25:5)
     ylims!(low=0)
-    ax2 = CairoMakie.Axis(f[1, 2]; xlabel="height offset / melt scaling")
-    ax2.xtickformat = values -> ["$(round(Int,value))m" for value in values]
-    CairoMakie.hist!(ax2, gemb_fit[:, :Δheight], bins=-3000:200:3000)
+    ax2 = CairoMakie.Axis(f[1, 2]; xlabel="melt scaling")
+    ax2.xtickformat = values -> ["$(round(Int,value))" for value in values]
+    ΔT_lims = extrema(gemb_fit[:, :ΔT])
+    if any(abs.(ΔT_lims) .> 50) 
+        dbin = 200;
+    else
+        dbin = 0.2;
+    end
+    CairoMakie.hist!(ax2, gemb_fit[:, :ΔT], bins=ΔT_lims[1]:dbin:ΔT_lims[end])
     ylims!(low=0)
     #axislegend(ax1, framevisible = false)
     return f
@@ -1303,6 +1362,7 @@ function plot_multiregion_dvdm(
         valid_index = .!isnan.(regions[varname][At(region_order[1]), minimum(daterange)..maximum(daterange), At(false)])
         last = zeros(sum(valid_index))
 
+        c = 0
         for (i, rgi) in enumerate(region_order)
 
             #rgi = region_order[1]
@@ -1312,6 +1372,7 @@ function plot_multiregion_dvdm(
                 continue
             end
 
+            c += 1
             if varname == dvarname[end]
                 ln = CairoMakie.lines!(ax1, collect(decimalyear.(dims(mid0, :date))), collect(mid0))
 
@@ -1324,7 +1385,8 @@ function plot_multiregion_dvdm(
 
                 yticks[i] = mid0[1]
                 y2ticks[i] = mid0[end]
-                y2ticklabelcolor[i] = ln.color.val
+
+                y2ticklabelcolor[i] = palette.color[c]
             else
                 ln = CairoMakie.lines!(ax1, collect(decimalyear.(dims(mid0, :date))), collect(mid0); color=(:black, 0.3))
             end
@@ -1443,11 +1505,11 @@ function plot_area_average_height_gemb_ensemble(
     title_prefix = ""
 )
     dpscale = dims(gemb0[first(vars2plot)], :pscale)
-    if hasdim(gemb0[first(vars2plot)], :Δheight)
-        dΔheight = dims(gemb0[first(vars2plot)], :Δheight)
-        clrs = Makie.resample_cmap(:thermal, length(dpscale) * length(dΔheight) + 1)
+    if hasdim(gemb0[first(vars2plot)], :ΔT)
+        dΔT = dims(gemb0[first(vars2plot)], :ΔT)
+        clrs = Makie.resample_cmap(:thermal, length(dpscale) * length(dΔT) + 1)
     else
-        dΔheight = nothing
+        dΔT = nothing
         clrs = Makie.resample_cmap(:thermal, length(dpscale) + 1)
     end
 
@@ -1463,22 +1525,23 @@ function plot_area_average_height_gemb_ensemble(
 
             cnt = 1
             for pscale in dpscale
-                if isnothing(dΔheight)
+                if isnothing(dΔT)
                     dh = dh_area_average(
                         gemb0[var0][geotile=At(geotile2plot), pscale=At(pscale)],
                         area_km2[geotile=At(geotile2plot)]
                     )
-                    height_range, = validrange(.!isnan.(dh))
-                    lines!(ax, dh[height_range]; label="p:$(pscale)", color=clrs[cnt])
+                    
+                    time_range, = validrange(.!isnan.(dh))
+                    lines!(ax, dims(dh, :date).val[time_range], dh[time_range].data; label="p:$(pscale)", color=clrs[cnt])
                     cnt += 1
                 else
-                    for Δheight in dΔheight
+                    for ΔT in dΔT
                         dh = dh_area_average(
-                            gemb0[var0][pscale=At(pscale), Δheight=At(Δheight)],
+                            gemb0[var0][pscale=At(pscale), ΔT=At(ΔT)],
                             area_km2[geotile=At(geotile2plot)]
                         )
-                        height_range, = validrange(.!isnan.(dh))
-                        lines!(ax, dh[height_range]; label="p:$(pscale) Δh:$(Δheight)", color=clrs[cnt])
+                        time_range, = validrange(.!isnan.(dh))
+                        lines!(ax, dims(dh, :date).val[time_range], dh[time_range].data; label="p:$(pscale) Δh:$(ΔT)", color=clrs[cnt])
                         cnt += 1
                     end
                 end
@@ -1496,7 +1559,7 @@ end
 Plot area-normalized height change ensemble results from GEMB model diagnostics.
 
 # Arguments
-- `gemb_dv`: Dictionary or NamedTuple of GEMB diagnostic variables, each as a DimArray with `:pscale` and `:Δheight` dimensions.
+- `gemb_dv`: Dictionary or NamedTuple of GEMB diagnostic variables, each as a DimArray with `:pscale` and `:ΔT` dimensions.
 - `area_km2`: DimArray or array representing the area (in km²) for normalization.
 - `geotile`: (Optional) String identifier for the geotile being plotted (used in plot titles).
 - `title_prefix`: (Optional) String prefix for plot titles.
@@ -1504,14 +1567,14 @@ Plot area-normalized height change ensemble results from GEMB model diagnostics.
 # Returns
 - `figures`: Dictionary mapping each variable name to its corresponding Makie figure.
 
-Each figure shows the area-normalized height change for all parameter scale (`pscale`) and height change (`Δheight`) ensemble members, with a legend indicating the parameter combinations.
+Each figure shows the area-normalized height change for all parameter scale (`pscale`) and height change (`ΔT`) ensemble members, with a legend indicating the parameter combinations.
 """
 function plot_dh_gemb_ensemble(gemb_dv, area_km2; geotile = "", title_prefix="")
     area_total = sum(parent(area_km2))
     vars2plot = keys(gemb_dv)
     dpscale = dims(gemb_dv[first(vars2plot)], :pscale)
-    dΔheight = dims(gemb_dv[first(vars2plot)], :Δheight)
-    clrs = Makie.resample_cmap(:thermal, length(dpscale) * length(dΔheight) + 1)
+    dΔT = dims(gemb_dv[first(vars2plot)], :ΔT)
+    clrs = Makie.resample_cmap(:thermal, length(dpscale) * length(dΔT) + 1)
     figures = Dict()
 
     for var0 in vars2plot
@@ -1522,10 +1585,10 @@ function plot_dh_gemb_ensemble(gemb_dv, area_km2; geotile = "", title_prefix="")
 
         cnt = 1
         for pscale in dpscale
-            for Δheight in dΔheight
-                dh = gemb_dv[var0][pscale=At(pscale), Δheight=At(Δheight)] ./ area_total
+            for ΔT in dΔT
+                dh = gemb_dv[var0][pscale=At(pscale), ΔT=At(ΔT)] ./ area_total
                 height_range, = validrange(.!isnan.(dh))
-                lines!(ax, dh[height_range]; label="p:$(pscale) Δh:$(Δheight)", color=clrs[cnt])
+                lines!(ax, dh[height_range]; label="p:$(pscale) Δh:$(ΔT)", color=clrs[cnt])
                 cnt += 1
             end
         end
@@ -1657,7 +1720,7 @@ function plot_point_location_river_flux(land_flux, glacier_flux, snow_flux; date
     ax2.ylabel = "glacier fraction [%]"
 
     xlims!(ax2, minimum(xticks), maximum(xticks))
-    text!(maximum(x), mean((gmax_max, gmax)), text="gmax = $gmax [$(Dates.monthname(gmax_month))] ", align=[:right, :center], color=(:black, 0.8), overdraw=true)
+    text!(maximum(x), mean((gmax_max, gmax)); text="gmax = $gmax [$(Dates.monthname(gmax_month))] ", align=(:right, :center), color=(:black, 0.8), overdraw=true)
 
     return f
 end

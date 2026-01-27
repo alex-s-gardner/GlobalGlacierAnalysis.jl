@@ -6,11 +6,11 @@ binned_filling_parameters[1] = (
         "icesat2" => 9,
         "gedi" => 9,
         "hugonnet" => 51), 
-    smooth_n=Dict("icesat" => 5,
+    smooth_n=Dict("icesat" => 5, # smooth n controls the number of points used to smooth the data
         "icesat2" => 5,
         "gedi" => 5,
         "hugonnet" => 21), 
-    smooth_h2t_length_scale=800, # 800 m = 1 year in distance for anomaly from variogram analysis =    <----------------------
+    smooth_h2t_length_scale= 800, # 800 m = 1 year in distance for anomaly from variogram analysis =    <----------------------
     model1_nmad_max = 5, # = 5  this is a sigma-equivelent threshold
 )
 binned_filling_parameters[2] = (
@@ -52,7 +52,7 @@ binned_filling_parameters[2] = (
 end
 
 # define model for curvature correction
-model_curvature::Function = model_curvature(c, p) = p[1] .+ p[2] .* c .+ p[3] .* c .^ 2 .+ p[4] .* c .^ 3 .+ p[5] .* c .^ 4
+model_curvature(c, p) = p[1] .+ p[2] .* c .+ p[3] .* c .^ 2 .+ p[4] .* c .^ 3 .+ p[5] .* c .^ 4
 p_curvature = zeros(5)
 
 """

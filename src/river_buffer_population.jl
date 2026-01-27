@@ -45,7 +45,7 @@ begin
     using Colors
     using BinStatistics
     using LibGEOS # was not able to use GeometryOps for union
-    using Tyler
+    #using Tyler
     using Extents
     using StaticArrays
     using Downloads
@@ -74,7 +74,6 @@ begin
         "mid" => (gmax=50, buffer=30_000, runoff=10),
         "high" => (gmax=25, buffer=50_000, runoff=1),
     )
-
 end
 
 begin
@@ -137,7 +136,7 @@ begin
     replace!(country_polygons[!, :country], "United Republic of Tanzania" => "Tanzania")
 end;
 
-if true; #!isfile(population_file) || (unix2datetime(mtime(population_file)) < unix2datetime(mtime(glacier_summary_gmax_file)))
+if !isfile(population_file) || (unix2datetime(mtime(population_file)) < unix2datetime(mtime(glacier_summary_gmax_file)))
     # load population raster
     gpw_ras0 = Raster(gpw_file)
     #gpw_ras is small enought that if can be read into memory
@@ -169,23 +168,20 @@ else
 end
 
 begin
-
-    dcountry = dims(data, :country)
+    dcountry = dims(population, :country)
     dscenario = Dim{:scenario}(collect(keys(scenario)))
+    data = zeros(dcountry, dscenario)
 
     for k in keys(scenario)
 
-        data = population[gmax=At(scenario[k].gmax), buffer=At(scenario[k].buffer), runoff=At(scenario[k].runoff)]
-        data = data[data .> 0];
-       
-        data = zeros(dcountry, dscenario);
-
-        data[At(val(dcountry)), At("low")] = population[country=At(val(dcountry)), gmax=At(scenario[k].gmax), buffer=At(scenario[k].buffer), runoff=At(scenario[k].runoff)]
+        data[At(val(dcountry)), At(k)] = population[country=At(val(dcountry)), gmax=At(scenario[k].gmax), buffer=At(scenario[k].buffer), runoff=At(scenario[k].runoff)]
         println("$(string(k)): $(round(Int, sum(population[gmax=At(scenario[k].gmax), buffer=At(scenario[k].buffer), runoff=At(scenario[k].runoff)])/1E6)) million")
     end
     
     sort_idx = sortperm(parent(data[scenario=At("mid")]); rev = false);
     data = data[sort_idx,:];
+
+    data= data[data[scenario=At("low")] .> 0, :];
 end;
 
 begin
@@ -242,7 +238,6 @@ begin
     df = DataFrame(country=countries)
     df[!, :continent] = getindex.(Ref(country2continent), df[!, :country]);
     index0 = falses(nrow(df))
-
 
     for k in keys(scenario)
         df[!, "gmax ≥ $(scenario[k].gmax)"] = parent(population[gmax=At(scenario[k].gmax), buffer=At(scenario[k].buffer), runoff=At(scenario[k].runoff)])

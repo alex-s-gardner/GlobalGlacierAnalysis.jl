@@ -13,9 +13,10 @@ begin
 end
 
 # User-defined parameters
-geotile_width_out = 0.5;
 
+outfile_suffix = "_ΔT"
 # Synthesis parameters of input data
+for geotile_width_out in [0.5, 2]
 begin
     project_id = :v01
     geotile_width = 2
@@ -34,8 +35,8 @@ begin
 
     path2runs_synthesized = replace.(path2runs_filled, "aligned.jld2" => "synthesized.jld2")
 
-    binned_synthesized_dv_files = replace.(path2runs_synthesized, ".jld2" => "_gembfit_dv.jld2")
-    binned_synthesized_dv_file_ref = "/mnt/bylot-r3/data/binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized_gembfit_dv.jld2"
+    binned_synthesized_dv_files = replace.(path2runs_synthesized, ".jld2" => "_gembfit_dv$(outfile_suffix).jld2")
+    binned_synthesized_dv_file_ref = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_rgi7_dh_best_cc_nmad5_v01_filled_ac_p2_synthesized_gembfit_dv$(outfile_suffix).jld2"
         
     path2ref = binned_synthesized_dv_file_ref
     path2files = setdiff(binned_synthesized_dv_files, [binned_synthesized_dv_file_ref])
@@ -225,3 +226,5 @@ begin
         error("Average runoff rate of downscaled and original data are not within 0.15% of each other")
     end
 end
+end
+

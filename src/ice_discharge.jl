@@ -227,10 +227,10 @@ begin
     glaicer_geom = GDF.read(geomfile_rgi6)
     
     # find intersecting geometries
-    index = GO.intersects.(Ref(bounds_geom), foo.geom)
+    index = GO.intersects.(Ref(bounds_geom), foo.geometry)
     glaicer_geom = glaicer_geom[index,:]
 
-    glaicer_geom.geom = GO.reproject(glaicer_geom.geom; source_crs = GFT.EPSG(4326), target_crs=Rasters.crs(vx), calc_extent=true)
+    glaicer_geom.geometry = GO.reproject(glaicer_geom.geometry; source_crs = GFT.EPSG(4326), target_crs=Rasters.crs(vx), calc_extent=true)
 
     ocean_terminating = glaicer_geom[glaicer_geom.TermType .== 1 .| glaicer_geom.TermType .== 9, :]
     lake_terminating = glaicer_geom[glaicer_geom.TermType .== 2, :]
@@ -341,7 +341,7 @@ begin
         foo = collect(Rasters.extract(T, pts))
         T0 = getindex.(foo, :var"")
 
-        pts = [[p.geom[1], p.geom[2]] for p in pts]
+        pts = [[p.geometry[1], p.geometry[2]] for p in pts]
         pts = vcat(pts, pts[1,:])
         Δx = getindex.(pts[2:end,:], 1) .- getindex.(pts[1:end-1,:], 1)
         Δy = getindex.(pts[2:end,:], 2) .- getindex.(pts[1:end-1], 2)

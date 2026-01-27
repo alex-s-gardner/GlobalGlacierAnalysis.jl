@@ -1,5 +1,6 @@
+# Load packages and data paths
 begin
-    import CSV
+    using CSV
     using DataFrames
     import GlobalGlacierAnalysis as GGA
     using DimensionalData
@@ -7,344 +8,410 @@ begin
     using CairoMakie
     using Statistics
     using ProgressMeter
+    using NCDatasets
+    using FileIO
+    using CFTime
+    using GeoDataFrames
+    
+    # Import functions from utilities
+    include("utilities_response2reviewers.jl")
 
-    path2wgms_mb = "/mnt/bylot-r3/data/glacier_mb/WGMS/DOI-WGMS-FoG-2025-02b/data/mass_balance.csv"
-    path2wgms_glacier = "/mnt/bylot-r3/data/glacier_mb/WGMS/DOI-WGMS-FoG-2025-02b/data/glacier.csv"
-    path2glacier = GGA.pathlocal[Symbol("glacier_individual")]
-end;
+    # data paths
+    paths = (
+        wgms_mb = "/mnt/bylot-r3/data/glacier_mb/WGMS/DOI-WGMS-FoG-2025-02b/data/mass_balance.csv",
+        wgms_glacier = "/mnt/bylot-r3/data/glacier_mb/WGMS/DOI-WGMS-FoG-2025-02b/data/glacier.csv",
+
+        # GEMB dataset paths
+        gemb_corrected = "/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_NH_1979to2024_820_40_racmo_grid_lwt_e97_0_corrected_geotile_dv.jld2",
+        gemb_original = "/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2024_820_40_racmo_grid_lwt_e97_0_geotile_dv.jld2",
+
+        path2glacier = GGA.pathlocal[Symbol("glacier_individual")],
+    )
+
+    # Analysis parameters
+    study_start_year = 2000
+    min_neighbors_variogram = 3
+    geotile_thresholds = [1, 20, 65]
+    histogram_bounds = (-5, 3)
+    historic_analysis_mincount_range = 5:15
+
+    # RGI glacier counts for context
+    rgi6_count = 215547
+    rgi7_count = 274531
+end
 
 
+
+# --- Example: compare modeled runoff to external (Rounce 2022) dataset (disabled/block comment) ---
 begin
-    wgms_mb = CSV.read(path2wgms_mb, DataFrame)
-
-    # add glacier info to wgms_mb
-    wgms_glacier = CSV.read(path2wgms_glacier, DataFrame)
-    ia, ib = GGA.intersectindices(collect(wgms_mb.glacier_id), collect(wgms_glacier.id))
-    wgms_mb[!, :latitude] = wgms_glacier[ib, :latitude]
-    wgms_mb[!, :longitude] = wgms_glacier[ib, :longitude]
-    wgms_mb[!, :geometry] = GGA.GI.Point.(wgms_mb.longitude, wgms_mb.latitude)
-
-    # load in study glacier mass balance data
-    path2outfile = joinpath(GGA.pathlocal[:project_dir], "Gardner2025_glacier_2deg.nc")
-    ds = GGA.netcdf2dimstack(path2outfile)
-    glaciers = GGA.GeoDataFrames.read(path2glacier)
-end;
+    date_range = DateTime(2000, 1, 1).. DateTime(2025, 1, 1)
+    scenario = "ssp126"
+    var2extract = "glac_runoff_monthly"
+    path2regional = joinpath(GGA.pathlocal[:project_dir], "Gardner2025_regional_timseries.nc")
+    println("Gardner2025_regional_timseries.nc last modified: $(Dates.unix2datetime(mtime(path2regional)))")
+    ds_gardner = GGA.netcdf2dimstack(path2regional)
+    rain_gardner_include = true
+    drgi = dims(ds_gardner[:fac],:rgi);
+    dstudy = Dim{:study}(["gardner", "rounce"])
+    runoff = zeros(drgi, dstudy)
 
 
-begin
-    function add_runoff_and_dm!(wgms_mb, ds)
-        wgms_mb[!, :runoff] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
-        wgms_mb[!, :dm] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
-        wgms_mb[!, :smb] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
-        wgms_mb[!, :runoff_winter] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
-        wgms_mb[!, :dm_winter] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
-        wgms_mb[!, :smb_winter] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
-        wgms_mb[!, :runoff_summer] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
-        wgms_mb[!, :dm_summer] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
-        wgms_mb[!, :smb_summer] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
-        wgms_mb[!, :geotile_centroid] = Vector{Union{Missing,GGA.GI.Point}}(missing, nrow(wgms_mb))
-        wgms_mb[!, :geotile_glacier_area] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
-        wgms_mb[!, :geotile_area] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
+    for rgi_region in drgi
+    #rgi_region = 1
+    # Load Rounce data and Gardner output for comparison
+        begin
+            folder = "/mnt/bylot-r3/data/glacier_mb/PyGEM/CMIP_global_2000_2100/$(lpad(string(rgi_region), 2, '0'))/"
 
-        # create an interval grid
-        # create global raster for mask coverage calculation
-        geotile_width_out = abs(dims(ds, :X)[1] - dims(ds, :X)[2])
-        lond = X(GGA.DimensionalData.Dimensions.Lookups.Sampled(-180+geotile_width_out/2:geotile_width_out:180-geotile_width_out/2, sampling=GGA.DimensionalData.Dimensions.Lookups.Intervals(GGA.DimensionalData.Dimensions.Lookups.Center()); metadata=Dict("long_name" => "longitude", "units" => "degrees")))
-        latd = Y(GGA.DimensionalData.Dimensions.Lookups.Sampled(-90+geotile_width_out/2:geotile_width_out:90-geotile_width_out/2, sampling=GGA.DimensionalData.Dimensions.Lookups.Intervals(GGA.DimensionalData.Dimensions.Lookups.Center()); metadata=Dict("long_name" => "latitude", "units" => "degrees")))
+            if !isdir(folder)
+                continue
+            end
 
-        # Calculate cell area for each cell [m^2]
-        cell_area = GGA.Rasters.cellarea(GGA.Rasters.Raster(zeros(lond, latd); crs=GGA.GeoFormatTypes.EPSG(4326)))
+            path2rounce = GGA.allfiles(folder; 
+                fn_startswith="R$(lpad(string(rgi_region), 2, '0'))_glac_runoff_monthly_$(scenario)",
+                fn_endswith="2000_2100_all.nc"
+            )
 
-        for r = eachrow(wgms_mb)
-            #r = eachrow((wgms_mb))[1523]
-            if !ismissing(r.begin_date) && !ismissing(r.end_date)
-                r.geotile_glacier_area = ds.area[X=Near(r.longitude), Y=Near(r.latitude)]::Float64
-                r.geotile_area = cell_area[X=Near(r.longitude), Y=Near(r.latitude)]::Float64
-                runoff = ds.runoff[X=Near(r.longitude), Y=Near(r.latitude), Ti=Touches(r.begin_date, r.end_date)]::DimVector{Float64}
-                runoff_cumulative = cumsum(runoff) # m.w.e.
-                dm = ds.dm[X=Near(r.longitude), Y=Near(r.latitude), Ti=Touches(r.begin_date, r.end_date)]::DimVector{Float64}
-                dm_cumulative = cumsum(dm)
-                smb = ds.smb[X=Near(r.longitude), Y=Near(r.latitude), Ti=Touches(r.begin_date, r.end_date)]::DimVector{Float64}
-                smb_cumulative = cumsum(smb)
+            ds_example = NCDataset(path2rounce[1])
+            dTi = Dim{:Ti}(reinterpret.(DateTime, ds_example[:time]))
+            dmodel = Dim{:model}(ds_example[:Climate_Model])
 
-                if length(runoff_cumulative) > 0
-                    r.runoff = (runoff_cumulative[end] - runoff_cumulative[1]) / r.geotile_glacier_area / 1000 # m.w.e.
-                    r.dm = (dm_cumulative[end] - dm_cumulative[1]) / r.geotile_glacier_area / 1000 # m.w.e.
-                    r.smb = (smb_cumulative[end] - smb_cumulative[1]) / r.geotile_glacier_area / 1000 # m.w.e.
-                    r.geotile_centroid = GGA.GI.Point(refdims(runoff)[1][1], refdims(runoff)[2][1])
+            runoff_rounce =zeros(dTi)
 
-
-                    if !ismissing(r.midseason_date)
-                        r.midseason_date = DateTime(r.midseason_date)
-
-                        runoff = ds.runoff[X=Near(r.longitude), Y=Near(r.latitude), Ti=Touches(r.begin_date, r.midseason_date)]::DimVector{Float64}
-                        runoff_cumulative = cumsum(runoff) # m.w.e.
-                        dm = ds.dm[X=Near(r.longitude), Y=Near(r.latitude), Ti=Touches(r.begin_date, r.midseason_date)]::DimVector{Float64}
-                        dm_cumulative = cumsum(dm)
-                        smb = ds.smb[X=Near(r.longitude), Y=Near(r.latitude), Ti=Touches(r.begin_date, r.midseason_date)]::DimVector{Float64}
-                        smb_cumulative = cumsum(smb)
-
-                        if length(runoff_cumulative) > 0
-                            r.runoff_winter = (runoff_cumulative[end] - runoff_cumulative[1]) / r.geotile_glacier_area / 1000 # m.w.e.
-                            r.dm_winter = (dm_cumulative[end] - dm_cumulative[1]) / r.geotile_glacier_area / 1000 # m.w.e.
-                            r.smb_winter = (smb_cumulative[end] - smb_cumulative[1]) / r.geotile_glacier_area / 1000 # m.w.e.
-                        end
-                        runoff = ds.runoff[X=Near(r.longitude), Y=Near(r.latitude), Ti=Touches(r.midseason_date, r.end_date)]::DimVector{Float64}
-                        runoff_cumulative = cumsum(runoff) # m.w.e.
-                        dm = ds.dm[X=Near(r.longitude), Y=Near(r.latitude), Ti=Touches(r.midseason_date, r.end_date)]::DimVector{Float64}
-                        dm_cumulative = cumsum(dm)
-                        smb = ds.smb[X=Near(r.longitude), Y=Near(r.latitude), Ti=Touches(r.midseason_date, r.end_date)]::DimVector{Float64}
-                        smb_cumulative = cumsum(smb)
-
-                        if length(runoff_cumulative) > 0
-                            r.runoff_summer = (runoff_cumulative[end] - runoff_cumulative[1]) / r.geotile_glacier_area / 1000 # m.w.e.
-                            r.dm_summer = (dm_cumulative[end] - dm_cumulative[1]) / r.geotile_glacier_area / 1000 # m.w.e.
-                            r.smb_summer = (smb_cumulative[end] - smb_cumulative[1]) / r.geotile_glacier_area / 1000 # m.w.e.
-                        end
-
-                    end
+            for path in path2rounce
+                NCDataset(path) do ds_rounce0
+                    drgi = Dim{:rgi}(ds_rounce0[:RGIId])
+                    runoff_rounce0 = ds_rounce0[var2extract][:, :, :]::Array{Union{Missing,Float64},3}
+                    runoff_rounce0 = DimArray(runoff_rounce0, (dTi, drgi, dmodel)) * 1E-9 # m^3/day to km^3
+                    runoff_rounce0 = mean(runoff_rounce0, dims=:model)
+                    runoff_rounce0 = coalesce.(runoff_rounce0, 0.0)
+                    runoff_rounce0 = dropdims(sum(runoff_rounce0, dims=:rgi), dims=(:rgi, :model))
+                    runoff_rounce .+= runoff_rounce0
                 end
             end
-        end
 
-        wgms_mb[!, :synth_minus_obs] = wgms_mb[:, :smb] .- wgms_mb[:, :annual_balance]
-        wgms_mb[!, :synth_minus_obs_winter] = wgms_mb[:, :smb_winter] .- wgms_mb[:, :winter_balance]
-        wgms_mb[!, :synth_minus_obs_summer] = wgms_mb[:, :smb_summer] .- wgms_mb[:, :summer_balance]
-        wgms_mb[!, :both_valid] = (.!ismissing.(wgms_mb.annual_balance) .& .!ismissing.(wgms_mb.dm)) .& .!isnan.(wgms_mb.synth_minus_obs)
-        wgms_mb[!, :both_valid_winter] = (.!ismissing.(wgms_mb.winter_balance) .& .!ismissing.(wgms_mb.dm_winter)) .& .!isnan.(wgms_mb.synth_minus_obs_winter)
-        wgms_mb[!, :both_valid_summer] = (.!ismissing.(wgms_mb.summer_balance) .& .!ismissing.(wgms_mb.dm_summer)) .& .!isnan.(wgms_mb.synth_minus_obs_summer)
-    end
+            runoff_rounce = runoff_rounce[Ti = date_range]
 
-    add_runoff_and_dm!(wgms_mb, ds)
-end;
-
-index = wgms_mb.both_valid .& (wgms_mb.begin_date .> DateTime(2000, 1, 1));
-
-# add mising glacier areas
-@showprogress desc = "Adding missing areas..." Threads.@threads for r in eachrow(wgms_mb)[index.&ismissing.(wgms_mb.area)]
-    ind = findfirst(GGA.GO.intersects.(glaciers.geom, Ref(r.geometry)))
-    if !isnothing(ind)
-        r.area = round(glaciers[ind, :Area] * 1.E6)
-    end
-end;
-
-
-# write unique validation glaciers to gpkg
-begin
-    gdf = groupby(wgms_mb[index, :], :glacier_name);
-    df2 = combine(gdf, :geometry => first => :geometry, :geometry => length => :count);
-
-    # save points locations
-    GGA.GeoDataFrames.write(joinpath(GGA.pathlocal[:project_dir], "wgms_mb_validation_points.gpkg"), df2; crs=GGA.EPSG(4326))
-end;
-
-# save with glacier geometry
-begin
-    rename!(df2, :geometry => :point_location)
-    df2[!, :geometry] .= repeat([glaciers.geom[1]], nrow(df2))
-
-    @showprogress desc = "Adding glacier geometry to validation points..." Threads.@threads for r in eachrow(df2)
-        ind = findfirst(GGA.GO.intersects.(glaciers.geom, Ref(r.point_location)))
-        if !isnothing(ind)
-            r.geometry = glaciers.geom[ind]
-        end
-    end
-
-    # save with glacier geometry
-    no_intersection = df2[:, :geometry] .== Ref(glaciers.geom[1])
-    GGA.GeoDataFrames.write(joinpath(GGA.pathlocal[:project_dir], "wgms_mb_validation.gpkg"), df2[.!no_intersection, Not(:point_location)]; crs=GGA.EPSG(4326))
-end;
-
-# Peyto Glacier investigation
-#=
-index_peyto = (wgms_mb.glacier_id .== 57) .& (wgms_mb.year .> 1999) 
-
-#index_peyto_rgi = findfirst(GGA.GO.intersects.(glaciers.geom, Ref(wgms_mb.geometry[findlast(index_peyto)])))
-#glaciers[index_peyto_rgi, :]
-
-area = ds.area[X=Near(wgms_mb.longitude[findlast(index_peyto)]), Y=Near(wgms_mb.latitude[findlast(index_peyto)])]::Float64
-dm = ds.dm[X=Near(wgms_mb.longitude[findlast(index_peyto)]), Y=Near(wgms_mb.latitude[findlast(index_peyto)]), Ti=Touches(DateTime(2000, 1, 1), DateTime(2025, 1, 1))]::DimVector{Float64}
-dm_cumulative = cumsum(dm) ./ area/1000
-
-f = Figure();
-ax1 = Axis(f[1, 1]);
-scatterlines!(wgms_mb[index_peyto, :year], cumsum(wgms_mb[index_peyto, :annual_balance]); label="in situ");
-scatterlines!(GGA.decimalyear.(dims(dm_cumulative, :Ti).val), dm_cumulative.data; label="modeled");
-f
-=#
-
-
-# print total number of valid annual_balance observations in the WGMS dataset
-println("total number of valid annual_balance observations in the WGMS dataset: $(sum(.!ismissing.(wgms_mb.annual_balance)))")
-
-# print total number of valid observations in the WGMS dataset
-println("total number of valid observations in the WGMS dataset: $(sum(index))")
-
-# glacier area observed each year
-index_area = index .& .!ismissing.(wgms_mb.area);
-gdf = groupby(wgms_mb[index_area, :], :year);
-df2 = combine(gdf, :area => sum => :area_sum, :annual_balance => std => :annual_balance_std, :synth_minus_obs => std => :synth_minus_obs_std);
-wgms_annual_coverage = df2.area_sum ./ sum(ds.area[:]) *100;
-println("average annual coverage: $(round(mean(wgms_annual_coverage), digits=2))%")
-
-f = GGA._publication_figure(columns=1, rows=1);
-ax1 = CairoMakie.Axis(f[1, 1]; ylabel="global glacier area observed [%]");
-lines!(df2.year, wgms_annual_coverage);
-fill_between!(ax1, df2.year, wgms_annual_coverage, 0);
-xlims!(ax1, minimum(df2.year), maximum(df2.year));
-ylims!(ax1, (0, nothing));
-f
-fname = joinpath(GGA.pathlocal.figures, "wgms_mb_annual_coverage.png");
-CairoMakie.save(fname, f)
-
-
-# calculate variogram of annual balance as a function of distance from observation
-begin
-    wgms_mb[!, :geometry] = GGA.GI.Point.(wgms_mb.longitude, wgms_mb.latitude)
-    mincount = 3
-    # calculate std of glaciers as a function of distance from observation
-
-    delta_distance = 10_000 .* cumsum(collect(1:2:16)) 
-    ddistance = Dim{:distance}(delta_distance) # meters
-    index_variogram = .!ismissing.(wgms_mb.annual_balance) .& (wgms_mb.year .> 1999)
-    variogram = zeros(ddistance)
-
-    @showprogress desc = "Calculating variogram of annual balance as a function of distance from observation..." Threads.@threads for buffer_radius in ddistance
-        intermediate_year = Vector{Float64}()
-        gdf = groupby(wgms_mb[index_variogram, :], :year)
-
-        buffer_ind = findfirst(delta_distance .== buffer_radius)
-        if buffer_ind == 1
-            buffer_inner = 0
-        else
-            buffer_inner = delta_distance[buffer_ind-1]
-        end
-
-        for df2 in gdf
-        #df2 = gdf[10]
-            intermediate_pt = Vector{Float64}()
-
-            for r in eachrow(df2)
-                # this needs to be a donut shape
-                cap1 = GGA.UnitSphericalCap(r.geometry, buffer_radius)
-                cap2 = GGA.UnitSphericalCap(r.geometry, buffer_inner)
-                polygon1 = GGA.to_latlong_polygon(cap1, 30)
-                polygon2 = GGA.to_latlong_polygon(cap2, 30)
-
-                index_within_radius = GGA.GO.intersects.(Ref(polygon1), df2.geometry) .& .!GGA.GO.intersects.(Ref(polygon2), df2.geometry)
-                if sum(index_within_radius) > mincount
-                    absdiff = abs.(df2.annual_balance[index_within_radius] .- r.annual_balance)
-                    mean_absdiff = mean(absdiff[absdiff .!= 0])
-                    push!(intermediate_pt, mean_absdiff)
-                end
+            if rain_gardner_include
+                runoff_gardner = ds_gardner[:runoff][date=date_range, rgi=At(rgi_region)] .+ ds_gardner[:rain][date=date_range, rgi=At(rgi_region)]
+            else
+                runoff_gardner = ds_gardner[:runoff][date=date_range, rgi=At(rgi_region)]
             end
-            if length(intermediate_pt) > 0
-                push!(intermediate_year, mean(intermediate_pt))
-            end
-        end
-        variogram[distance=At(buffer_radius)] = mean(intermediate_year)
+            runoff_gardner .-= runoff_gardner[1]
+
+            runoff_gardner = diff(runoff_gardner)
+
+            # Plot comparison
+            f = Figure();
+            ax = f[1, 1] = Axis(f, ylabel="runoff [Gt]", title="RGI $(rgi_region)");
+            lines!(ax, val(dims(runoff_rounce, :Ti)), collect(runoff_rounce); label="Rounce 2022")
+            lines!(ax, val(dims(runoff_gardner, :date)), collect(runoff_gardner); label="Gardner 2025")
+            f[1, 2] = Legend(f, ax)
+
+            println("mean fractional difference rgi $(rgi_region): Rounce 2022 minus Gardner 2025: $(round(Int, ((sum(runoff_rounce) .- sum(runoff_gardner)) ./ sum(runoff_gardner)) * 100))%")
+
+            runoff[rgi = At(rgi_region), study = At("gardner")] = sum(runoff_gardner)
+            runoff[rgi = At(rgi_region), study = At("rounce")] = sum(runoff_rounce)
+        end; 
+        display(f)
     end
-end;
 
-gdf = groupby(wgms_mb[index, :], :geotile_centroid);
-df2 = combine(gdf, :synth_minus_obs => std => :synth_minus_obs_std, :synth_minus_obs => length => :nobs, :geotile_area => first => :geotile_area, :synth_minus_obs => mean => :synth_minus_obs_mean);
+    runoff0 = deepcopy(runoff);
+    # convert from total runoff in Gt to Gt/yr
+    years = Dates.Day(maximum(date_range) - minimum(date_range)).value / 365.25
+    runoff[study=At("gardner")] ./= years
+    runoff[study=At("rounce")] ./= years
 
-radius = round(Int,sqrt(mean(df2.geotile_area[index_count]) / (pi)) / 1000)
-println("average radius of geotiles with at least 65 observations: $(radius) km")
-synth_minus_obs_mad = round(mean(abs.(wgms_mb[index, :synth_minus_obs])), digits=3)
-println("mean absolute difference between in situ and this study: $(synth_minus_obs_mad)")
+    # polulate HMA and Global runoff
+    runoff[rgi = At(99), study = At("gardner")] = sum(runoff[study=At("gardner")])
+    runoff[rgi = At(99), study = At("rounce")] = sum(runoff[study=At("rounce")])
 
-f = GGA._publication_figure(columns=1, rows=1);
-ax1 = CairoMakie.Axis(f[1, 1]; ylabel="mean absolute difference [m w.e. yr⁻¹]", xlabel="distance to other observations [km]");
-scatterlines!(ax1, ddistance.val ./ 1000, variogram.data);
-plot!(ax1, Point(Float64(radius), synth_minus_obs_mad), color=:red);
-f
-fname = joinpath(GGA.pathlocal.figures, "wgms_mb_variogram.png");
-CairoMakie.save(fname, f)
-
-# now take average difference in all geotiles
+    runoff[rgi = At(98), study = At("gardner")] = sum(runoff[study=At("gardner")][rgi = At(13:15)])
+    runoff[rgi = At(98), study = At("rounce")] = sum(runoff[study=At("rounce")][rgi = At(13:15)])
 
 
+    f = Figure();
+    ax = Axis(f[1, 1]; ylabel="PyGEMv1.0.2", xlabel="This study");
+    scatter!(ax, vec(runoff[study = At("gardner")]), vec(runoff[study = At("rounce")]));
+    xmax = ceil(maximum(runoff[study=At("gardner")]), digits=-2)
+    xlims!(ax, 0, xmax)
+    ylims!(ax, 0, xmax)
+    lines!(ax, [0, xmax], [0, xmax]);
+    f
 
-index_area = index .& .!ismissing.(wgms_mb.area);
-gdf = groupby(wgms_mb[index_area, :], :year);
-df2 = combine(gdf, :area => sum => :area_sum, :annual_balance => std => :annual_balance_std, :synth_minus_obs => std => :synth_minus_obs_std);
-wgms_annual_coverage = df2.area_sum ./ sum(ds.area[:]) * 100;
-println("average annual coverage: $(round(mean(wgms_annual_coverage), digits=2))%")
+    delta = (runoff[study=At("rounce")] .- runoff[study=At("gardner")]) ./ runoff[study=At("gardner")] * 100
 
-
-
-begin
-    bound_upper = 3;
-    bound_lower = -5;
-    bins = bound_lower:0.25:bound_upper
-    df = GGA.binstats(wgms_mb[index, :], [:annual_balance, :dm], [bins, bins], :both_valid; missing_bins=true, col_function=sum)
-    x = unique(df[:, 1])
-    y = unique(df[:, 2])
-    density = reshape(df.both_valid_sum, length(x), length(y))
+    rgis2plot = [19, 18, 17, 16, 98, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
 
     f = GGA._publication_figure(columns=1, rows=1);
-    ax1 = CairoMakie.Axis(f[1, 1]; ylabel="in situ [m w.e. yr⁻¹]", xlabel="this study [m w.e. yr⁻¹]")
-    hm = heatmap!(x, y, density)
-    Colorbar(f[1, 2], hm)
-    lines!(ax1, [bound_lower, bound_upper], [bound_lower, bound_upper], color=:black)
+    ax = Axis(f[1, 1]; yticks = (1:length(rgis2plot), GGA.rginum2label.(rgis2plot)), xtickformat = "{:.0f}%", title = "difference in runoff between PyGEMv1.0.2 and this study")
+
+    barplot!(ax, delta[rgi = At(rgis2plot)].data; direction=:x)
     display(f)
-end;
+    save(joinpath(GGA.pathlocal.figures, "runoff_comparison.png"), f)
 
+    println("PyGEMv1.0.2 produces $(round(Int,delta[rgi = At(99)]))% runoff compared to this study")
+    gardner_minus_rounce = (runoff[study=At("gardner"), rgi = At(99)].-runoff[study=At("rounce"), rgi = At(99)]) ./ runoff[study=At("rounce"), rgi = At(99)] * 100
+    println("This study produces $(round(Int,gardner_minus_rounce))% runoff compared to PyGEMv1.0.2")
 
-hist(wgms_mb[index, :synth_minus_obs])
-hist(wgms_mb[wgms_mb[:, :both_valid_summer], :synth_minus_obs_summer])
-hist(wgms_mb[wgms_mb[:, :both_valid_winter], :synth_minus_obs_winter])
-
-
-
-
-
-# print the nuber of geotiles with at least 1 observation
-index_count = df2.nobs .> 0;
-println("number of geotiles with at least 1 observation: in $(nrow(df2)) geotiles")
-
-# print number of goetiles with at least 20 observations
-index_count = df2.nobs .> 20;
-println("number of geotiles with at least 20 observations: in $(sum(index_count)) geotiles, repesenting $(round(Int,sum(df2.nobs[index_count]) ./ sum(df2.nobs) * 100))% of all observations")
-
-# print number of goetiles with at least 50 observations
-index_count = df2.nobs .> 65;
-println("number of geotiles with at least 65 observations: in $(sum(index_count)) geotiles, repesenting $(round(Int,sum(df2.nobs[index_count]) ./ sum(df2.nobs) * 100))% of all observations")
-
-
-
-lines(cumsum(sort(df2.nobs; rev=true))./sum(df2.nobs)*100;  ylabel="% of observations", xlabel="number of geotiles")
-
-
-index = .!ismissing.(wgms_mb.annual_balance) .& .!isnan.(wgms_mb.annual_balance) .& (wgms_mb.begin_date .< DateTime(2000, 1, 1));
-
-if ismissing(gdf[1])
-    gdf = gdf[2:end]
+    rounce_gardner_total_flux = (runoff[study=At("rounce"), rgi=At(99)] .- runoff[study=At("gardner"), rgi=At(99)]) ./ (runoff[study=At("gardner"), rgi=At(99)] + 155) * 100
+    println("PyGEMv1.0.2 produces $(round(Int,rounce_gardner_total_flux))% total freshwater flux ompared to this study")
+    gardner_rounce_total_flux = (runoff[study=At("gardner"), rgi=At(99)] .- runoff[study=At("rounce"), rgi=At(99)]) ./ (runoff[study=At("rounce"), rgi=At(99)] + 155) * 100
+    println("This study produces $(round(Int,gardner_rounce_total_flux))% total freshwater flux ompared to PyGEMv1.0.2")
 end
 
-for mincount in 5:15
-    geotile_stats = DataFrame(geotile_centroid=Vector{Union{Missing,GGA.GI.Point}}(missing, length(gdf)), in_situ_std=Vector{Union{Missing,Float64}}(missing, length(gdf)), nyears=Vector{Union{Missing,Int64}}(missing, length(gdf)))
-  
-    for (i, k) in enumerate(keys(gdf))
-        #(i, k) = first(enumerate(keys(gdf)))
 
-        geotile_stats[i, :geotile_centroid] = getindex(k, 1)
-        gdf2 = groupby(gdf[i], :year)
-        df2 = combine(gdf2, :annual_balance => std => :in_situ_std, :annual_balance => length => :nobs)
+# Block for manually examining differences between corrected and original GEMB data (disabled by default)
+if false
+    # Load data volumes from GEMB datasets
+    gemb_corrected = load(paths.gemb_corrected)
+    gemb_original = load(paths.gemb_original)
 
-        if any(df2.nobs .>= mincount)
-            geotile_stats[i, :in_situ_std] = mean(df2.in_situ_std[df2.nobs.>=mincount])
-            geotile_stats[i, :nyears] = sum(df2.nobs.>=mincount)
+    # Specify variable, spatial, temporal, and physical criteria to examine
+    var2examine = "runoff"
+    geotile2examine = "lat[+30+32]lon[+078+080]"
+    dates2examine = DateTime(2000, 1, 1)..DateTime(2024, 12, 31)
+    deltaheight2examine = -2000..0
+    pscale2examine = 2.5
+
+    # Slice data accordingly
+    a = gemb_original[var2examine][geotile = At(geotile2examine), date = dates2examine, pscale = At(pscale2examine), ΔT = deltaheight2examine]
+    b = gemb_corrected[var2examine][geotile = At(geotile2examine), date = dates2examine, pscale = At(pscale2examine), ΔT = deltaheight2examine]
+
+    # Visualize raw vs corrected data and their fractional difference
+    begin
+        f = Figure(size=(1200, 400));
+        ax1 = Axis(f[1, 1], title="original", ylabel="$(DimensionalData.name(dims(a)[2]))");
+        heatmap!(ax1, a.data, colorrange=extrema(a));
+
+        ax2 = Axis(f[1, 2], title="corrected");
+        hm2 = heatmap!(ax2, b.data, colorrange=extrema(a));
+        Colorbar(f[1, 3], hm2)
+
+        ax4 = Axis(f[1, 4], title="fractional difference");
+        frac_diff = (a .- b) ./ a
+        hm4 = heatmap!(ax4, frac_diff.data, colorrange=extrema(frac_diff));
+        Colorbar(f[1, 5], hm4)
+
+        titlelayout = GridLayout(f[0, 1], halign = :left, tellwidth = false)
+        Label(titlelayout[1, 1], "$geotile2examine - $var2examine: pscale = $pscale2examine", halign = :left, fontsize = 30, font = "TeX Gyre Heros Bold Makie")
+    end; f
+
+    # Alternate/quick visualization
+    diff_frac = (a .- b) ./ a
+    heatmap(diff_frac)    
+end
+
+
+# Plot global firn air content anomaly over time and save figure
+begin
+    filename0 = joinpath(GGA.pathlocal[:project_dir], "Gardner2025_regional_timseries.nc")
+    regional_ts = GGA.netcdf2dimstack(filename0)
+
+    rgi = 99
+    var = :fac
+    date_range = DateTime(2000, 1, 1) .. DateTime(2025, 1, 1)
+    ts = regional_ts[var][rgi = At(rgi), date = date_range]
+
+    f = GGA._publication_figure(columns=1, rows=1);
+    ax = Axis(f[1, 1]; ylabel="volume [km³]", title="Global firn air content anomaly")
+    lines!(ax, val(dims(ts, :date)), ts.data);
+    xlims!(ax, minimum(val(dims(ts, :date)))-Month(1), maximum(val(dims(ts, :date)))+Month(1))
+    display(f)
+    save(joinpath(GGA.pathlocal.figures, "global_firn_air_content_anomaly.png"), f);
+end
+
+begin
+    # Load WGMS data
+    wgms_mb, wgms_glacier, ds, glaciers = load_wgms_data(paths);
+
+    # Apply function to fill WGMS table with synthetic results
+    add_runoff_and_dm!(wgms_mb, ds);
+
+    # Select valid observations within the study period (after 2000)
+    index = wgms_mb.both_valid .& (wgms_mb.begin_date .> DateTime(study_start_year, 1, 1));
+
+    # Fill in missing glacier areas by joining to glacier polygons based on intersection
+    @showprogress desc = "Adding missing areas..." Threads.@threads for r in eachrow(wgms_mb)[index .& ismissing.(wgms_mb.area)]
+        ind = findfirst(GGA.GO.intersects.(glaciers.geometry, Ref(r.geometry)))
+        if !isnothing(ind)
+            r.area = round(glaciers[ind, :Area] * 1e6)
         end
+    end;
+
+    # Write one validation point per unique glacier to geopackage (point locations only)
+    begin
+        gdf = groupby(wgms_mb[index, :], :glacier_name)
+        df2 = DataFrames.combine(gdf, :geometry => first => :geometry, :geometry => length => :count)
+        GGA.GeoDataFrames.write(joinpath(GGA.pathlocal[:project_dir], "wgms_mb_validation_points.gpkg"),
+                            df2; crs=GGA.EPSG(4326))
+    end;
+
+    # Attach glacier geometry to validation points and write to geopackage
+    begin
+        rename!(df2, :geometry => :point_location)
+        df2[!, :geometry] .= repeat([glaciers.geometry[1]], nrow(df2))
+
+        @showprogress desc = "Adding glacier geometry to validation points..." Threads.@threads for r in eachrow(df2)
+            ind = findfirst(GGA.GO.intersects.(glaciers.geometry, Ref(r.point_location)))
+            if !isnothing(ind)
+                r.geometry = glaciers.geometry[ind]
+            end
+        end
+
+        # Exclude points with no valid geometry and write result
+        no_intersection = df2[:, :geometry] .== Ref(glaciers.geometry[1])
+        GGA.GeoDataFrames.write(joinpath(GGA.pathlocal[:project_dir], "wgms_mb_validation.gpkg"),
+            df2[.!no_intersection, Not(:point_location)]; crs=GGA.EPSG(4326))
+    end;
+
+    # --- Peyto Glacier investigation (example, disabled) ---
+    #=
+    # Identify rows corresponding to Peyto Glacier after 1999
+    index_peyto = (wgms_mb.glacier_id .== 57) .& (wgms_mb.year .> 1999) 
+
+    # Compute modeled and observed cumulative mass balance and visualize
+    area = ds.area[X=Near(wgms_mb.longitude[findlast(index_peyto)]), Y=Near(wgms_mb.latitude[findlast(index_peyto)])]::Float64
+    dm = ds.dm[X=Near(wgms_mb.longitude[findlast(index_peyto)]), Y=Near(wgms_mb.latitude[findlast(index_peyto)]), Ti=Touches(DateTime(2000, 1, 1), DateTime(2025, 1, 1))]::DimVector{Float64}
+    dm_cumulative = cumsum(dm) ./ area / 1000
+    f = Figure();
+    ax1 = Axis(f[1, 1]);
+    scatterlines!(wgms_mb[index_peyto, :year], cumsum(wgms_mb[index_peyto, :annual_balance]); label="in situ");
+    scatterlines!(GGA.decimalyear.(dims(dm_cumulative, :Ti).val), dm_cumulative.data; label="modeled");
+    f
+    =#
+
+    wgms_mean = mean(wgms_mb[index, :].annual_balance)
+    model_mean = mean(wgms_mb[index, :].dm)
+
+    println("FoG glaciers have a mean of $(round(wgms_mean, digits=2)) m w.e. and the extracted model values have a mean of $(round(model_mean, digits=2)) m w.e. ")
+
+    # ---- Summary statistics and coverage for WGMS mass balance data ----
+
+    # Calculate summary statistics
+    index_all, index_area, df2 = calculate_wgms_summary_statistics(wgms_mb, index);
+
+    # Calculate and plot area coverage
+    wgms_annual_coverage = calculate_annual_coverage(df2, ds);
+    f_area = plot_area_coverage(df2, wgms_annual_coverage)
+    save(joinpath(GGA.pathlocal.figures, "wgms_mb_area_coverage.png"), f_area)
+
+    # Calculate and plot glacier count statistics
+    df2_glacier = calculate_glacier_count_statistics(wgms_mb, index_area);
+    f_count = plot_glacier_count_timeseries(df2_glacier);
+    save(joinpath(GGA.pathlocal.figures, "wgms_mb_glacier_count.png"), f_count)
+
+    # ---- Calculate spatial variogram of annual balance ----
+    variogram, ddistance = calculate_spatial_variogram(wgms_mb; mincount=min_neighbors_variogram);
+
+    # Compute and summarize geotile misfit statistics
+    df2 = calculate_geotile_misfit_statistics(wgms_mb, index)
+    radius, synth_minus_obs_mad = calculate_misfit_summary_statistics(wgms_mb, index, df2);
+
+    # Plot variogram
+    f_var = plot_variogram(ddistance, variogram, radius, synth_minus_obs_mad)
+    display(f_var)
+    save(joinpath(GGA.pathlocal.figures, "wgms_mb_variogram.png"), f_var)
+
+    println("at 100km observations have a mean absolute difference of $(round(variogram[distance = At(100_000)], digits=2)) m w.e. yr⁻¹ and the mean absolute difference between in situ and this study is $(round(synth_minus_obs_mad, digits=2)) m w.e. yr⁻¹")
+
+    # Coverage calculation for each year (repeat, probably for reporting)
+    index_area = index .& .!ismissing.(wgms_mb.area)
+    gdf = groupby(wgms_mb[index_area, :], :year)
+    df2 = DataFrames.combine(gdf, :area => sum => :area_sum, :annual_balance => std => :annual_balance_std, :synth_minus_obs => std => :synth_minus_obs_std)
+    wgms_annual_coverage = df2.area_sum ./ sum(ds.area[:]) * 100
+    println("average annual coverage: $(round(mean(wgms_annual_coverage), digits=2))%")
+
+    # --- 2D histogram (heatmap) of observed vs modeled mass balance ---
+    f_hist, density = create_2d_histogram(wgms_mb[index, :]; bound_lower=histogram_bounds[1], bound_upper=histogram_bounds[2], colormap=:tempo);
+    save(joinpath(GGA.pathlocal.figures, "wgms_mb_2d_histogram.png"), f_hist)
+
+    # --- Histograms for misfit statistics by season/period ---
+    create_misfit_histograms(wgms_mb, index)
+    save(joinpath(GGA.pathlocal.figures, "wgms_mb_misfit_histograms.png"), f_hist)
+end
+
+# load hugonnet data
+# load in all regions
+begin
+    hugonnet = DataFrame()
+    for rgi = 1:19
+        rgi_str = lpad(string(rgi), 2, '0')
+        path2hugonnet = "/mnt/bylot-r3/data/glacier_mb/Hugonnet2021/time_series/time_series_$(rgi_str)/dh_$(rgi_str)_rgi60_pergla_rates.csv"
+        hugonnet = vcat(hugonnet, CSV.read(path2hugonnet, DataFrame))
     end
 
-    intertile_std = mean(geotile_stats.in_situ_std[.!ismissing.(geotile_stats.in_situ_std)])
-    println("mincount: $mincount, intertile_std: $intertile_std")
+    # find annual balance and format similar to wgms_mb for spatial variogram
+    hugonnet[!, "start_date"] = DateTime.(getindex.(split.(hugonnet.period, "_"), 1))
+    hugonnet[!, "end_date"] = DateTime.(getindex.(split.(hugonnet.period, "_"), 2))
+
+    hugonnet[!, "end_year"] = year.(hugonnet[!, "end_date"])
+    hugonnet[!, "start_year"] = year.(hugonnet[!, "start_date"])
+    hugonnet[!, "dt_years"] = hugonnet[!, "end_year"] - hugonnet[!, "start_year"]
+    hugonnet[!, "year"] = hugonnet[!, "end_year"]
+    index = hugonnet[!, "dt_years"] .== 1
+    hugonnet = hugonnet[index, :]
+    hugonnet[!, :annual_balance] = hugonnet.dhdt * 0.85
+
+
+    rgi6 = GeoDataFrames.read(GGA.pathlocal.glacier_individual)
+    index = indexin(hugonnet.rgiid, rgi6.RGIId)
+
+    # it seems some ids do not match... I think this is because hugonnet updated glaciers that are not in rgi6
+    index_not_match = isnothing.(index)
+    hugonnet = hugonnet[.!index_not_match, :]
+
+    hugonnet[!, :longitude] = rgi6.CenLon[index[.!index_not_match]]
+    hugonnet[!, :latitude] = rgi6.CenLat[index[.!index_not_match]]
+
+subset_random = rand(1:nrow(hugonnet), round(Int, nrow(hugonnet)/100))
+variogram, ddistance = calculate_spatial_variogram(deepcopy(hugonnet[subset_random, [:annual_balance, :longitude, :latitude, :year]]); mincount=min_neighbors_variogram);
+
+f_var_hugonnet = plot_variogram(ddistance, variogram, 0, 0)
+display(f_var_hugonnet)
+save(joinpath(GGA.pathlocal.figures, "wgms_mb_variogram_hugonnet.png"), f_var_hugonnet)
+
 end
 
 
-#TODO
+# link hugonnet glaciers to wgms_mb
+index_into_wgms = indexin(hugonnet.rgiid, wgms_glacier.rgi60_ids)
+index_valid = .!isnothing.(index_into_wgms)
+hugonnet[!, :wgms_id] .= 0
+hugonnet[index_valid, :wgms_id] = wgms_glacier.id[index_into_wgms[index_valid]]
+
+
+wgms_mb[!, :annual_balance_hugonnet] .= NaN
+for r in eachrow(wgms_mb)
+    index = findfirst((hugonnet.dt_years .== 1) .& (hugonnet.wgms_id .== r.glacier_id) .& (hugonnet.year .== r.year))
+    if !isnothing(index)
+        r.annual_balance_hugonnet = hugonnet.dhdt[index] .* 0.85
+    end
+end
+
+delta = wgms_mb.annual_balance_hugonnet .- wgms_mb.annual_balance
+index_valid = (.!ismissing.(delta)) .& (.!isnan.(delta))
+f = Figure();
+ax = Axis(f[1, 1]; xlabel="wgms minus hugonnet [m w.e. yr⁻¹]", ylabel="count");
+hist!(ax, delta[index_valid])
+f
+
+
+
+# Create precipitation raster of maximum monthly precipitation
+begin
+    path2precip = "/mnt/bylot-r3/data/glacier_mb/GPCP/precip.mon.ltm.1991-2020.nc"
+
+    precip = GGA.Rasters.Raster(path2precip, name=:precip);
+    precip_max = dropdims(getindex.(argmax(precip, dims=3), 3), dims=:Ti)
+
+    output_path = joinpath(splitpath(path2precip)[1:end-1]..., "precip.mon_of_max.ltm.1991-2020.tif")
+    precip_max = reverse(precip_max, dims=:Y)
+
+    precip_max = rebuild(precip_max, data = UInt8.(precip_max.data))
+    precip_max = set(precip_max, X => dims(precip_max, X).val .-180)
+
+    GGA.Rasters.write(output_path, precip_max, force=true)
+end;
 
 
 

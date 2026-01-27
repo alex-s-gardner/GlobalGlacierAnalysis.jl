@@ -66,7 +66,7 @@ begin
 end
 
 # download GLDAS LSMs
-if download_lsm_files   
+if download_lsm_files
     # find list of urls that were downloaded from https://disc.gsfc.nasa.gov/datasets?keywords=GLDAS
     gldas_file_urls = GGA.allfiles(gldas_folder; fn_endswith = "_.txt")
     downloadstreams = 6;
@@ -107,6 +107,7 @@ begin #[~2 min]
     end
     basins = reduce(vcat, basins)
     sort!(basins, [:COMID])
+    basins.COMID = Int64.(basins.COMID) # this is needed as the COMID Type is Vector{Union{Missing, Int64}}:
 
     # load in river reaches
     rivers = GGA.river_reaches(rivers_paths; col_names=["geometry", "COMID", "NextDownID", "maxup"])
@@ -141,6 +142,7 @@ for i in eachindex(runoff_vars)
     Q = Dict()
 
     for runoff_var in runoff_vars[i]
+ 
         Q[runoff_var] = cat(Raster.(files; name=runoff_vars[i][1])...; dims=Ti)
     
         for lsm_name in lsm_names
@@ -179,10 +181,10 @@ for i in eachindex(runoff_vars)
         Tb = 45 # concentration time [days] - [Getirana et al. 2012]
         impulse_resonse = GGA.linear_reservoir_impulse_response_monthly(Tb)
 
-        p = lines(copy(Q[:Qsb_acc][180, 80, :])) # sanity check
-        xlims!(p.axis, [DateTime(2010, 1, 1), DateTime(2015, 1, 1)])
+        #p = lines(copy(Q[:Qsb_acc][180, 80, :])) # sanity check
+        #xlims!(p.axis, [DateTime(2010, 1, 1), DateTime(2015, 1, 1)])
         GGA.apply_vector_impulse_resonse!(Q[:Qsb_acc], impulse_resonse)
-        lines!(Q[:Qsb_acc][180, 80, :]);p  # sanity check
+        #lines!(dims(Q[:Qsb_acc][180, 80, :], :Ti).val, Q[:Qsb_acc][180, 80, :].data);p  # sanity check
     end
 
     # scale snow runoff for testing of impact on gmax
@@ -295,3 +297,4 @@ if validate_output # [5 min]
 
     plot(collect(dropdims(mean(riverQ[Qindx, :], dims=:Ti), dims=:Ti)), collect(dropdims(mean(river_flux[fluxindx, :], dims=:Ti), dims=:Ti)))
 end
+

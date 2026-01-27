@@ -35,15 +35,13 @@ begin
    
     mission_reference_for_amplitude_normalization = "icesat2"
     all_permutations_for_glacier_only = true
-    surface_masks = [:glacier] #[:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
+    surface_masks = [:glacier_rgi7] #[:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
     #surface_masks = [:glacier_rgi7]
-    binned_folders = [GGA.analysis_paths(; geotile_width).binned] # [GGA.analysis_paths(; geotile_width).binned, replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")]
+    binned_folders = [replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")] # [GGA.analysis_paths(; geotile_width).binned, replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")]
     binning_methods = ["nmad5"]
-    #binning_methods = ["nmad3"]
     dem_ids = [:best]
     curvature_corrects = [true]
-    fill_params = [2]
-    #fill_params = [1]
+    fill_params = [1]
     amplitude_corrects = [true]
     remove_land_surface_trend = GGA.mission_land_trend()
     regions2replace_with_model = ["rgi19"]
@@ -51,12 +49,11 @@ begin
     missions2align2 = ["icesat2", "icesat"]
     missions2update = nothing
     plots_show = true
-    #plots_save = true
     plots_save = false
     plot_save_format = ".png"
-    geotiles2plot = GGA.geotiles_golden_test
-    single_geotile_test = GGA.geotiles_golden_test[1] # nothing
-    #single_geotile_test = "lat[+78+80]lon[+010+012]"
+    geotiles2plot = GGA.geotiles_golden_test[1]
+    single_geotile_test = GGA.geotiles_golden_test[1] # nothing  "lat[+78+80]lon[-080-078]" #
+    #single_geotile_test = "lat[+60+62]lon[-148-146]"; #"lat[+62+64]lon[-148-146]"; #"lat[+58+60]lon[-136-134]"; #"lat[+58+60]lon[-138-136]"
 
     # for sub-sampling experiment
     nsamples = 100;
@@ -64,7 +61,8 @@ begin
 
     missions2include=["hugonnet", "gedi", "icesat", "icesat2"]
     downscale_to_glacier_method = "area"
-    gemb_run_id = 4
+    gemb_run_id = 5
+    gembfit_outfile_suffix = ""
     binned_file_for_over_land_mission_error = "/mnt/bylot-r3/data/binned_unfiltered/2deg/land_dh_best_cc_nmad5_v01.jld2"
 
     path2runs_filled, params = GGA.binned_filled_filepaths(; project_id, surface_masks, dem_ids, curvature_corrects, amplitude_corrects, binning_methods, fill_params, binned_folders, include_existing_files_only=true)
@@ -87,7 +85,7 @@ end;
 
 #[Extended Data Figure 3]
 # This is to make the curvature correction figure included in the methods section of the paper
-if false # !!! THIS CURRENTLY DOES NOT WORK BECAUSE ICESAT-2 RAW DATA WAS DELETED BY MISTAKE !!!
+if false # !!! THIS CURRENTLY DOES NOT WORK BECAUSE ICESAT-2 RAW DATA WAS DELETED BY MISTAKE !!! 
     GGA.geotile_binning(;
         project_id,
         geotile_width,
@@ -116,7 +114,7 @@ if false # !!! THIS CURRENTLY DOES NOT WORK BECAUSE ICESAT-2 RAW DATA WAS DELETE
 end
 
 #[Extended Data Figure 4/5/6]
-GGA.geotile_binned_fill(;
+foo = GGA.geotile_binned_fill(;
     project_id,
     geotile_width,
     force_remake_before,
@@ -127,8 +125,10 @@ GGA.geotile_binned_fill(;
     binned_folders,
     binning_methods,
     dem_ids,
-    curvature_corrects, fill_params,
-    amplitude_corrects, remove_land_surface_trend,
+    curvature_corrects, 
+    fill_params,
+    amplitude_corrects, 
+    remove_land_surface_trend,
     regions2replace_with_model,
     missions2replace_with_model,
     missions2align2,
@@ -165,42 +165,98 @@ begin
     );
 end
 
-# Calculate global glacier discharge, filled Antarctic data with modeled SMB
+
+gemb = GGA.gemb_ensemble_dv(; gemb_run_id);
+
+# Calculate global glacier solid ice discharge, filled Antarctic data with modeled SMB
+# 12. Calculate global glacier solid ice discharge, filled Antarctic data with modeled SMB
 discharge = GGA.global_discharge_filled(;
-    surface_mask="glacier",
+    surface_mask="glacier", # = parms_ref.surface_mask, # having issues changing this to :glacier_rgi7
     discharge_global_fn=GGA.pathlocal[:discharge_global],
-    gemb_run_id,
+    gemb,
     discharge2smb_max_latitude=-60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
     pscale=1,
-    Δheight=0,
+    ΔT=1,
     geotile_width=2,
-    force_remake_before=nothing
+    force_remake_before=force_remake_before_gemb,
+    force_remake_before_hypsometry=nothing
 );
 
-vars2load = ["runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze"]
-gemb = GGA.gemb_ensemble_dv(; gemb_run_id, vars2load)
+discharge = GGA.discharge2geotile(discharge, dims(gemb, :geotile); mass2volume=true);
+gemb[:dv][:] = @d gemb[:dv] .- discharge[:discharge];
 
-# [Extended Data Figure 8]
-GGA.gemb_calibration(
+# [Extended Data Figure 8 & 11d]
+single_geotile_test = GGA.geotiles_golden_test[1];
+
+(cost, dv_altim) = GGA.gemb_calibration(
     path2runs_synthesized,
-    discharge,
     gemb;
     geotile_width,
     geotile_grouping_min_feature_area_km2=100,
     single_geotile_test,
     seasonality_weight=GGA.seasonality_weight,
     distance_from_origin_penalty=GGA.distance_from_origin_penalty,
-    plots_show=true,
-    plots_save=true,
-    force_remake_before=nothing
-)
+    ΔT_to_pscale_weight=GGA.ΔT_to_pscale_weight,
+    force_remake_before=force_remake_before_gemb,
+    calibrate_to=:all
+);
+
+f = GGA.plot_model_fit(gemb, discharge, dv_altim, cost, single_geotile_test)
+
+# [Extended Data Figure 11a] calibrate to trend only
+(cost, dv_altim) = GGA.gemb_calibration(
+    path2runs_synthesized,
+    gemb;
+    geotile_width,
+    geotile_grouping_min_feature_area_km2=100,
+    single_geotile_test,
+    seasonality_weight=GGA.seasonality_weight,
+    distance_from_origin_penalty=GGA.distance_from_origin_penalty,
+    ΔT_to_pscale_weight=GGA.ΔT_to_pscale_weight,
+    force_remake_before=force_remake_before_gemb,
+    calibrate_to=:trend
+);
+f = GGA.plot_model_fit(gemb, discharge, dv_altim, cost, single_geotile_test)
+
+# [Extended Data Figure 11b] calibrate to 5-year averages only
+(cost, dv_altim) = GGA.gemb_calibration(
+    path2runs_synthesized,
+    gemb;
+    geotile_width,
+    geotile_grouping_min_feature_area_km2=100,
+    single_geotile_test,
+    seasonality_weight=GGA.seasonality_weight,
+    distance_from_origin_penalty=GGA.distance_from_origin_penalty,
+    ΔT_to_pscale_weight=GGA.ΔT_to_pscale_weight,
+    force_remake_before=force_remake_before_gemb,
+    calibrate_to=:five_year
+);
+f = GGA.plot_model_fit(gemb, discharge, dv_altim, cost, single_geotile_test)
+
+# [Extended Data Figure 11b] calibrate to annual averages only
+(cost, dv_altim) = GGA.gemb_calibration(
+    path2runs_synthesized,
+    gemb;
+    geotile_width,
+    geotile_grouping_min_feature_area_km2=100,
+    single_geotile_test,
+    seasonality_weight=GGA.seasonality_weight,
+    distance_from_origin_penalty=GGA.distance_from_origin_penalty,
+    ΔT_to_pscale_weight=GGA.ΔT_to_pscale_weight,
+    force_remake_before=force_remake_before_gemb,
+    calibrate_to=:annual
+);
+f = GGA.plot_model_fit(gemb, discharge, dv_altim, cost, single_geotile_test)
+
+
 
 # [Extended Data Figure 9 & 10]
 begin
-    outfile_prefix = "Gardner2025_geotiles_rates"
 
-    geotiles0 = GeoDataFrames.read(joinpath(GGA.pathlocal.data_dir, "project_data", "$(outfile_prefix)_m3yr.gpkg"))
+    outfile_prefix = "Gardner2025_geotiles_rates"
+    fname = joinpath(GGA.pathlocal[:data_dir], "project_data", "$(outfile_prefix)_myr.gpkg")
+    geotiles0 = GeoDataFrames.read(fname)
 
     # plot a histogram of the rates
     f = GGA.plot_hist_gemb_altim_trend_amplitude(geotiles0)
@@ -209,7 +265,7 @@ begin
     outfile = joinpath(GGA.pathlocal[:figures], "hist_gemb_altim_trend_amplitude.png")
     CairoMakie.save(outfile, f)
 
-    f = GGA.plot_hist_pscale_Δheight(geotiles0)
+    f = GGA.plot_hist_pscale_ΔT(geotiles0)
     display(f)
 
     outfile = joinpath(GGA.pathlocal[:figures], "hist_pscale_dheight.png")

@@ -96,7 +96,6 @@ begin
     glacier_sinks_grouped_path = joinpath(paths[:data_dir], "glacier_sinks_grouped.fgb")
 
 
-   
     glacier_vars_fns = reduce(vcat,GGA.allfiles.(["/mnt/bylot-r3/data/binned_unfiltered/2deg/", "/mnt/bylot-r3/data/binned/2deg/"]; fn_endswith="synthesized_perglacier.jld2"))
     # glacier_vars_fns = ["/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_dh_best_cc_nmad3_v01_filled_ac_p1_synthesized_perglacier.jld2"]
 
@@ -140,7 +139,7 @@ end
 if !isfile(glacier_lowest_point_path)
     glaciers = GeoDataFrames.read(paths[:glacier_individual])
     dem = Raster("/mnt/devon-r2/shared_data/copernicus-dem-30m/DEM.vrt"; lazy=true)
-    mes = get_minimum_elevations(dem, glaciers.geom)
+    mes = get_minimum_elevations(dem, glaciers.geometry)
     glaciers.min_elev_long = first.(mes)
     glaciers.min_elev_lat = last.(mes)
     GeoDataFrames.write(glacier_lowest_point_path, glaciers)

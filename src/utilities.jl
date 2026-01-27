@@ -116,6 +116,18 @@ function decimalyear(datetime)
     return decyear
 end
 
+function match_rgi6_rgi7_attribute_names(path2glacier_rgi7_individual)
+   gdf = GDF.read(path2glacier_rgi7_individual)
+
+   # match rgi 6.0 attribute names
+   rename!(gdf, "rgi_id" => "RGIId")
+   rename!(gdf, "cenlat" => "CenLat")
+   rename!(gdf, "cenlon" => "CenLon")
+   rename!(gdf, "area_km2" => "Area")
+
+   # save to disk
+   GDF.write(path2glacier_rgi7_individual, gdf)
+end
 
 """
     decimalyear2datetime(decyear)
@@ -543,6 +555,80 @@ function allfiles(
 end
 
 """
+    dilate(mask::AbstractArray, radius::Int)
+
+Expands (radius > 0) or shrinks (radius < 0) the foreground regions of a mask.
+- If radius is positive, it performs Dilation.
+- If radius is negative, it performs Erosion using the absolute value of the radius.
+- If radius is 0, it returns a copy of the original mask.
+"""
+function dilate(mask::AbstractArray{T,N}, radius::Int) where {T,N}
+    if radius == 0
+        return copy(mask)
+    end
+
+    mask_out = copy(mask)
+    indices = CartesianIndices(mask)
+    r = abs(radius)
+
+    for I in indices
+        # Define the local neighborhood bounds
+        lower_bound = max(first(indices), I - CartesianIndex(fill(r, N)...))
+        upper_bound = min(last(indices), I + CartesianIndex(fill(r, N)...))
+
+        neighborhood = @view mask[lower_bound:upper_bound]
+
+        if radius > 0
+            # Dilation logic: Set to 1 if ANY neighbor is non-zero
+            if any(!iszero, neighborhood)
+                mask_out[I] = one(T)
+            end
+        else
+            # Erosion logic: Set to 0 if ANY neighbor is zero (i.e., NOT ALL are non-zero)
+            if !all(!iszero, neighborhood)
+                mask_out[I] = zero(T)
+            end
+        end
+    end
+
+    return mask_out
+end
+
+"""
+    true_block_size(v::AbstractVector{Bool})
+
+Returns an Int vector where each element represents the length of the 
+contiguous block of `true` values it belongs to. `false` values return 0.
+"""
+function true_block_size(v::AbstractVector{Bool})
+    n = length(v)
+    result = zeros(Int, n)
+
+    i = 1
+    while i <= n
+        if v[i]
+            # Start of a true block
+            start_idx = i
+            while i <= n && v[i]
+                i += 1
+            end
+            # End of block reached
+            block_len = i - start_idx
+
+            # Fill the result indices for this block
+            for j in start_idx:(i-1)
+                result[j] = block_len
+            end
+        else
+            # It's a false value, result[i] is already 0 from zeros()
+            i += 1
+        end
+    end
+
+    return result
+end
+
+"""
     meters2lonlat_distance(distance_meters, latitude_degrees) -> (latitude_distance, longitude_distance)
 
 Convert a distance in meters to equivalent decimal degree distances in latitude and longitude.
@@ -873,7 +959,7 @@ rgi2label = Dict(
     "rgi13" => "Central Asia",
     "rgi14" => "South Asia W.",
     "rgi15" => "South Asia E.",
-    "rgi16" => "Low Latitudes",
+    "rgi16" => "Tropics",
     "rgi17" => "Southern Andes",
     "rgi18" => "New Zealand",
     "rgi19" => "Antarctic",
@@ -1041,7 +1127,7 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
         end
 
         # Update the progress meter
-        progress && update!(prog, prog.counter .+ 1)
+        progress && ProgressMeter.update!(prog, prog.counter .+ 1)
     end
     return df
 end
@@ -1339,8 +1425,13 @@ function dimstack2netcdf(ds::DimStack, filename; kwargs...)
         # step 2: add dim variables & metadata
         for dim in ds_dims
             dname = string(DimensionalData.name(dim))
-            d = defVar(nc, dname, val(val(dim)), (dname,))
+            dim_val = val(val(dim))
+            if eltype(dim_val) == Date
+                dim_val = DateTime.(dim_val)
+            end
 
+            d = defVar(nc, dname, dim_val, (dname,))
+       
             # add dimension attributes from dimension metadata
             for (k, v) in DD.metadata(dim)
                 d.attrib[k] = v
@@ -1409,7 +1500,11 @@ function ncdataset2dimstack(ds0)
 
     dim0 = Dict()
     for dim in dnames
-        dim0[dim] = Dim{Symbol(dim)}(ds0[dim])
+        if haskey(ds0, dim)
+            dim0[dim] = Dim{Symbol(dim)}(ds0[dim])
+        else
+            dim0[dim] = Dim{Symbol(dim)}(1:ds0.dim[dim])
+        end
     end
 
     vnames = tuple(setdiff(keys(ds0), dnames)...)
@@ -1576,7 +1671,7 @@ function mission_proper_name(mission)
     elseif mission == "gedi"
         return "GEDI"
     elseif mission == "hugonnet"
-        return "ASTER/WorldView"
+        return "ASTER/WV"
     else
         return mission
     end
@@ -1684,13 +1779,7 @@ function geotile_hypsometry(geotiles, surface_mask; dem_id=:cop30_v2, force_rema
     else
 
         # Set the glacier ID attribute name based on RGI version
-        if Base.contains(path2surface_mask, "rgi6")
-            persistent_attribute = :RGIId
-        elseif Base.contains(path2surface_mask, "rgi7")
-            persistent_attribute = :rgi_id
-        else
-            error("surface_mask must be either \"glacier\" or \"glacier_rgi7\"")
-        end
+        persistent_attribute = :RGIId
 
         # Read glacier outlines
         surface_mask_geom = GeoDataFrames.read(path2surface_mask)
@@ -1909,6 +1998,24 @@ function ts_seasonal_model(ts; interval=nothing)
     return (;trend, amplitude, phase_peak_month)
 end
 
+function polyfit(x, y; order)
+    A = ones(length(x), order + 1)
+    for i in 1:order
+        A[:, i+1] = x.^i
+    end
+    p = A \ y;
+    return p
+end
+
+function polyval(x, p)
+    out = zeros(length(x))
+    for i in eachindex(p)
+        out .+= p[i] .* x .^ (i-1)
+    end
+    return out
+end
+
+
 
 # This is a Work In Progress.... need to move away from DataFames for geotile info... and the DimStack should be passed to functions... not read in for each function
 function geotile_fullservice(; surface_mask ="glacier", geotile_width=2, geotile_grouping_min_feature_area_km2 = 100, force_remake_before = nothing)
@@ -1999,4 +2106,28 @@ function calculate_slope(data::DimArray)
 
     slope = numerator / denominator
     return slope
+end
+
+
+"""
+    scale2dist(scale::AbstractVector)
+
+Convert scaling factors into a 'distance' metric with symmetric scaling around 1.
+For elements less than 1, returns `-1 ./ scale`; for elements greater than or equal to 1, returns them unchanged.
+This mapping makes deviation from 1 symmetric in terms of distance for optimization/penalty calculations.
+
+# Arguments
+- `scale::AbstractVector`: Vector of scaling factors.
+
+# Returns
+- `dist::Vector`: Vector of transformed distance values, symmetric about scale=1.
+
+# Example
+```julia
+scale2dist([0.5, 1.0, 2.0])  # returns [-2.0, 1.0, 2.0]
+```
+"""
+function scale2dist(scale)
+    dist = vcat(-1 ./ scale[scale .< 1], scale[scale .>= 1])
+    return dist
 end

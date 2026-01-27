@@ -507,10 +507,7 @@ function geotile_hyps_extract(;
 
         if !isfile(out_file) || force_remake
             height_range, height_center = project_height_bins()
-            Δh = abs(height_center[2] - height_center[1])
-
-            excludemask_flag = false
-
+     
             var_name = Symbol("$(mask)_area_km2")
             geotiles = geotiles_w_mask(geotile_width)
             fn_raster = pathlocal[raster_file]
@@ -526,7 +523,7 @@ function geotile_hyps_extract(;
 
             geotiles[!, var_name] = [zeros(size(height_center)) for r in 1:nrow(geotiles)]
 
-            fn_shp = GGA.pathlocal[shp]
+            fn_shp = pathlocal[shp]
 
             if mask == :land
                 shp = Symbol("$(:glacier)_shp")
@@ -546,13 +543,17 @@ function geotile_hyps_extract(;
             # using Threads here does not improve performance
             for geotile in eachrow(geotiles)[geotiles[!, "$(domain)_frac"].>0]
 
-                GGA.geotile_binarea!(geotile, ras, feature, height_range; invert, excludefeature, var_name)
+                geotile_binarea!(geotile, ras, feature, height_range; invert, excludefeature, var_name)
             end
 
             Arrow.write(out_file, select!(geotiles, Not(:geometry))::DataFrame)
 
             # file can not be written with geometry column
-            Arrow.write(out_file, select!(geotiles, Not(:geometry))::DataFrame)
+            if "geometry" in names(geotiles)
+                Arrow.write(out_file, select!(geotiles, Not(:geometry))::DataFrame)
+            else
+                Arrow.write(out_file, geotiles::DataFrame)
+            end
         end
     end
 end

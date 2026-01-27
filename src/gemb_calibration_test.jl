@@ -7,6 +7,7 @@ using Statistics
 using ProgressMeter
 
 path2runs_synthesized = ["/mnt/bylot-r3/data/binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized.jld2"]
+outfile_suffix = "_ΔT"
 
 discharge = GGA.global_discharge_filled(;
     surface_mask="glacier",
@@ -15,7 +16,7 @@ discharge = GGA.global_discharge_filled(;
     discharge2smb_max_latitude=-60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
     pscale=1,
-    Δheight=0,
+    ΔT=0,
     geotile_width=2,
     force_remake_before=DateTime("2025-07-08T14") + GGA.local2utc
 );
@@ -42,8 +43,6 @@ trend = DimArray(zeros(dws, dwd))
 #seasonality_weight = seasonality_weights[1]
 seasonality_weight = GGA.seasonality_weight
  #  for distance_from_origin_penalty in distance_from_origin_penalties
-    distance_from_origin_penalty = GGA.distance_from_origin_penalty
-
         begin
             GGA.gemb_calibration(
                 path2runs_synthesized, 
@@ -56,6 +55,7 @@ seasonality_weight = GGA.seasonality_weight
                 plots_save=false,
                 seasonality_weight,
                 distance_from_origin_penalty,
+                ΔT_to_pscale_weight = 1,
                 force_remake_before = DateTime("2026-07-09T14") + GGA.local2utc
             )
 
@@ -67,9 +67,10 @@ seasonality_weight = GGA.seasonality_weight
                 geotile_grouping_min_feature_area_km2=100, 
                 geotile_width=2, 
                 force_remake_before=DateTime("2026-07-09T14") + GGA.local2utc
+                outfile_suffix=outfile_suffix
             )
 
-            path2ref = replace(path2runs_synthesized[1], ".jld2" => "_gembfit_dv.jld2")
+            path2ref = replace(path2runs_synthesized[1], ".jld2" => "_gembfit_dv$(outfile_suffix).jld2")
 
             # let's inspect that data
             df = GGA.FileIO.load(path2ref, "geotiles")

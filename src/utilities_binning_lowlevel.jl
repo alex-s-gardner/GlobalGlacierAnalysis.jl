@@ -1,78 +1,104 @@
 # define models
 begin
-    # Define model that will be fit to all data binned by hypsometry
-    #model::Function = model(t, h; t_intercept=2010) = hcat(ones(size(t)), (t .- t_intercept), h, h.^2, cos.(2 * pi * t), sin.(2 * pi * t))
-    model1::Function = model1(x, p) =
-        p[1] .+
-        p[2] .* x[:, 1] .+
-        p[3] .* x[:, 1] .^ 2 .+
-        p[4] .* x[:, 2] .+
-        p[5] .* x[:, 2] .^ 2 .+
-        p[7] .* sin.(2 .* pi .* (x[:, 1] .+ p[6])) .+
-        p[8] .* sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* x[:, 2] .+
-        p[9] .* sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* x[:, 2] .^ 2
+    # -------------------------------
+    # Model definitions for binned data
+    # -------------------------------
 
+    # General polynomial + seasonal model to fit to all data binned by hypsometry.
+    # Input:
+    #   x: matrix with columns [time, elevation]
+    #   p: parameter vector of length 9
+    # Output:
+    #   vector of modeled values
+    # Parameters:
+    #   p[1]: intercept
+    #   p[2], p[3]: linear/quadratic dependence on time (x[:,1])
+    #   p[4], p[5]: linear/quadratic dependence on elevation (x[:,2])
+    #   p[6]: phase shift for annual sine terms
+    #   p[7], p[8], p[9]: coefficients for annual sine (possibly elevation-modulated)
+    model1(x, p) =
+        p[1] .+                                       # Intercept
+        p[2] .* x[:, 1] .+                            # Linear term in time
+        p[3] .* x[:, 1] .^ 2 .+                       # Quadratic term in time
+        p[4] .* x[:, 2] .+                            # Linear term in elevation
+        p[5] .* x[:, 2] .^ 2 .+                       # Quadratic term in elevation
+        p[7] .* sin.(2 .* pi .* (x[:, 1] .+ p[6])) .+ # Sine (annual, phase shifted)
+        p[8] .* sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* x[:, 2] .+           # Sine * elevation
+        p[9] .* sin.(2 .* pi .* (x[:, 1] .+ p[6])) .* x[:, 2] .^ 2         # Sine * elevation^2
 
+    # Initial parameters, lower and upper bounds for model1
     const p1 = zeros(9)
     const lb1 = [-10.0, -3.0, -2.0, -0.05, -0.0001, -1.0, -7.0, -0.05, -0.001]
     const ub1 = [+10.0, +3.0, +2.0, +0.05, +0.0001, +1.0, +7.0, +0.05, +0.001]
 
+    # Seasonal-only model (annual sine with phase modulation and seasonal amplitude as quadratic in elevation)
+    # p[1]: phase shift
+    # p[2], p[3], p[4]: coefficients for amplitude (constant, linear, quadratic in elevation)
+    model1_seasonal(x, p) =
+        p[2] .* sin.(2 .* pi .* (x[:, 1] .+ p[1])) .+            # Sine term (base amplitude)
+        p[3] .* sin.(2 .* pi .* (x[:, 1] .+ p[1])) .* x[:, 2] .+ # Sine * elevation
+        p[4] .* sin.(2 .* pi .* (x[:, 1] .+ p[1])) .* x[:, 2] .^ 2 # Sine * elevation^2
 
-    # seasonal only [amplitude is a quadratic function of elevation]
-    model1_seasonal::Function = model1_seasonal(x, p) =
-        p[2] .* sin.(2 .* pi .* (x[:, 1] .+ p[1])) .+
-        p[3] .* sin.(2 .* pi .* (x[:, 1] .+ p[1])) .* x[:, 2] .+
-        p[4] .* sin.(2 .* pi .* (x[:, 1] .+ p[1])) .* x[:, 2] .^ 2
-
-    # linear trend
-    model_trend::Function = model1_trend(h, p) = p[1] .+ p[2] .* h
+    # Simple linear trend model: fit in elevation only
+    # p[1]: intercept, p[2]: slope
+    model1_trend(h, p) = p[1] .+ p[2] .* h
     const p_trend = zeros(2)
 
-    # including quadratic for seasonal does not improve std(anom)
+    # NOTE: Including quadratic for seasonal did not improve std(anom) in practical use.
+    # (rejected alternate parameters commented below)
     #(p[6] .* cos.(2 .* pi .* x[:, 1]) .+  p[7].* sin.(2 .* pi .* x[:, 1])) .* (1 .+ p[8] .* x[:, 2] .+ p[9] .* x[:, 2] .^ 2)
-    #p1 = zeros(9);
-    #lb1 = [-10., -3., -2., -.05, -0.0001, -10., -10., -0.01, -0.0001];
-    #ub1 = [+10., +3., +2., +.05, +0.0001, +10., +10., +0.01, +0.0001];
 
-    # model fit across all geotiles for a region for a given year
-    model2::Function = model2(h, p) = p[1] .+ p[2] .* h .+ p[3] .* h .^ 2
+    # Model for all geotiles for a region for a given year: quadratic in elevation
+    # p[1]: intercept, p[2]: linear, p[3]: quadratic
+    model2(h, p) = p[1] .+ p[2] .* h .+ p[3] .* h .^ 2
     const p2 = zeros(3)
     const lb2 = [-30.0, -0.1, -0.01]
     const ub2 = [+30.0, +0.1, 0.01]
 
-    model3::Function = model3(t, p) = p[1] .+ p[2] .* t .+ p[3] .* t .^ 2 .+ p[4] .* sin.(2 .* pi .* (t .+ p[5]))
+    # Polynomial + seasonal model in time t
+    # p = [offset, slope, acceleration, amplitude, phase]
+    model3(t, p) = p[1] .+ p[2] .* t .+ p[3] .* t .^ 2 .+ p[4] .* sin.(2 .* pi .* (t .+ p[5]))
     const p3 = zeros(5)
 
-    model4::Function = model4(t, p) = p[1] .+ p[2] .* sin.(2 .* pi .* (t .+ p[3]))
+    # Simple seasonal (sine) annual cycle model in time t
+    # p = [offset, amplitude, phase]
+    model4(t, p) = p[1] .+ p[2] .* sin.(2 .* pi .* (t .+ p[3]))
     const p4 = zeros(3)
 
-    offset_trend_seasonal::Function =
-        offset_trend_seasonal(t, p) =
-            p[1] .+
-            p[2] .* t .+
-            p[3] .* sin.(2 .* pi .* (t .+ p[4]))
+    # Offset + trend + seasonal (sinusoidal) terms model for time series offsets
+    # p[1]: offset, p[2]: trend, p[3]: seasonal amplitude, p[4]: phase
+    offset_trend_seasonal(t, p) =
+        p[1] .+                                     # Offset
+        p[2] .* t .+                                # Linear trend
+        p[3] .* sin.(2 .* pi .* (t .+ p[4]))        # Sinusoidal annual cycle
 
+    # Offset + trend + full seasonality (cosine and sine terms); more flexible phase representation
+    # p[1]: offset, p[2]: trend, p[3]: cos coefficient, p[4]: sin coefficient
+    offset_trend_seasonal2(t, p) =
+        p[1] .+                              # Offset
+        p[2] .* t .+                         # Linear trend
+        p[3] .* cos.(2π .* t) .+             # Cosine (annual cyclic)
+        p[4] .* sin.(2π .* t)                # Sine (annual cyclic)
 
-    offset_trend_seasonal2::Function =
-        offset_trend_seasonal2(t, p) =
-            p[1] .+
-            p[2] .* t .+
-            p[3] .* cos.(2π .* t) .+
-            p[4] .* sin.(2π .* t) 
+    # Offset + linear trend + acceleration + full seasonal cycle (cosine and sine terms)
+    # p[1]: offset, p[2]: linear, p[3]: quadratic, p[4]: cos, p[5]: sin
+    offset_trend_acceleration_seasonal2(t, p) =
+        p[1] .+                            # Offset
+        p[2] .* t .+                       # Linear trend
+        p[3] .* t .^ 2 .+                  # Acceleration (quadratic term)
+        p[4] .* cos.(2π .* t) .+           # Cosine (annual)
+        p[5] .* sin.(2π .* t)              # Sine (annual)
 
-
-    offset_trend_acceleration_seasonal2::Function =
-        offset_trend_acceleration_seasonal2(t, p) =
-            p[1] .+
-            p[2] .* t .+
-            p[3] .* t .^ 2 .+
-            p[4] .* cos.(2π .* t) .+
-            p[5] .* sin.(2π .* t) 
-
+    # 10th order polynomial 
+    polynomial10(x, p) =
+        p[1] .+ p[2] .* x .+ p[3] .* x .^ 2 .+ p[4] .* x .^ 3 .+ p[5] .* x .^ 4 .+ p[6] .* x .^ 5 .+ p[7] .* x .^ 6 .+ p[8] .* x .^ 7 .+ p[9] .* x .^ 8 .+ p[10] .* x .^ 9 .+ p[11] .* x .^ 10
+    const p10 = zeros(11)
+    
+    # Initial parameters for offset/trend/seasonal fitting
     const p_offset_trend_seasonal = zeros(4)
 end
 
-offset_trend::Function = offset_trend(t, p) = p[1] .+ p[2] .* t;
+offset_trend(t, p) = p[1] .+ p[2] .* t;
 offset_trend_p = zeros(2);
 
 """

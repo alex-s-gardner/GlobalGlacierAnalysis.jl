@@ -64,7 +64,7 @@ and creates special aggregations for HMA (regions 13-15) and global (regions 1-1
 # Returns
 - Dictionary containing aggregated data for each variable, with dimensions [run, rgi, date]
 """
-function runs2rgi(path2runs, vars2sum=["dv_altim", "runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze", "dv", "dm", "dm_altim"])
+function runs2rgi(path2runs; vars2sum=["dv_altim", "runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze", "dv", "dm", "dm_altim"], outfile_suffix="")
 
     # read in example file
     drgi = Dim{:rgi}([1:19; 98; 99])
@@ -74,7 +74,7 @@ function runs2rgi(path2runs, vars2sum=["dv_altim", "runoff", "fac", "smb", "rain
 
     regional_sum = Dict() # this needs to be a Dict since variables have different date dimensions
 
-    example_data = FileIO.load(replace(path2runs[1], ".jld2" => "_gembfit_dv.jld2"), "geotiles")
+    example_data = FileIO.load(replace(path2runs[1], ".jld2" => "_gembfit_dv$(outfile_suffix).jld2"), "geotiles")
     for varname in vars2sum
         ddate = Dim{:date}(colmetadata(example_data, varname, "date"))
         regional_sum[varname] = fill(NaN, drun, drgi, ddate)
@@ -84,7 +84,7 @@ function runs2rgi(path2runs, vars2sum=["dv_altim", "runoff", "fac", "smb", "rain
     #for binned_synthesized_file in path2runs
         #binned_synthesized_file = path2reference
 
-        binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
+        binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv$(outfile_suffix).jld2")
         geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
 
         # group by rgi and sum
@@ -585,12 +585,12 @@ function rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend=nothin
     river_flux = river_flux[river_flux[:, :NextDownID].==0, :]
 
     # match glaciers to river sink type (endorheic or ocean terminating)
-    gid1 = reduce(vcat, river_flux.RGIId)
+    gid1 = reduce(vcat, river_flux[!, "RGIId"])
     endorheic = falses(length(gid1))
 
     c = 1
     for r in eachrow(river_flux)
-        n = length(r.RGIId)
+        n = length(r["RGIId"])
         endorheic[c:c+n-1] .= !(r.ocean_terminating)
         c += n
     end
@@ -666,7 +666,7 @@ Create a formatted table of regional glacier parameter values with error estimat
 The function automatically determines appropriate units for each parameter type and includes
 them in the column headers.
 """
-function error_bar_table(region_fits; varnames=nothing, fit_params=["trend", "acceleration", "amplitude", "phase"], rgi_regions=nothing, digits=2)
+function error_bar_table(region_fits; varnames=nothing, params=["trend", "acceleration", "amplitude", "phase"], rgi_regions=nothing, digits=2)
 
     rgi_labels = rginum2label.(rgi_regions)
 
@@ -681,8 +681,8 @@ function error_bar_table(region_fits; varnames=nothing, fit_params=["trend", "ac
     end
 
 
-    if fit_params == nothing
-        fit_params = dims(region_fits, :fit_param)
+    if params == nothing
+        params = dims(region_fits, :fit_param)
     end
 
     ismass = falses(dims(region_fits, :varname))
@@ -697,7 +697,7 @@ function error_bar_table(region_fits; varnames=nothing, fit_params=["trend", "ac
         ismass[varname=At(varname)] ? base_unit = "Gt" : base_unit = "km^3"
 
         #println("    $(varname)")
-        for param in fit_params
+        for param in params
             if param in ["acceleration"]
                 unit = "$(base_unit)/yr^2"
             elseif param in ["trend"]
@@ -718,7 +718,7 @@ function error_bar_table(region_fits; varnames=nothing, fit_params=["trend", "ac
         for varname in varnames
             ismass[varname=At(varname)] ? base_unit = "Gt" : base_unit = "km^3"
             #println("    $(varname)")
-            for param in fit_params
+            for param in params
                 v = region_fits[At(varname), At(rgi), At(param), At(false)]
                 err = region_fits[At(varname), At(rgi), At(param), At(true)]
                 
@@ -872,8 +872,12 @@ function geotiles_mean_error(path2ref, path2files; error_quantile=0.95, error_sc
 
     @showprogress desc = "Loading geotile dv data and calculating error..." for run in drun
         gt = geotile2dimarray_kgm2(run; reference_period)
-        dgeotile = dims(gt, :geotile)
-        geotiles0[run=At(run), geotile=At(val(dgeotile))] = gt
+
+        # there is an issue here where RGI6 and RGI7 have different geotiles... so we need to intersect the geotiles and then set the values
+        dgeotile0 = dims(gt, :geotile)
+        dgeotile0 = intersect(dgeotile0, dgeotile)
+        
+        geotiles0[run=At(run), geotile=At(dgeotile0)] = gt[geotile=At(dgeotile0)]
         geotiles0[run=At(run)] = geotiles0[run=At(run)] .- geotiles_ref
     end
 
@@ -930,7 +934,9 @@ function geotiles_mean_error_glaciers(glaciers, geotiles; show_progress=true, va
 
     for varname in dvarname
         Threads.@threads for r in eachrow(glaciers)
-            glacier_out[varname=At(varname), rgiid=At(r.rgiid)] = geotiles[varname=At(varname), geotile=At(r.geotile)] .* r.area_km2
+            if r.geotile in dgeotile
+                glacier_out[varname=At(varname), rgiid=At(r.rgiid)] = geotiles[varname=At(varname), geotile=At(r.geotile)] .* r.area_km2
+            end
             next!(prog)
         end
     end
@@ -1039,7 +1045,7 @@ function glacier_summary_file(
     reference_period=(DateTime(2000, 4, 1), DateTime(2024, 12, 31)), 
     surface_mask="glacier", 
     force_remake_before=nothing, 
-    geotile_width=2
+    geotile_width=2,
     )
 
     # having strange issues with custom unitful units... 
@@ -1063,14 +1069,15 @@ function glacier_summary_file(
 
     #TODO: it would be good to save this to disk and a gpkg file of trends and amplitudes currently in synthesis_plots_gis.jl... synthesis_plots_gis.jl should be deprecated at some point
     glacier_geotile_hyps_fn = replace(pathlocal[Symbol("$(surface_mask)_individual")], ".gpkg" => "geotile_hyps.jld2")
-    glaciers0 = load(glacier_geotile_hyps_fn, "glacier")
-
+    glaciers0 = load(glacier_geotile_hyps_fn, surface_mask)
+    glaciers0.area_km2[ismissing.(glaciers0.area_km2)] .= Ref([0.0,])
+    
     # load glaciers
     glaciers0.area_km2 = sum.(glaciers0.area_km2)
 
     # glaciers have been split by geotile by model variables have been averaged by geotile groups so this is no longer needed... combine split glaciers
     glaciers = DataFrame()
-    rgiids = unique(glaciers0.RGIId)
+    rgiids = unique(glaciers0[!, "RGIId"])
     glaciers[!, :rgiid] = rgiids
     glaciers[!, :area_km2] .= 0.0 * u"km^2"
     glaciers[!, :geotile] .= ""
@@ -1086,7 +1093,7 @@ function glacier_summary_file(
     end
 
     Threads.@threads for r in eachrow(glaciers)
-        index = findall(isequal.(Ref(r.rgiid), glaciers0.RGIId))
+        index = findall(isequal.(Ref(r.rgiid), glaciers0[!, "RGIId"]))
         _, ind = findmax(glaciers0.area_km2[index])
         ind = index[ind]
         r.area_km2 = sum(glaciers0.area_km2[index]) * u"km^2"
@@ -1129,7 +1136,14 @@ function glacier_summary_file(
         # now add the variables
         for dim in data_dims
             dname = string(DimensionalData.name(dim))
-            d = defVar(ds, dname, val(val(dim)), (dname,))
+         
+            if isa(dim[1], Date)
+                #Type Date not yet supported
+                 d = defVar(ds, dname, DateTime.(val(val(dim))), (dname,))
+            else
+                d = defVar(ds, dname, val(val(dim)), (dname,))
+            end
+                
             if DateTime <: eltype(dim)
                 d.attrib["cf_role"] = "timeseries_id"
             end
@@ -1190,7 +1204,7 @@ function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="Gardner2025
     altim_cols = colnames[occursin.("_altim", colnames)]
     rename!(geotiles0, altim_cols .=> replace.(altim_cols, "_altim" => "_synthesis"))
 
-    vars_no_write = setdiff(names(geotiles0), ["id", "geometry", "group", "pscale", "Δheight", "area_km2", "rgiid"])
+    vars_no_write = setdiff(names(geotiles0), ["id", "geometry", "group", "pscale", "ΔT", "area_km2", "rgiid"])
     geotiles0[!, :area_km2] = sum.(geotiles0[:, :area_km2])
 
     # Fit temporal trends to all variables with dates in metadata

@@ -50,6 +50,7 @@ begin
     import GeometryOps as GO
     using NCDatasets
     using CSV
+    using ScatteredInterpolation
     
     using Unitful
     Unitful.register(GGA.MyUnits)
@@ -60,7 +61,9 @@ begin
 
     # to include in uncertainty
     paths = GGA.pathlocal
-    reference_run = "binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized.jld2"
+    
+    reference_run = "binned_unfiltered/2deg/glacier_rgi7_dh_best_cc_nmad5_v01_filled_ac_p2_synthesized.jld2"
+
     glacier_flux_path = GGA.pathlocal[:glacier_summary]
 
     project_id = "v01"
@@ -148,8 +151,8 @@ begin #[10 min]
    
     # deteremine endorheic and non-endorheic glacier runoff [3 min]
     # rivers have only been calculated for rgi6 so this will throw an error if using glacier_rgi7
-    if occursin("glacier_rgi7", reference_run)
-        error("rivers have only been calculated for rgi6 so this will throw an error if using glacier_rgi7")
+    if !occursin("glacier_rgi7", reference_run)
+        error("rivers have only been calculated for rgi7 so this will throw an error if using rgi6")
     else
         dm_gt_sinktype = GGA.rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend)
         endorheic_scale_correction = 1 .- dm_gt_sinktype[:,:, At(true)] ./ dm_gt_sinktype[:,:, At(false)]
@@ -182,9 +185,9 @@ end;
 begin
     geotiles = GGA._geotile_load_align(; surface_mask="glacier")
 
-    exclude_regions = [13, 14, 15]
+    exclude_regions = []#[13, 14, 15]
     params = ["trend", "acceleration", "amplitude", "phase"]
-    regional_results = GGA.error_bar_table(region_fits; fit_params = params, rgi_regions = setdiff(drgi, exclude_regions));
+    regional_results = GGA.error_bar_table(region_fits; params = params, rgi_regions = setdiff(drgi, exclude_regions));
 
     altim_cols = names(regional_results)[occursin.("_altim", names(regional_results))]
     rename!(regional_results, altim_cols .=> replace.(altim_cols, "_altim" => "_synthesis"))
@@ -242,6 +245,7 @@ begin
 
     # remove regions, trim dates
     regions_out = deepcopy(regions);
+
     date_range = DateTime(2000, 1, 1).. DateTime(2025, 1, 15)
 
     # ensure dimensions conform
@@ -250,6 +254,7 @@ begin
     ddate = dims(regions_out[var0][date=date_range], :date)
     decyear = GGA.decimalyear.(val(ddate))
     derror = dims(regions_out[var0], :error)
+
 
     for k in keys(regions_out)
         #k = first(keys(regions_out))
@@ -277,23 +282,55 @@ begin
 
         # add units
         if k == "fac" || occursin("dv", k)
-            unit = 1u"km^3/yr"
+            unit = 1u"km^3"
         else
-            unit = 1u"Gt/yr"
+            unit = 1u"Gt"
         end
 
         var1 *= unit
         regions_out[k] = var1[rgi = At(setdiff(drgi, exclude_regions))]
     end
 
-    global_attributes = Dict(
+
+    # convert to DimStack
+    foo0 = [];
+    for k in keys(regions_out)
+        
+        foo = DimArray(fill(zero(eltype(regions_out[k]))*NaN, drgi, ddate, derror); name=k)
+        
+        try
+            foo[DimSelectors(regions_out[k])] = regions_out[k]
+        catch
+            @warn "Interpolating $(k) in time to match other regional time series)"
+            for rgi in dims(regions_out[k],:rgi)
+
+                for error0 in dims(regions_out[k],:error)
+
+                    # interpolate anomalies using weighted distance (Shepard(2))
+                    ts_interp = DataInterpolations.LinearInterpolation(regions_out[k][rgi = At(rgi), error = At(error0)], GGA.decimalyear.(val(dims(regions_out[k],:date))); extrapolation = ExtrapolationType.Linear)
+
+                    foo[rgi = At(rgi), error = At(error0)] = ts_interp(GGA.decimalyear.(val(ddate)))
+                end
+            end
+        end
+
+        push!(foo0, foo)
+    end
+
+    foo1 = [];
+    for i in eachindex(foo0)
+
+        push!(foo1, dropdims(foo0[i][error = At(false)], dims = (:error,)))
+        push!(foo1, DimensionalData.rebuild(dropdims(foo0[i][error = At(true)], dims = (:error,)); name = DimensionalData.name(foo0[i]) * "_error"))
+    end
+
+    regions_out_stack = DimStack( foo1... ; metadata = Dict(
         "title" => "glacier mass and volume change time series",
-        "version" => "final - " * Dates.format(now(), "yyyy-mm-dd"),
-    )
+        "version" => "final - " * Dates.format(now(), "yyyy-mm-dd"),))
 
     filename0 = joinpath(paths[:project_dir], "Gardner2025_regional_timseries.nc")
 
-    GGA.dimarray2netcdf(regions_out, filename0; global_attributes)
+    GGA.dimstack2netcdf(regions_out_stack, filename0)
 
 
     # copy data readme file to project directory
@@ -307,7 +344,8 @@ begin
     params = ["trend"]
 
     println("----------- from $(dates4trend[1]) to $(dates4trend[2]) -----------")
-    regional_results = GGA.error_bar_table(region_fits, varnames, params, setdiff(drgi, exclude_regions); digits=2);
+    regional_results = GGA.error_bar_table(region_fits; varnames, params, rgi_regions=setdiff(drgi, exclude_regions), digits=2)
+
     GGA.show_error_bar_table(regional_results; cols2display = 1)
 
 end
@@ -315,163 +353,304 @@ end
 # dump summary conclusions to console
 begin
     drgi = dims(region_fits, :rgi);
-    rgis = setdiff(drgi, [99, 13,14,15])
+    rgis = setdiff(drgi, [99, 13, 14, 15]);
 
-    varname = "dm";
-    
-    println("Total glacier contibution to rivers and oceans: $(round(Int,region_fits[At("runoff"), At(99), At("trend"), At(false)] + region_fits[At("discharge"), At(99), At("trend"), At(false)]))) ± $(round(Int,sqrt(region_fits[At("dm"), At(99), At("trend"), At(true)].^2 + region_fits[At("discharge"), At(99), At("trend"), At(true)].^2))) Gt/yr")
+begin
+    println("\n-------------------------- ABSTRACT ---------------------------------")
+    v = "runoff";
+    p = "trend";
+    rgi = 99;
+    println("glaciers outside the ice sheets contributed: $(round(Int,region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)] + region_fits[varname = At("discharge"), rgi=At(99), parameter= At("trend"), error = At(false)])) ± $(round(Int,hypot(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)], region_fits[varname = At("discharge"), rgi=At(99), parameter= At("trend"), error = At(true)]))) Gt/yr")
 
-    println("Total glacier loss: $(round(Int,region_fits[At("dm"), At(99), At("trend"), At(false)])) ± $(round(Int,region_fits[At("dm"), At(99), At("trend"), At(true)])) Gt/yr")
+    v = "dm";
+    p = "trend";
+    rgi = 99;
+    println("unsustainable contribution (i.e. net loss) of: $(round(Int,region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)])) ± $(round(Int,region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)])) Gt/yr")
 
-    println("Total glacier runoff acceleration: $(round(region_fits[At("runoff"), At(99), At("acceleration"), At(false)], digits=1)) ± $(round(region_fits[At("runoff"), At(99), At("acceleration"), At(true)], digits=1)) Gt/yr²")
+    v = "runoff";
+    p = "acceleration";
+    rgi = 99;
+    println("glacier runoff accelerated by: $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)], digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)], digits=1)) Gt/yr²")
 
-    println("Total glacier accumulation acceleration: $(round(region_fits[At("acc"), At(99), At("acceleration"), At(false)], digits=1)) ± $(round(region_fits[At("acc"), At(99), At("acceleration"), At(true)], digits=1)) Gt/yr²")
+    v = "acc";
+    p = "acceleration";
+    rgi = 99;
+    println("losses were partially offset by an increase in accumulation: $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)], digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)], digits=1)) Gt/yr²")
 
-    println("Total glacier loss: $(round(Int, region_fits[At("dm"), At(99), At("trend"), At(false)])) ± $(round(Int, region_fits[At("dm"), At(99), At("trend"), At(true)])) Gt/yr")
+    v = "dm"
+    rgi = 99;
+    val0 = region_fits[varname = At(v), rgi = At(rgi), parameter = At("trend"), error = At(false)]*endorheic_scale_correction[At(v), At(rgi)];
+    println("we determine that $(round(Int, val0)) Gt/yr of glacier loss contributed $(round((val0 / ocean_area_km2* 1E6), digits=2)) mm/yr SLR)")
 
-    println("Total glacier loss acceleration: $(round(region_fits[At("dm"), At(99), At("acceleration"), At(false)], digits=1)) ± $(round(region_fits[At("dm"), At(99), At("acceleration"), At(true)], digits=1)) Gt/yr²")
-   
-    rgi_subset = [1, 5, 3, 98, 2, 17]
-    fact_of_total = round(Int, sum(region_fits[At(varname),At(rgi_subset),At("trend"),At(false)]) ./ sum(region_fits[At(varname),At(rgis),At("trend"),At(false)]) *100)
-    println("$(join(GGA.rginum2label.(rgi_subset), ", ")) comprise $(fact_of_total)% of total mass change")
+    val0 = region_fits[varname = At(v), rgi = At(rgi), parameter = At("trend"), error = At(false)]*(1. - endorheic_scale_correction[At(v), At(rgi)]);
+    println("with $(round(Int, val0)) Gt yr-1 remaining within landlocked endorheic basins")
+end
 
-    varname = "dm";
-    sig_index = region_fits[At(varname),:,At("acceleration"),At(false)] .<= -region_fits[At(varname),:,At("acceleration"),At(true)];
-    println("Regions with significant acceleration in $(varname):")
-    for rgi in drgi[sig_index]
-        println("   $(GGA.rgi2label[GGA.rginum2txt[rgi]])")
-    end
-    println("")
-
-    sig_index = region_fits[At(varname), :, At("acceleration"), At(false)] .>= region_fits[At(varname), :, At("acceleration"), At(true)];
-    println("Regions with significant decceleration in $(varname):")
-    for rgi in drgi[sig_index]
-        println("   $(GGA.rgi2label[GGA.rginum2txt[rgi]])")
-    end
-    println("")
-
-    # fraction of glacier loss that is endorheic
-    for varname in ["dm", "runoff"]
-        println("-----------------------------------$varname-----------------------------------------")
-        dm_endhoric = round(Int, (1 - endorheic_scale_correction[At(varname), At(99)]) .* region_fits[At(varname), At(99), At("trend"), At(false)])
-        dm_ocean = round(Int, (endorheic_scale_correction[At(varname), At(99)]) .* region_fits[At(varname), At(99), At("trend"), At(false)])
-        dm_endhoric_frac = round((1 - endorheic_scale_correction[At(varname), At(99)])*100, digits=1)
-        println("$(100 - dm_endhoric_frac)% ($(dm_ocean) Gt/yr, $(round((dm_ocean / ocean_area_km2* 1E6), digits=2)) mm/yr SLR) of glacier $varname is ocean terminating")
-        println("$(dm_endhoric_frac)% ($(dm_endhoric) Gt/yr) of glacier $varname is endhoric")
-
-        hma_frac_of_total_endorheic = dm_gt_sinktype[At(varname), At(98), At(true)] / dm_gt_sinktype[At(varname), At(99), At(true)];
-        hma_endorheic = round(Int, (1 - endorheic_scale_correction[At(varname), At(98)]) .* region_fits[At(varname), At(98), At("trend"), At(false)])
-        println("HMA comprises $(round(Int,hma_frac_of_total_endorheic*100))% ($hma_endorheic Gt/yr) of total endorheic $varname")
-        
-        na_frac_of_total_endorheic = dm_gt_sinktype[At(varname), At(12), At(true)] / dm_gt_sinktype[At(varname), At(99), At(true)];
-        na_endorheic = round(dm_gt_sinktype[At(varname), At(12), At(true)], digits = 1)
-        println("$(round(Int,(1 - endorheic_scale_correction[At(varname), At(12)])*100))% ($na_endorheic Gt/yr) of North Asia is comprised endorheic $varname")
-        println("North Asia comprises $(round(Int,na_frac_of_total_endorheic*100))% ($na_endorheic Gt/yr) of total endorheic $varname")
-
-        dm_total = round(Int,region_fits[At(varname), At(99), At("trend"), At(false)]);
-        dm_ocean = round(Int,dm_total * endorheic_scale_correction[At(varname), At(99)]);
-        println("Of the total glacier $varname of $(dm_total) Gt/yr, $(dm_ocean) Gt/yr flows to the ocean")
-    end
-
-    total_runoff = round(Int, region_fits[At("runoff"), At(99), At("trend"), At(false)])
-    total_runoff_err = round(Int, region_fits[At("runoff"), At(99), At("trend"), At(true)])
-    total_discharge = round(Int, region_fits[At("discharge"), At(99), At("trend"), At(false)])
-    total_discharge_err = round(Int, region_fits[At("discharge"), At(99), At("trend"), At(true)])
-
-    println("Total fresh water flux: $(total_runoff + total_discharge) ± $(round(Int, hypot(total_runoff_err, total_discharge_err))) Gt/yr")
-   
-    println("$(round(Int, total_discharge/(total_runoff + total_discharge)*100))% ($(total_discharge) ± $(total_discharge_err)) Gt/yr came from discharge")
-   
-    ant_discharge = round(Int, region_fits[At("discharge"), At(19), At("trend"), At(false)])
-    ant_discharge_err = round(Int, region_fits[At("discharge"), At(19), At("trend"), At(true)])
-    ant_frac = round(Int, ant_discharge / total_discharge * 100)
-    println("$(ant_frac)% ($(ant_discharge) ± $(ant_discharge_err) Gt/yr) of all dischage occured in the Antarctica")
-
-    arctic_island_discharge = round(Int,sum(region_fits[At("discharge"), 2..9, At("trend"), At(false)]))
-    arctic_island_discharge_err = round(Int, arctic_island_discharge * discharge_fractional_error)
-    arctic_island_frac = round(Int, arctic_island_discharge / total_discharge * 100)
-    println("$(arctic_island_frac)% ($(arctic_island_discharge) ± $(arctic_island_discharge_err) Gt/yr) of all dischage occured in the Arctic islands ")
-
-    patagonia_discharge = round(Int,sum(region_fits[At("discharge"), At(17), At("trend"), At(false)]))
-    patagonia_discharge_err = round(Int, patagonia_discharge * discharge_fractional_error)
-    patagonia_frac = round(Int,patagonia_discharge / total_discharge * 100)
-    println("$(patagonia_frac)% ($(patagonia_discharge) ± $(patagonia_discharge_err) Gt/yr) of all dischage occured in Patagonia")
-
-    alaska_discharge = round(Int,sum(region_fits[At("discharge"), At(1), At("trend"), At(false)]))
-    alaska_discharge_err = round(Int, alaska_discharge * discharge_fractional_error)
-    alaska_frac = round(Int, alaska_discharge / total_discharge * 100)
-    println("$(alaska_frac)% ($(alaska_discharge) ± $(alaska_discharge_err) Gt/yr) of all dischage occured in Alaska")
-
-
-    println("$(round(Int, total_runoff/(total_runoff + total_discharge)*100))% ($(total_runoff) ± $(total_runoff_err)) Gt/yr came from runoff")
-
-
-
+begin
+    println("\n----------------------Glacier freshwater flux from satellite data --------------------")
     rgis = setdiff(drgi, [5, 19, 13, 14, 15, 99])
-    for yvar = ["dm", "dm_altim"]
-    #yvar = "dm"
+    yvar = "dm"
     xvar = "dm_grace"
-        println("----------------------------------------------------------------------------")
-        println("                  $xvar vs $yvar for rgi regions")
 
-        x = region_fits_grace[At(xvar), At(rgis), At("trend"), At(false)];
-        y = region_fits_grace[At(yvar), At(rgis), At("trend"), At(false)];
-        yscale = endorheic_scale_correction[At("dm"), At(rgis)]
-        rmse = sqrt(mean((x .- (y .* yscale)) .^ 2))
-        println("RMSE = $(round(rmse, digits=1)) Gt/yr")
+    x = region_fits_grace[At(xvar), At(rgis), At("trend"), At(false)]
+    y = region_fits_grace[At(yvar), At(rgis), At("trend"), At(false)]
+    yscale = endorheic_scale_correction[At("dm"), At(rgis)]
+    rmse = sqrt(mean((x .- (y .* yscale)) .^ 2))
+    println("rates of loss agree within $(round(rmse, digits=1)) Gt/yr RMSE for the overlapping span")
+end
 
-        rmse_incl_endorheic = sqrt(mean((x .- y) .^ 2))
-        println("RMSE including endorheic = $(round(rmse_incl_endorheic, digits=1)) Gt/yr")
+begin
+    println("\n------------- Unsustainable glacier freshwater flux --------------------")
 
-        rmse_static_fac = sqrt(mean((x .- (y .* yscale) .* 0.85) .^ 2))
-        println("RMSE using static fac = $(round(rmse_static_fac, digits=1)) Gt/yr")
-        println("----------------------------------------------------------------------------\n")
-    end
+    v = "dm"
+    p = "trend"
+    rgi = 99;
+    val0 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
+    println("Globally, glaciers lost ice at a net rate of: $(round(Int,val0)) ± $(round(Int,region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)])) Gt/yr")
 
-    println("\n----------------------------------------------------------------------------")
-    println("                  Firn Air Content")
-
-    println("Total glacier fac trend: $(round(region_fits[At("fac"), At(99), At("trend"), At(false)], digits=1)) ± $(round(region_fits[At("fac"), At(99), At("trend"), At(true)], digits=1)) km3/yr")
-    println("Total glacier fac trend Alaska: $(round(region_fits[At("fac"), At(1), At("trend"), At(false)], digits=1)) ± $(round(region_fits[At("fac"), At(1), At("trend"), At(true)], digits=1)) km3/yr")
-    println("Total glacier fac trend Canada Arctic North: $(round(region_fits[At("fac"), At(3), At("trend"), At(false)], digits=1)) ± $(round(region_fits[At("fac"), At(3), At("trend"), At(true)], digits=1)) km3/yr")
-    println("Total glacier fac trend Antarctic: $(round(region_fits[At("fac"), At(19), At("trend"), At(false)], digits=1)) ± $(round(region_fits[At("fac"), At(19), At("trend"), At(true)], digits=1)) km3/yr")
-
+    v = "dm";
+    sf = 1. - endorheic_scale_correction[At(v), At(rgi)];
+    val1 = sf*region_fits[varname = At(v), rgi = At(rgi), parameter = At("trend"), error = At(false)]
+    println("About $(round(Int, sf*100))% ($(round(Int, val1)) Gt yr-1) of this loss occurred within endorheic basins")
     
-    rgis = setdiff(drgi, [13, 14, 15])
-    for rgi in rgis
-        println("Volume to mass conversion $(GGA.rginum2label(rgi)): $(round(Int, region_fits[At("dm"), At(rgi), At("trend"), At(false)] / (region_fits[At("dv"), At(rgi), At("trend"), At(false)]) * 1000)) kg m⁻³")
+    rgi = 98;
+    sf = 1. - endorheic_scale_correction[At(v), At(rgi)];
+    val2 = sf * region_fits[varname = At(v), rgi = At(rgi), parameter = At("trend"), error = At(false)];
+    println("the majority of which ($(round(Int, val2/val1 *100))%; $(round(Int, val2)) Gt yr-1) occurred in High Mountain Asia")
+    
+    rgi = 12;
+    sf = 1. - endorheic_scale_correction[At(v), At(rgi)];
+    val3 = sf * region_fits[varname = At(v), rgi = At(rgi), parameter = At("trend"), error = At(false)];
+    println("Another $(round(Int, val3/val1 *100))%; ($(round(val3, digits=1)) Gt yr-1) of glacier loss within endorheic basins occurred in North Asia, accounting for $(round(Int,sf*100))% of that region’s loss")
+
+
+    println("In total, $(round(Int,val0-val1)) Gt yr-1 of the $(round(Int,val0)) Gt yr-1 glacier loss reached the ocean and directly")
+
+
+    v = "dm";
+    p = "acceleration";
+    rgi = 99;
+    println("Globally, glacier loss accelerated at a rate of $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)], digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)], digits=1)) Gt yr-2");
+
+    v = "dm";
+    p = "acceleration";
+    rgi = 1;
+    println("Alaska experiencing the highest accelerated loss at $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)], digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)], digits=1)) Gt yr-2");
+    
+    rgi = 9
+    println("followed by the Russian Arctic at $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)], digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)], digits=1)) Gt yr-2");
+
+    rgi = 7
+    val4 = round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)], digits=1);
+    rgi = 98;
+    val5 = round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)], digits=1);
+
+
+    println("High Mountain Asia and Svalbard have rates of acceleration of $(round(val5, digits=1)) and $(round(val4, digits=1)) Gt yr-2, respectively")
+
+    rgi = 99;
+    v = "dm";
+    p = "trend";
+    gardner_glambie = region_fits_glambie[varname=At(v), rgi=At(rgi), parameter=At(p), error=At(false)];
+    println("Glacier Mass Balance Intercomparison Exercise (GlaMBIE: GlaMBIE Team, 2025) (2000-2024: $(round(Int, region_fits_glambie[varname =At(v), rgi = At(rgi), parameter = At(p), error = At(false)])) ± $(round(Int, region_fits_glambie[varname =At(v), rgi = At(rgi), parameter = At(p), error = At(true)])) Gt yr-1")
+
+
+    rgi = 5;
+    println("largest differences in mean rates between studies are found for Greenland Periphery ($(round(Int, region_fits_glambie[varname =At(v), rgi = At(rgi), parameter = At(p), error = At(false)])) ± $(round(Int, region_fits_glambie[varname =At(v), rgi = At(rgi), parameter = At(p), error = At(true)])) Gt yr-1")
+
+    rgi = 1;
+    println("and Alaska ($(round(Int, region_fits_glambie[varname=At(v), rgi=At(rgi), parameter=At(p), error=At(false)]))) ± $(round(Int, region_fits_glambie[varname =At(v), rgi = At(rgi), parameter = At(p), error = At(true)])) Gt yr-1")
+
+
+    rgi = 99;
+    p = "acceleration";
+    a1 = region_fits_glambie[varname=At(v), rgi=At(rgi), parameter=At(p), error=At(false)];
+    a2 = region_fits_glambie[varname=At(v), rgi=At(rgi), parameter=At(p), error=At(true)];
+        println("despite our finding of about  $(round(Int,((a1 - -3.6)/-3.6)*100))% larger rates of accelerated loss ($(round(a1,digits=1)) ± $(round(a2,digits=1)) Gt yr-1")
+end
+
+begin
+    println("\n----------------------Glaciers contributions to rivers and oceans--------------------")
+
+    v = "runoff";
+    p = "trend";
+    rgi = 99;
+    
+    val0 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)] + region_fits[varname = At("discharge"), rgi=At(99), parameter= At("trend"), error = At(false)];
+    println("Over the study period, glaciers contributed: $(round(Int,val0)) ± $(round(Int,hypot(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)], region_fits[varname = At("discharge"), rgi=At(99), parameter= At("trend"), error = At(true)]))) Gt/yr of freshwater to rivers and oceans")
+
+
+    v = "discharge";
+    p = "trend";
+    rgi = 99;
+    val1 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
+    println("Of this total, $(round(Int,val1/val0*100))% ($(round(Int,val1)) ± $(round(Int,region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)])) Gt/yr) entered the ocean via frontal ablation")
+
+    v = "runoff";
+    p = "trend";
+    rgi = 99;
+    val2 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
+    println("The remaining, $(round(Int,val2/val0*100))% ($(round(Int,val2)) ± $(round(Int,region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)])) Gt yr⁻¹) was runoff from surface melt")
+
+    v = "refreeze";
+    p = "trend";
+    rgi = 99;
+    val3 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
+    println("that did not refreeze within the firn ($(round(Int,val3)) ± $(round(Int,region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)])) Gt yr⁻¹)")
+
+    v = "runoff"
+    sf4 = endorheic_scale_correction[At(v), At(rgi)];
+    val4 = val2*sf4;
+    println("Of all runoff globally, $(round(Int, sf4*100))% ($(round(Int,val4)) Gt yr⁻¹) reached the ocean, while $(round(Int, (1-sf4)*100))% ($(round(Int,val2*(1-sf4))) Gt yr⁻¹) was retained in endorheic basins")
+
+    rgi = 98;
+    v = "runoff";
+    p = "trend";
+    sf5 = endorheic_scale_correction[At(v), At(rgi)];
+    val5 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)] * (1-sf5);
+    println("with HMA accounting for $(round(Int,val5/(val2*(1-sf4))*100))% of that endorheic runoff")
+
+
+    v = "runoff";
+    p = "acceleration";
+    rgi = 99;
+    val6 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
+    println("Glacier runoff increased globally at a rate of $(round(val6, digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)], digits=1)) Gt yr⁻² over the past quarter century")
+
+
+    v = "acc";
+    p = "acceleration";
+    rgi = 99;
+    val7 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
+    println(" partially offset by a $(round(val7, digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)], digits=1)) Gt yr⁻² increase in accumulation that has occurred ")
+
+    v = "fac";
+    p = "trend";
+    rgi = 99;
+    println("Warming also causes firn densification, which has reduced glacier volume by $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)], digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)], digits=1)) km3 yr-1 ")
+
+    println("Alaska and Arctic Canada North losing $(round(region_fits[varname = At(v), rgi=At(1), parameter= At(p), error = At(false)], digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(1), parameter= At(p), error = At(true)], digits=1)) and $(round(region_fits[varname = At(v), rgi=At(3), parameter= At(p), error = At(false)], digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(3), parameter= At(p), error = At(true)], digits=1)) km3 yr-1, respectively")
+
+    println("and Antarctic glaciers gaining $(round(region_fits[varname = At(v), rgi=At(19), parameter= At(p), error = At(false)], digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(19), parameter= At(p), error = At(true)], digits=1)) km3 yr-1")
+
+
+    volume_to_mass_conversion_factor = round.(Int, region_fits[varname = At("dm"), parameter= At("trend"), error = At(false)] ./ region_fits[varname = At("dv"), parameter= At("trend"), error = At(false)] .*1000)
+    println("Our results indicate a global average volume-to-mass conversion factor of $(volume_to_mass_conversion_factor[rgi = At(99)]) kg m⁻³")
+
+    rgis = setdiff(drgi, [99, 13, 14, 15])
+    drgis = dims(volume_to_mass_conversion_factor[At(rgis)], :rgi)
+    index_min =argmin(volume_to_mass_conversion_factor[At(rgis)])
+    GGA.rginum2label(drgis[index_min])
+    index_max =argmax(volume_to_mass_conversion_factor[At(rgis)])
+    println("and varies regionally from $(volume_to_mass_conversion_factor[At(rgis)][index_min]) kg m⁻³ in $(GGA.rginum2label(drgis[index_min])) to $(volume_to_mass_conversion_factor[At(rgis)][index_max]) kg m⁻³ in $(GGA.rginum2label(drgis[index_max]))")
+
+    volume_to_mass_conversion_amplitude = round.(Int,region_fits[varname = At("fac"), parameter= At("amplitude"), error = At(false)] ./ region_fits[varname = At("dv"), parameter= At("amplitude"), error = At(false)] .* 100)
+    println("Globally, firn air content evolution accounts for $(volume_to_mass_conversion_amplitude[rgi = At(99)])%")
+
+    rgis = setdiff(drgi, [99, 13, 14, 15])
+    drgis = dims(volume_to_mass_conversion_amplitude[At(rgis)], :rgi)
+    index_min =argmin(volume_to_mass_conversion_amplitude[At(rgis)])
+    GGA.rginum2label(drgis[index_min])
+    index_max =argmax(volume_to_mass_conversion_amplitude[At(rgis)])
+    println("ranges regionally from $(volume_to_mass_conversion_amplitude[At(rgis)][index_min])% in $(GGA.rginum2label(drgis[index_min])) to $(volume_to_mass_conversion_amplitude[At(rgis)][index_max])% in $(GGA.rginum2label(drgis[index_max]))")
+
+    error_in_amp = round.(Int, ((region_fits[varname=At("dv"), parameter=At("amplitude"), error=At(false)] .* 0.85) .- region_fits[varname=At("dm"), parameter=At("amplitude"), error=At(false)])./ region_fits[varname=At("dm"), parameter=At("amplitude"), error=At(false)] * 100)
+    rgi = 98
+    println("error in amplitude: $(error_in_amp[rgi = At(rgi)])%")
+
+    index_min =argmin(error_in_amp[At(rgis)])
+    GGA.rginum2label(drgis[index_min])
+    index_max =argmax(error_in_amp[At(rgis)])
+    println("ranges regionally from $(error_in_amp[At(rgis)][index_min])% in $(GGA.rginum2label(drgis[index_min])) to $(error_in_amp[At(rgis)][index_max])% in $(GGA.rginum2label(drgis[index_max]))")
+
+
+
+    # FIGURE 2 numbers
+    println("\n--------------------- FIGURE 2 numbers ---------------------")
+    rgi = 99;
+    for v = ["acc", "fac", "dm", "discharge", "runoff", "ec", "rain", "refreeze"]
+        println("$(v):\n    trend: $(round(Int,region_fits[varname = At(v), rgi=At(rgi), parameter= At("trend"), error = At(false)])) ± $(round(Int,region_fits[varname = At(v), rgi=At(rgi), parameter= At("trend"), error = At(true)])) Gt yr-1\n    acceleration:$(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At("acceleration"), error = At(false)], digits=1)) ± $(round(region_fits[varname = At(v), rgi=At(rgi), parameter= At("acceleration"), error = At(true)], digits=1)) Gt yr-2 ")
+
+        if v == "dm" || v == "runoff"
+            println("    endorheic fraction: [$(round((1-endorheic_scale_correction[At(v), At(rgi)])*100, digits=1))%]")
+        end
     end
 
-     for rgi in rgis
-        println("seasonal volume change from FAC $(GGA.rginum2label(rgi)): $(GGA.rginum2label(rgi)): $(round(Int,region_fits[At("fac"), At(rgi), At("amplitude"), At(false)]/(region_fits[At("dv"), At(rgi), At("amplitude"), At(false)]) * 100))%")
-    end
+    # check for mass closure
+    dm0 = region_fits[varname = At("acc"), rgi=At(rgi), parameter= At("trend"), error = At(false)] - region_fits[varname = At("runoff"), rgi=At(rgi), parameter= At("trend"), error = At(false)] - region_fits[varname = At("discharge"), rgi=At(rgi), parameter= At("trend"), error = At(false)] - region_fits[varname = At("ec"), rgi=At(rgi), parameter= At("trend"), error = At(false)] 
+    println("\nThere is a $(round(Int, (dm0 - region_fits[varname = At("dm"), rgi=At(rgi), parameter= At("trend"), error = At(false)]))) Gt yr-1 mass closure error [I ASSUME THAT THIS COMES FROM LINEAR FITTING TO EACH VARIABLE INDIVIDUALLY]")
+
+    v = "net_acc";
+    p = "trend";
+    rgi = 99;
+    println("We find that Earth’s glaciers accumulate a net $(round(Int, region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)])) ± $(round(Int, region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)])) Gt yr⁻¹")
+
+    v = "dm";
+    p = "trend";
+    rgi = 99;
+    println("while an additional $(round(Int, region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)])) ± $(round(Int, region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)])) Gt yr⁻¹ of unsustainable loss has")
+
+    v = "gsi";
+    p = "trend";
+    rgis = [3,4,5,6,7,9];
+
+    val8 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
+        println("Globally, glaciers have a GSI of $(round(val8, digits=2)), indicating that the sustainable freshwater flux is augmented by an additional $(round(Int,(1-val8)*100))% from net glacier mass loss ")
+
+    println("$(GGA.rginum2label.(rgis)) —are in the poorest health, with GSIs between $(round.(extrema(region_fits[varname = At(v), rgi = At(rgis), parameter= At(p), error = At(false)]), digits=2))")
 
 
-    # compute amplitude and trend difference if using static fac 
-    amp_static_fac_frac = round.((region_fits[At("dv"), :, At("amplitude"), At(false)] * 0.85) ./ region_fits[At("dm"), :, At("amplitude"), At(false)] .- 1, digits=2)
-    println()
-    println("Amplitude would be `x` times larger if static fac was applied")
-    show(stdout, "text/plain", amp_static_fac_frac)
-    println("\n----------------------------------------------------------------------------\n")
-
-    println("\n----------------------------------------------------------------------------")
-    println("                  rates for GlamBIE overlap period (2000-2024)")
-
-   
-    for rgi in rgis
-        println("$(GGA.rginum2label(rgi)): $(round(Int, region_fits_glambie[At("dm"), At(rgi), At("trend"), At(false)])) ± $(round(Int, region_fits_glambie[At("dm"), At(rgi), At("trend"), At(true)])) Gt/yr")
-    end
-
-    println("\n                  acceleration for GlamBIE overlap period (2000-2024)")
-
-    rgi = 99
-    println("$(GGA.rginum2label(rgi)): $(round(region_fits_glambie[At("dm"), At(rgi), At("acceleration"), At(false)], digits=1)) ± $(round(region_fits_glambie[At("dm"), At(rgi), At("acceleration"), At(true)], digits=1)) Gt/yr²")
-    println("----------------------------------------------------------------------------\n")
+    rgi = 4;
+    val9 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
+    println("The highest GSI of $(round(val9, digits=2)) is observed in Arctic Canada South, implying that net accumulation would need to increase by $(round(Int, (val9-1)*100))%")
 
 
-    println("net accumulation $(GGA.rginum2label(99)): $(round(Int, region_fits[At("net_acc"), At(99), At("trend"), At(false)])) ± $(round(Int, region_fits[At("net_acc"), At(99), At("trend"), At(true)])) Gt/yr")
-    println("mass loss $(GGA.rginum2label(99)): $(round(Int, region_fits[At("dm"), At(99), At("trend"), At(false)])) ± $(round(Int, region_fits[At("dm"), At(99), At("trend"), At(true)])) Gt/yr")
+    rgi = 3;
+    val10 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
+    println("Arctic Canada North, with a GSI of $(round(val10, digits=2)), would similarly require a require a $(round(1-val10, digits=2)*100)% increase in net accumulation to achieve balance.")
 
+
+    rgi = 19;
+    val11 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
+    println("Antarctic peripheral glaciers have the lowest GSI of $(round(val11, digits=2)), indicating near-sustainable conditions")
+
+
+    rgi = 98;
+    val12 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
+    println("High Mountain Asia has a GSI of $(round(val12, digits=2)), much closer to balance conditions than")
+
+
+    rgis = [8, 10, 11, 12, 98, 16, 17, 18]
+    val13 = region_fits[varname = At(v), rgi=At(rgis), parameter= At(p), error = At(false)];
+    println("$(GGA.rginum2label.(rgis)) have GSIs in a narrow range from $(round.(extrema(val13), digits=2))")
+end
+
+
+begin
+    xvar = "dm_grace"
+    yvar = "dm"
+    rgis =rgis = setdiff(drgis, [5, 19, 13, 14, 15, 99])
+    x = region_fits_grace[varname=At(xvar), rgi=At(rgis), parameter=At("trend"), error=At(false)]
+    yscale = endorheic_scale_correction[At("dm"), At(rgis)]
+    y = eachslice(runs_rgi_fits_grace[varname=At(yvar), rgi=At(rgis), parameter=At("trend")], dims=:run)
+    rmse = [sqrt(mean((x .- (y .* yscale)) .^ 2)) for y in y]
+    rmse1 = rmse[run = At(path2reference)]
+
+    # without endorheic correction
+    yscale0 = 1  
+    rmse = [sqrt(mean((x .- (y .* yscale0)) .^ 2)) for y in y]
+    rmse2 = rmse[run = At(path2reference)]
+
+    # assuming a fac correction of 0.85
+    yscale_fac = 0.85
+    yvar = "dv"
+    y = eachslice(runs_rgi_fits_grace[varname=At(yvar), rgi=At(rgis), parameter=At("trend")], dims=:run)
+        rmse = [sqrt(mean((x .- (y .* yscale_fac .* yscale)) .^ 2)) for y in y]
+    rmse3 = rmse[run = At(path2reference)]
+
+    println("RMSE with GRACE: $(round(rmse1, digits=1)) Gt yr⁻¹, RMSE without endorheic correction: $(round(rmse2, digits=1)) Gt yr⁻¹, RMSE without fac correction: $(round(rmse3, digits=1)) Gt yr⁻¹")
+
+end
 end
 
 # create plots
@@ -567,7 +746,6 @@ begin
     );
     display(f)
     CairoMakie.save(outfile, f);
-
 
     # GRACE rgi regions    
     colormap = GGA.resample(:Dark2_4, length(region_order))
@@ -669,6 +847,7 @@ begin
     # GRACE rgi regions for ALL runs
     xvar = "dm_grace"
     for yvar = ["dm", "dm_altim"]
+    #yvar = "dm"
 
         f = Figure()
      
@@ -705,9 +884,9 @@ begin
 
         rgis = setdiff(region_order, [5, 19])
         
-        x = region_fits_grace[At(xvar), At(rgis), At("trend"), At(false)];
+        x = region_fits_grace[varname=At(xvar), rgi =At(rgis), parameter=At("trend"), error=At(false)];
         yscale = endorheic_scale_correction[At("dm"), At(rgis)]
-        y = eachslice(runs_rgi_fits_grace[At(yvar), :, At(rgis), At("trend"), At(false)], dims = :run)
+        y = eachslice(runs_rgi_fits_grace[varname=At(yvar), rgi =At(rgis), parameter=At("trend")], dims = :run)
         rmse = [sqrt(mean((x .- (y.* yscale)).^2)) for y in y]
      
         
@@ -720,3 +899,5 @@ begin
         save(output_dir, f)
     end
 end
+
+

@@ -38,6 +38,7 @@ begin
     glacier_rivers_path = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 end
 
+# Dates.unix2datetime(mtime(glacier_flux_path))
 
 begin #[50s]
     # load data from netcdf files
@@ -108,7 +109,7 @@ begin #[50s]
 end
 
 for location in locations
-#location = locations[1]
+
     COMID = location[1]
     name = location[2]
 

@@ -7,66 +7,164 @@
 # 2. Organizes data into geotiles with consistent spatial and temporal dimensions  
 # 3. Fills data gaps through interpolation and extrapolation across elevation bands
 # 4. Extends model results to cover additional precipitation scaling factors
-# 5. Extrapolates data temporally using climatological means
 #
 # The processed data is saved at multiple stages to enable efficient reuse and analysis.
 # GEMB output is in units of meters ice equivalent (m i.e.) assuming an ice density of 910 kg/m³.
 
-#begin
 begin
     import GlobalGlacierAnalysis as GGA
     using Dates
     using FileIO
     using ProgressMeter
     using DimensionalData
+    using CairoMakie
+    using Statistics
    
-    single_geotile_test = GGA.geotiles_golden_test[1]
-    geotiles2plot = nothing; #[GGA.geotiles_golden_test[1]]
+    # mirror files from Nicole's home directory to RAID storage
+    mirror_raw_files = false;
+
+    single_geotile_test = nothing #GGA.geotiles_golden_test[1] #"lat[+60+62]lon[-142-140]"; GGA.geotiles_golden_test[1]
 
     # run parameters 
-    force_remake_before = DateTime(2025, 7, 4, 10, 0, 0) + GGA.local2utc
     project_id = :v01;
     geotile_width = 2;
     surface_mask = :glacier
-    geotile_buffer = 50000 # distance in meters outside of geotiles to look for data
-    gemb_run_id=4;
+    height_bins_extrapolate = 1; # number bins above and below the valid height range to extrapolate with each search iteration
+    maximum_extrap_fraction = 0.1; # if there is < maximum_extrap_fraction of the fraction of area below/above the valid height range, then extrapolate the height range to the bottom/top of the glacier
+    minimum_extrap_area = 10; # if there is <  minimum_extrap_area of the area below/above the valid height range, then extrapolate the height range to the bottom/top of the glacier
+    maximum_search_iterations = 100; # maximum number of search iterations to populate the elevation profile
+    minimum_land_coverage_fraction = 0.70; # minimum land coverage fraction for acceptance of GEMB data
+    search_buffer_increment = 100_000; # increment of search buffer in meters with each search iteration [m]
+    show_interp_extrap_plots = false;
+    show_interp_extrap_stats = false;
+    gemb_run_id = 5;
+
+    elevation_classes_method = :mscale #:mscale # [:none, :Δelevation, :mscale]
 
     # exclude derived variables of smb and runoff (these are calculated later to ensure mass conservation after interpolation)
     vars2extract = ["fac", "acc", "refreeze", "melt", "rain", "ec"]
     dims2extract = ["latitude", "longitude", "date", "height"]
 
-    # min gemb coverage 
-    min_gemb_coverage =  0.75
-
-    gembinfo = GGA.gemb_info(; gemb_run_id)
+    gembinfo = GGA.gemb_info(; gemb_run_id);
  
-    #Δheight simulates changing model elevation to increase / decrease melt, this is done in the regional Δvolume calculation
-    height_center = GGA.project_height_bins()[2]
-    height_bin_interval = height_center[2] - height_center[1]
-    dΔheight = Dim{:Δheight}(-3000:height_bin_interval:3000) 
-
     # define date and hight binning ranges 
     date_range, date_center = GGA.project_date_bins()
 
     # expand daterange to 1940 by make sure to match exisiting project ranges 
-    foo = collect(date_range[1]:-Day(30):DateTime(1940))
-    date_range = foo[end]:Day(30):date_range[end]
-    date_center = date_range[1:end-1] .+ Day(Day(30) / 2)
+    date_end_new = Date(1970,1,1)
+    Δd = 30
+    date_range = reverse(last(date_range):-Day(Δd):date_end_new)
+    date_center = date_range[1:end-1] .+ Day(Δd / 2)
     ddate = Dim{:date}(date_center)
+
+    length(date_range) == (length(date_center) +1) ? nothing : error("date_range and date_center do not have the same length")
 
     # load geotile definitions with corresponding hypsometry
     geotiles = GGA._geotile_load_align(; surface_mask, geotile_order=nothing, only_geotiles_w_area_gt_0=true)
     dgeotile = Dim{:geotile}(geotiles.id)
 
     area_km2 = GGA._geotile_area_km2(; surface_mask, geotile_width)
-    dpscale_new = Dim{:pscale}(0.25:0.25:4.0)
   
     if .!isnothing(single_geotile_test)
         @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!"
-        geotiles = geotiles[geotiles.id .== single_geotile_test, :]
-        geotiles2plot = [single_geotile_test]
     end
 end;
+
+# move files from Nicole's home directory to RAID storage
+if mirror_raw_files
+    run(`bash -c "rsync -av /home/schlegel/Share/GEMBv1/SH_sample/*_corrected_* /mnt/bylot-r3/data/gemb/mat/lw_correction/"`)
+    run(`bash -c "rsync -av /home/schlegel/Share/GEMBv1/NH_sample/*_corrected_* /mnt/bylot-r3/data/gemb/mat/lw_correction/"`)
+    run(`bash -c "rsync -av --exclude='*_corrected_*' /home/schlegel/Share/GEMBv1/SH_sample/ /mnt/bylot-r3/data/gemb/mat/no_lw_correction/"`)
+    run(`bash -c "rsync -av --exclude='*_corrected_*' /home/schlegel/Share/GEMBv1/NH_sample/ /mnt/bylot-r3/data/gemb/mat/no_lw_correction/"`)
+end
+
+# Sanity check block to visualize and inspect GEMB .mat data for typical errors/anomalies.
+sanity_check = false;
+if sanity_check
+
+    # Gather all GEMB .mat file paths according to filtering criteria
+    gemb_files = vcat(GGA.allfiles.(gembinfo.gemb_folder; subfolders=false, fn_endswith=".mat", fn_contains=gembinfo.file_uniqueid)...)
+
+    # Pick the first file whose name contains "p2_t2" (a particular experiment)
+    fn = gemb_files[findfirst(occursin.("p2_t2", gemb_files))]
+    file = GGA.matopen(fn)
+    foo = GGA.MAT.read(file)
+
+    # plot land sea mask with accepted and rejected points 
+    land_sea_mask = GGA.Raster(GGA.pathlocal.era5_land_sea_mask)[:,:,1];
+    d = 0.25;
+    y = X(90:-d:-90; sampling=DimensionalData.Intervals(DimensionalData.Center()));
+    x = Y(0:d:359.75); sampling=DimensionalData.Intervals(DimensionalData.Center());
+
+    xpt =foo["lon"][:];
+    index = xpt .< 0;
+    xpt[index] .+= 360;
+    ypt = foo["lat"][:]
+  
+    pt = tuple.(X.(Near.(xpt)), Y.(Near.(ypt)));
+    val = land_sea_mask[pt];
+
+    land_mask = DimArray(land_sea_mask.data', (y,x))
+    figure = Figure();
+    markersize=3;
+    ax = Axis(figure[1, 1]);
+    rotate!(ax.scene, +pi/2);
+    p = heatmap!(ax, land_mask);
+    scatter!(ax,ypt, xpt;color=:red, markersize);
+
+    index = val .>=minimum_land_coverage_fraction;
+    scatter!(ax,ypt[index], xpt[index] ; color=:green, markersize);
+    display(figure);
+
+    println("######### plotting sanity check for a singe file ######################## ")
+    println(fn)
+    println("######################################################## ")
+
+    # Scatter plot of longitude vs. latitude of all points in foo
+    p = plot(vec(foo["lon"]), vec(foo["lat"]));
+
+    # Identify valid rows: any non-NaN and nonzero 'Melt' values across time (dims=2)
+    index_valid = vec(any(.!isnan.(foo["Melt"]) .& (foo["Melt"] .!= 0), dims=2))
+    # Overlay in red those locations with any valid 'Melt' values
+    plot!(vec(foo["lon"][index_valid]), vec(foo["lat"][index_valid]); color=:red)
+    display(p)
+
+    # Loop through all loaded keys (variables) in the mat file
+    for k in keys(foo)
+        # Only plot if the variable matches the size of "Rain" (assume same grid & time structure)
+        if length(foo[k]) == length(foo["Rain"])
+            f = Figure()
+            ax = Axis(f[1, 1]; title="$k")
+            # Plot the first valid location's time series for this variable
+            lines!(ax, vec(foo["time"]), vec(foo[k][index_valid, :][1, :]))
+            display(f)
+        end
+    end
+
+    # plot dv
+    begin
+        point_2_select = 7;
+        ind = findall(GGA.within.(Ref(GGA.geotile_extent(GGA.geotiles_golden_test[1])), foo["lon"][:], foo["lat"][:]))[point_2_select]
+        dv = vec(cumsum(foo["Accumulation"][ind, :] .- foo["Melt"][ind, :] .+ foo["Refreeze"][ind, :] .- foo["EC"][ind, :]) ./ 1000 .+ foo["FAC"][ind, :])
+        figure = Figure();
+        ax = Axis(figure[1, 1],title="dv: lat = $(round(foo["lat"][ind], digits=3)), lon = $(round(foo["lon"][ind], digits=3))");
+        lines!(ax, vec(foo["time"]), dv; )
+        display(figure);
+    end
+
+    begin
+        gemb0 = GGA.gemb_read2(fn; datebin_edges = GGA.decimalyear.(date_range))
+
+        point_2_select = 7;
+        ind = findall(GGA.within.(Ref(GGA.geotile_extent(GGA.geotiles_golden_test[1])), gemb0["longitude"][:], gemb0["latitude"][:]))[point_2_select]
+        dv = vec(gemb0["acc"][ind, :] .- gemb0["melt"][ind,:] .+ gemb0["refreeze"][ind,:] .- gemb0["ec"][ind,:] .+ gemb0["fac"][ind,:])
+        figure = Figure();
+        ax = Axis(figure[1, 1],title="dv: lat = $(round(gemb0["latitude"][ind], digits=3)), lon = $(round(gemb0["longitude"][ind], digits=3))");
+        lines!(ax, vec(gemb0["date"]), dv; )
+        display(figure);
+    end
+
+end
 
 # =============================================================================
 # GEMB DATA MERGING AND GEOTILE PROCESSING
@@ -87,158 +185,163 @@ end;
 # - gemb_files: Vector of GEMB .mat file paths
 # - gembinfo: GEMB information structure containing file metadata
 # - geotiles: DataFrame with geotile definitions and hypsometry
-# - geotile_buffer: Buffer distance in meters for spatial coverage
+# - search_buffer: Buffer distance in meters for spatial coverage
 # - min_gemb_coverage: Minimum required GEMB data coverage (default: 0.75)
 # - force_remake_before: DateTime threshold for forcing file regeneration
 # - single_geotile_test: Optional single geotile ID for testing
 
-begin 
-    if .!isnothing(single_geotile_test)
-        @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!"
-    end
-    
+begin
     gemb_files = vcat(GGA.allfiles.(gembinfo.gemb_folder; subfolders=false, fn_endswith=".mat", fn_contains=gembinfo.file_uniqueid)...)
 
     # ensure expected number of files found
-    expected_number_of_files = length(gembinfo.elevation_delta) .* length(gembinfo.precipitation_scale) * 2; # multiply by 2 for NH and SH
-    if length(gemb_files) != expected_number_of_files
-        error("Expected $(expected_number_of_files) files but found $(length(gemb_files))")
-    end
 
-    gemb = GGA.read_gemb_files(gemb_files, gembinfo; vars2extract=vcat(dims2extract, vars2extract), date_range)
-
-    @showprogress desc="Populating geotiles with GEMB data, this will take ~7 min on 128 threads [90GB of memory]" Threads.@threads for geotile_row in eachrow(geotiles)
-
-        gemb_geotile_filename = replace(gembinfo.filename_gemb_combined, ".jld2" => "_$(geotile_row.id).jld2")
-
-        if isfile(gemb_geotile_filename) && (isnothing(force_remake_before) || (Dates.unix2datetime(mtime(gemb_geotile_filename)) > force_remake_before)) && isnothing(single_geotile_test)
-            printstyled("    -> Skipping $(gemb_geotile_filename) as it was created after the force_remake_before date: $force_remake_before \n"; color=:light_green)
-        else
-
-            # TODO: explore interpolating locally to fill gaps in the raw data instead of seacrhing for data in the buffer
-            gemb0 = GGA.gemb2geotile(gemb, geotile_row; geotile_buffer, min_gemb_coverage, ddate)
-
-            # plot after grouping into geotiles
-            if !isnothing(geotiles2plot) && in(geotile_row.id, geotiles2plot)
-
-                geotiles2plot0 = geotiles2plot[geotiles2plot .== geotile_row.id]
-                figures = GGA.plot_area_average_height_gemb_ensemble(gemb0, area_km2; vars2plot=vars2extract, geotiles2plot=geotiles2plot0, title_prefix= "[1] binned raw data:")
-                
-                for geotile2plot in keys(figures)
-                    for var0 in keys(figures[geotile2plot])
-                        display(figures[geotile2plot][var0])
-                    end
-                end
-            end
-
-            # save here so that further processing does not need to carry `gemb` raw input in memory
-            if isnothing(single_geotile_test)
-                save(gemb_geotile_filename, gemb0)
-            end
-        end
-    end
-end
-
-# =============================================================================
-# GEMB DATA FILLING, ΔHEIGHT CLASS ADDITION, ADDITIONAL PSCALE CLASSES, AND VOLUME CHANGE
-# =============================================================================
-# Fills gaps in GEMB data and adds elevation change classes to the data.
-# 
-# Process:
-# 1. Determine force remake threshold based on existing file timestamps
-# 2. Initialize volume change data structure for all geotiles
-# 3. Process each geotile in parallel:
-#    - Load geotile-specific GEMB data
-#    - Fill gaps and add elevation change classes
-#    - Generate plots for visualization (if requested)
-#    - Calculate volume changes with extended precipitation scaling
-#    - Store results in combined data structure
-# 4. Save combined volume change data to disk
-#
-# Performance: ~24 hours on 128 threads, consumes ~900GB memory
-# Input: Individual geotile GEMB files
-# Output: Combined volume change data with extended precipitation scaling classes
-begin
-    # Determine timestamp threshold for forcing file regeneration
-    force_remake_before = maximum(Dates.unix2datetime.(mtime.(GGA.allfiles("/mnt/bylot-r3/data/gemb/raw/"; subfolders=false, fn_endswith = "].jld2"))))
-
-    # Handle single geotile test mode
-    if .!isnothing(single_geotile_test)
-        @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!"
-    end   
-  
-    # Initialize volume change data structure for all geotiles
-    gemb_geotile_filename_dv = replace(gembinfo.filename_gemb_combined, ".jld2" => "_geotile_dv.jld2")
-
-    # Check if output file exists and is newer than force remake threshold
-    if isfile(gemb_geotile_filename_dv) && (isnothing(force_remake_before) || (Dates.unix2datetime(mtime(gemb_geotile_filename_dv)) > force_remake_before)) && .!isnothing(single_geotile_test)
-        printstyled("    -> Skipping $(gemb_geotile_filename_dv) as it was created after the force_remake_before date: $force_remake_before \n"; color=:light_green)
+    if any(occursin.("schlegel", gembinfo.gemb_folder))
+        expected_number_of_files = length(gembinfo.elevation_delta) .* length(gembinfo.precipitation_scale) * length(gembinfo.gemb_folder); # multiply by 2 for NH and SH
     else
+        expected_number_of_files = length(gembinfo.elevation_delta) .* length(gembinfo.precipitation_scale) * 2; # multiply by 2 for NH and SH
+    end
 
-        # Initialize dictionary to store volume change data for all variables
-        gemb_dv = Dict()
-       
-        # Pre-allocate arrays for each variable with NaN values
-        for k in vcat(vars2extract, ["smb", "runoff"])
-            gemb_dv[k] = fill(NaN, (dgeotile, ddate, dpscale_new, dΔheight))
+    if length(gemb_files) != expected_number_of_files
+        error("Expected $(expected_number_of_files) files but found $(length(gemb_files)): check that file_uniqueid in utilites_project.jl is not specific to a single hemisphere")
+    end
+
+    # units of m i.e. [m of air for fac]
+    gembX = GGA.read_gemb_files(gemb_files, gembinfo; vars2extract=vcat(dims2extract, vars2extract), date_range, date_center, path2land_sea_mask=GGA.pathlocal.era5_land_sea_mask, minimum_land_coverage_fraction)
+
+    # check that elvation and precipitaiton classes of the raw data look correct
+    if !isnothing(single_geotile_test)
+
+        point_2_select = 7;
+        index_geotile = GGA.within.(Ref(GGA.geotile_extent(single_geotile_test)), gembX["longitude"], gembX["latitude"])
+
+        index = findall(index_geotile .& (gembX["precipitation_scale"] .== 1.0) .& (gembX["elevation_delta"] .== 0))[point_2_select]
+     
+        index_point = (gembX["latitude"] .== gembX["latitude"][findall(index_geotile)[point_2_select]]) .& (gembX["longitude"] .== gembX["longitude"][findfirst(index_geotile)])
+
+        pscale = gembX["precipitation_scale"]
+        Δelevation = gembX["elevation_delta"]
+
+        index = (pscale .== 1.0) .& index_point
+
+        cmap = Makie.resample_cmap(:thermal, length(elevation_delta[index])+1);
+        for k in keys(gembX)
+            # Only plot if the variable matches the size of "Rain" (assume same grid & time structure)
+            if length(gembX[k]) == length(gembX["fac"])
+                f = Figure();
+                ax = Axis(f[1, 1], title="gemb (lat = $(round(gembX["latitude"][findfirst(index_geotile)], digits=3)), lon = $(round(gembX["longitude"][findfirst(index_geotile)], digits=3))): $k");
+                for edelta in [0] #sort(elevation_delta[index])
+                    index0 = findfirst((elevation_delta .== edelta) .& index)
+                    lines!(ax, gembX["date"], gembX[k][index0,:]; label="$edelta", color=cmap[findfirst(edelta .== sort(elevation_delta[index]))])
+                end
+            f[1, 2] = Legend(f, ax, "Δelevation [m]", framevisible = false)
+            display(f)
+            end
         end
 
-        #TODO: there is a memory leak here, it looks like the memory usage is not being freed after the loop... move more into funcitons
-
-        #TODO: Add check-point saving of gemb_dv
-        
-        # Process all geotiles .. it looks like lower @threads is 7x faster than using @threads here
-        @showprogress desc="filling gemb geotiles, adding Δheight classes, extending pscale classes, and saving volume change data to disk [~8 hrs on 128 threads] [consumes 250 GB of memory!!]... " for geotile_row in eachrow(geotiles) 
-        
-            # Load geotile-specific GEMB data from disk
-            gemb_geotile_filename = replace(gembinfo.filename_gemb_combined, ".jld2" => "_$(geotile_row.id).jld2")
-            gemb0 = load(gemb_geotile_filename) #[4s]
-                
-            # Fill data gaps and add elevation change classes (~27 seconds per geotile)
-            gemb0 = GGA.gemb_fill_gaps_and_add_Δheight_classes(gemb0, dΔheight) #[27s]
-    
-            # Generate visualization plots after adding elevation change classes
-            if !isnothing(geotiles2plot) && in(geotile_row.id, geotiles2plot)
-                vars2plot = collect(keys(gemb0))
-                geotiles2plot0 = geotiles2plot[geotiles2plot .== geotile_row.id]
-                figures = GGA.plot_area_average_height_gemb_ensemble(gemb0, area_km2; vars2plot, geotiles2plot=geotiles2plot0, title_prefix= "[2] Δheight classes added:")
-                
-                # Display all generated figures
-                for geotile2plot in keys(figures) 
-                    for var0 in keys(figures[geotile2plot])
-                        display(figures[geotile2plot][var0])
-                    end
+        index = (Δelevation .== 0) .& index_point
+        for k in keys(gembX)
+            # Only plot if the variable matches the size of "Rain" (assume same grid & time structure)
+            if length(gembX[k]) == length(gembX["fac"])
+                f = Figure();
+                ax = Axis(f[1, 1], title="gemb (lat = $(round(gembX["latitude"][findfirst(index_geotile)], digits=3)), lon = $(round(gembX["longitude"][findfirst(index_geotile)], digits=3))): $k");
+                for pscale0 in [1] #sort(pscale[index])
+                    index0 = findfirst((pscale .== pscale0) .& index)
+                    lines!(ax, gembX["date"], gembX[k][index0,:]; label="$pscale0", color=cmap[findfirst(pscale0 .== sort(pscale[index]))])
                 end
+            f[1, 2] = Legend(f, ax, "pscale", framevisible=false)
+            display(f)
             end
-            
-            # Calculate volume changes with extended precipitation scaling classes (~8 seconds per geotile)
-            gemb_dv0 = GGA.gemb_dv(gemb0, area_km2[geotile=At(geotile_row.id)], dpscale_new) #[3s]
-
-            # Store results in combined data structure for all geotiles
-            for k in keys(gemb_dv) #[0.2s]
-                gemb_dv[k][geotile = At(geotile_row.id)] = gemb_dv0[k]
-            end
-
-            # Generate visualization plots after adding precipitation scaling classes
-            if !isnothing(geotiles2plot) && in(geotile_row.id, geotiles2plot)
-                # Convert volume changes to height changes for plotting
-                gemb_dh0 = deepcopy(gemb_dv0)
-                for k in keys(gemb_dh0)
-                    gemb_dh0[k] = gemb_dv0[k] ./ sum(area_km2[geotile=At(geotile_row.id)]) * 1000
-                end
-                figures = GGA.plot_dh_gemb_ensemble(gemb_dh0, area_km2; geotile=geotile_row.id, title_prefix= "[3] pscale classes added:")
-                for var0 in keys(figures)
-                    display(figures[var0])
-                end
-            end        
         end
 
-        # Save combined volume change data to disk (skip if in test mode)
-        if isnothing(single_geotile_test)
-            println("Saving $(gemb_geotile_filename_dv)")
-            save(gemb_geotile_filename_dv, gemb_dv)
+        f = Figure();
+        ax = Axis(f[1, 1], title="gemb (lat = $(round(gembX["latitude"][findfirst(index_geotile)], digits=3)), lon = $(round(gembX["longitude"][findfirst(index_geotile)], digits=3))): dv");
+        for pscale0 in [1] #sort(pscale[index])
+            index0 = findfirst((pscale .== pscale0) .& index)
+            dv =  gembX["acc"][index0,:] .- gembX["fac"][index0,:] .- gembX["melt"][index0,:] .+ gembX["refreeze"][index0,:] .- gembX["ec"][index0,:]
+            lines!(ax, gembX["date"], dv; label="$pscale0", color=cmap[findfirst(pscale0 .== sort(pscale[index]))])
+        end
+        display(f)
+
+
+
+        index0 = findall(index_geotile .& (gembX["precipitation_scale"] .== 1.0) .& (gembX["elevation_delta"] .== 0))[point_2_select]
+        f = Figure();
+        ax = Axis(f[1, 1], title="gemb (lat = $(round(gembX["latitude"][index0], digits=3)), lon = $(round(gembX["longitude"][index0], digits=3))): dv");
+        dv =  gembX["acc"][index0,:] .- gembX["fac"][index0,:] .- gembX["melt"][index0,:] .+ gembX["refreeze"][index0,:] .- gembX["ec"][index0,:]
+        lines!(ax, gembX["date"], dv;)
+        display(f)
+
+    end
+
+    if !isnothing(single_geotile_test)
+        @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!"
+        geotiles = geotiles[geotiles.id .== single_geotile_test, :]
+    end
+
+    # this takes about 3 to 8 minutes depending on method used
+    gemb_dv0 = GGA.process_gemb_geotiles(
+        gembX,
+        geotiles;
+        maximum_search_iterations,
+        height_bins_extrapolate,
+        maximum_extrap_fraction,
+        search_buffer_increment,
+        show_interp_extrap_plots,
+        show_interp_extrap_stats,
+        single_geotile_test,
+        elevation_classes_method,
+    );
+
+    # there should be no NaN in any geotiles for Date(2000,1,1)
+    for k in keys(gemb_dv0)
+        if any(isnan.(gemb_dv0[k][date = Near(Date(2000,1,1))]))
+            error("NaN found in $(k) for nearest Date(2000,1,1)")
         end
     end
-end
 
-mv("/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2024_820_40_racmo_grid_lwt_e97_0_geotile_dv_2.jld2", "/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2024_820_40_racmo_grid_lwt_e97_0_geotile_dv.jld2")
+    if !isnothing(single_geotile_test)
+        # plot the first variable
+        dpscale =  dims(gemb_dv0, :pscale)
+        dΔT = dims(gemb_dv0, :ΔT)
+        cmap = Makie.resample_cmap(:thermal, max(length(dpscale), length(dΔT)))
+
+        if elevation_classes_method == :mscale
+                dΔT_center = 1
+        else
+                dΔT_center = 0
+        end
+
+        for k in keys(gemb_dv0)
+            f = GGA._publication_figure(; columns=1, rows=1)
+            ax = Axis(f[1, 1]; title="$single_geotile_test [pscale = 1]: $k")
+        
+            for pscale in [1] #dpscale
+                for ΔT in dΔT
+                    lines!(ax, gemb_dv0[k][geotile = At(single_geotile_test), pscale = At(pscale), ΔT = At(ΔT)]; label="ΔT: $ΔT", color=cmap[findfirst(ΔT .== dΔT)])
+                end
+            end
+
+            axislegend(ax, position=:lt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false)
+            display(f)
+
+            for k in keys(gemb_dv0)
+                f = GGA._publication_figure(; columns=1, rows=1)
+                ax = Axis(f[1, 1]; title="$single_geotile_test [ΔT = $dΔT_center]: $k")
+
+                for pscale in dpscale
+                    for ΔT in [dΔT_center]
+                        lines!(ax, gemb_dv0[k][geotile=At(single_geotile_test), pscale=At(pscale), ΔT=At(ΔT)]; label="pscale: $pscale", color=cmap[findfirst(pscale .== dpscale)])
+                    end
+                end
+                axislegend(ax, position=:lt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false)
+                display(f)
+            end
+        end
+    end
+
+    if isnothing(single_geotile_test)
+        # construct output filename
+        gemb_geotile_filename_dv = replace(gembinfo.filename_gemb_combined, ".jld2" => "_geotile_dv.jld2");
+        save(gemb_geotile_filename_dv, "gemb_dv", gemb_dv0)
+    end
+end

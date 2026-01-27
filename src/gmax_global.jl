@@ -112,8 +112,8 @@ end
         month_max = collect((month_max - dt):(month_max + dt))
         month_max[month_max .>12] .= month_max[month_max .>12] .- 12
         month_max[month_max .<1] .= month_max[month_max .<1] .+ 12
-        index0 = .!in.(ti_month, Ref(month_max))
-        glacier_runoff[index0, At(comid)] .= 0 * u"m^3/s"
+        index1 = .!in.(ti_month, Ref(month_max))
+        glacier_runoff[index1, At(comid)] .= 0 * u"m^3/s"
     end
 
     # calcualte the fraction of flux that is from glacier runoff
@@ -140,7 +140,7 @@ end
     gmax_minimum = deepcopy(gmax_average)
 
     for i in eachindex(gmax_month)
-        foo = glacier_fraction_monthly[At(gmax_month[i])][:,i]
+        local foo = glacier_fraction_monthly[At(gmax_month[i])][:,i]
         gmax_maximum[i] = maximum(foo)
         gmax_minimum[i] = minimum(foo)
     end

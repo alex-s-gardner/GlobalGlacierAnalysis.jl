@@ -7,7 +7,7 @@ Variables:
 - area_km2: glacier area (RGI6) 
 - group: geotile grouping id
 - pscale: optimal precipitation scaling [unitless]
-- Δheight: optimal height offset [m]
+- ΔT: optimal melt scaling [unitless]
 - rgiid: RGI region id (RGI6) 
 - discharge_trend: solid ice discharge through flux gate located near grounding line [m.i.e./yr]
 - dh_synthesis_trend: trend in height anomaly from synthesis of satellite data [m/yr]

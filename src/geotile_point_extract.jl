@@ -11,10 +11,11 @@ x = -122.6360
 y = 50.3997
 
 reference_run = "binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized.jld2"
+outfile_suffix = "_ΔT"
 
 paths = GGA.pathlocal
 path2reference = joinpath(paths[:data_dir], reference_run) 
-binned_synthesized_dv_file = replace(path2reference, ".jld2" => "_gembfit_dv.jld2")
+binned_synthesized_dv_file = replace(path2reference, ".jld2" => "_gembfit_dv$(outfile_suffix).jld2")
 
 geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
 
