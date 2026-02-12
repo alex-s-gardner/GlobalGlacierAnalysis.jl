@@ -49,6 +49,7 @@ function discharge_rgi(path2discharge, path2rgi_regions; fractional_error = 0.15
     discharge_rgi[:, At(true)] = discharge_rgi[:, At(false)] * fractional_error
     return discharge_rgi
 end
+
 """
     runs2rgi(path2runs, vars2sum=["dv_altim", "runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze", "dv", "dm", "dm_altim"])
 
@@ -64,7 +65,7 @@ and creates special aggregations for HMA (regions 13-15) and global (regions 1-1
 # Returns
 - Dictionary containing aggregated data for each variable, with dimensions [run, rgi, date]
 """
-function runs2rgi(path2runs; vars2sum=["dv_altim", "runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze", "dv", "dm", "dm_altim"], outfile_suffix="")
+function runs2rgi(path2runs; vars2sum=["dv_altim", "runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze", "dv", "dm", "dm_altim", "discharge"])
 
     # read in example file
     drgi = Dim{:rgi}([1:19; 98; 99])
@@ -74,7 +75,7 @@ function runs2rgi(path2runs; vars2sum=["dv_altim", "runoff", "fac", "smb", "rain
 
     regional_sum = Dict() # this needs to be a Dict since variables have different date dimensions
 
-    example_data = FileIO.load(replace(path2runs[1], ".jld2" => "_gembfit_dv$(outfile_suffix).jld2"), "geotiles")
+    example_data = FileIO.load(replace(path2runs[1], ".jld2" => "_gembfit_dv.jld2"), "geotiles")
     for varname in vars2sum
         ddate = Dim{:date}(colmetadata(example_data, varname, "date"))
         regional_sum[varname] = fill(NaN, drun, drgi, ddate)
@@ -84,7 +85,7 @@ function runs2rgi(path2runs; vars2sum=["dv_altim", "runoff", "fac", "smb", "rain
     #for binned_synthesized_file in path2runs
         #binned_synthesized_file = path2reference
 
-        binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv$(outfile_suffix).jld2")
+        binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
         geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
 
         # group by rgi and sum
@@ -1255,4 +1256,22 @@ function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="Gardner2025
     GeoDataFrames.write(outfile_myr, geotiles0; crs=source_crs1)
 
     return outfile_km3yr, outfile_myr
+end
+
+function ensemble_summary(path2runs_synthesized, ensemble_reference_file; dates4trend=[DateTime(2000, 3, 1), DateTime(2024, 12, 15)], error_quantile=0.95, error_scaling=1.5, discharge_fractional_error=0.15)
+
+    paths = pathlocal
+
+    # load discharge for each RGI [<1s]
+    path2discharge = paths[:discharge_global]
+    path2rgi_regions = paths[:rgi6_regions_shp]
+
+    discharge_rgi0 = discharge_rgi(path2discharge, path2rgi_regions; fractional_error=discharge_fractional_error)
+    
+    # load results for all runs for each RGI [18s]
+    runs_rgi = runs2rgi(path2runs_synthesized)
+    runs_rgi_fits = rgi_trends(runs_rgi, discharge_rgi0, dates4trend)
+    region_fits = region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi0)
+
+    return region_fits
 end

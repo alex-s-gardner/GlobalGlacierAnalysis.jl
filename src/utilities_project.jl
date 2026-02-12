@@ -2,11 +2,10 @@
 const δice = 910; #kg m-3
 const local2utc = Hour(7) # LA timezone to UTC
 const seasonality_weight = 85/100
-const distance_from_origin_penalty = 5/100
+const distance_from_origin_penalty = 20 / 100 # NOTE FOR PAPER THIS == 10/100 for Wd when when ΔT_to_pscale_weight == 50/100
 const ΔT_to_pscale_weight = 50/100
-
-
-
+const ocean_area_km2 = 362.5 * 1E6
+const reference_ensemble_file = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_rgi7_dh_cop30_v2_cc_nmad5_v01_filled_ac_p2_aligned.jld2"; 
 
 """
     project_products(; project_id = :v01)
@@ -356,23 +355,14 @@ plot_order = Dict("missions" => ["hugonnet", "icesat", "gedi", "icesat2"], "synt
 function gemb_altim_cost(x, dv_altim, dv_gemb, kwargs)
     pscale = x[1]
     ΔT = x[2]
-    res = dv_altim .- gemb_dv_sample(pscale, ΔT, dv_gemb)
     
+    res = dv_altim .- gemb_dv_sample(pscale, ΔT, dv_gemb)
+    res .-= mean(res)
+
     cost = model_fit_cost_function(res, pscale, ΔT; kwargs...)
 
     return cost
 end
-
-function gemb_altim_cost!(res::DimArray, gemb_dv_out, x, dv_altim, dv_gemb, kwargs)
-    res[:] = dv_altim .- gemb_dv_sample!(gemb_dv_out, x[1], x[2], dv_gemb)
-    res .-= mean(res)
-
-
-    cost = model_fit_cost_function(res, x[1], x[2]; kwargs...)
-
-    return cost
-end
-
 
 """
     model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_from_origin_penalty, calibrate_to_trend_only=false, calibrate_to_annual_change_only=true)
@@ -441,24 +431,12 @@ function model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_
 
     if calibrate_to == :all
         rmse = sqrt(mean(res .^ 2)) 
-        cost = ((1 - seasonality_weight) * rmse + seasonality_weight * fit.amplitude) * (1 + (sqrt((ΔT * (ΔT_to_pscale_weight))^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty))
+        cost = (((1 - seasonality_weight) * rmse) + (seasonality_weight * fit.amplitude)) * (1 + (sqrt((dT * (ΔT_to_pscale_weight))^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty))
     elseif calibrate_to == :trend
-        cost = ((1 - seasonality_weight) * abs(fit.trend)) * (1 + (sqrt((ΔT * (ΔT_to_pscale_weight))^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty)
+        cost = ((1 - seasonality_weight) * abs(fit.trend)) * (1 + (sqrt((dT * (ΔT_to_pscale_weight))^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty))
     else
-        cost = ((1 - seasonality_weight) * rmse_cost) * (1 + (sqrt((ΔT * (ΔT_to_pscale_weight))^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty)
+        cost = ((1 - seasonality_weight) * rmse_cost) * (1 + (sqrt((dT * (ΔT_to_pscale_weight))^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty))
     end
-
-    return cost
-end
-
-
-function model_fit_cost_function2(res, pscale_idx, ΔT_idx; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, pscale_idx2dist=nothing, ΔT_idx2dist=nothing)
-
-    # remove linear trend to emphasize seasonality
-
-    fit = ts_seasonal_model(res; interval=nothing)
-    rmse = sqrt(mean(res .^ 2))
-    cost = ((1 - seasonality_weight) * rmse + seasonality_weight * fit.amplitude) * (1 + (sqrt((ΔT_idx2dist(ΔT_idx) * (ΔT_to_pscale_weight))^2 + (pscale_idx2dist(pscale_idx) * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty))
 
     return cost
 end

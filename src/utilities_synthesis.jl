@@ -985,6 +985,10 @@ function global_discharge_filled(;
         # Save the combined measured and estimated discharge data
         save(discharge_global_fn, Dict("discharge" => discharge))
     end
+
+
+    discharge = discharge2geotile(discharge, dims(gemb, :geotile); mass2volume=true)
+    
     return discharge
 end
 
@@ -1021,8 +1025,6 @@ This function processes multiple runs to create calibrated geotile-level dataset
 function geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width, force_remake_before, geotile_grouping_min_feature_area_km2 = 100)
    
     # Load elevation change data to get geotile dimensions
-    dgeotile = dims(FileIO.load(path2runs[1], "dh_hyps"), :geotile)
-    dgeotile = Dim{:geotile}(collect(dgeotile))
 
     # Initialize dictionaries to store geotiles and glaciers for each surface mask
     geotiles = Dict()
@@ -1032,8 +1034,7 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width,
     params = binned_filled_fileparts.(path2runs)
     surface_masks = unique(getindex.(params, :surface_mask))
 
-    #gemb_interp = Base.Fix{4}(gemb_dv_interpolater, gemb)
-    
+
     # Process each surface mask to load aligned geotiles and calculate hypsometry
     for surface_mask in surface_masks
 
@@ -1046,18 +1047,10 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width,
 
         area_km2[surface_mask] = _geotile_area_km2(; surface_mask, geotile_width)
 
-        # Add in groups
-        geotiles_groups = geotile_grouping(; surface_mask, min_area_km2=geotile_grouping_min_feature_area_km2, geotile_width, force_remake_before)
-
-        # Add groups to geotiles
-        _, grp_index = intersectindices(geotiles[surface_mask].id, geotiles_groups.id)
-        geotiles[surface_mask][!, :group] = geotiles_groups[grp_index, :group]
-
         has_glacier[surface_mask] = dropdims(sum(area_km2[surface_mask], dims=:height), dims=:height) .> 0
     end
 
     # Load synthesized data and GEMB fit parameters
-
     @showprogress desc = "Computing calibrated geotile level data timeseries for all runs..." Threads.@threads for binned_synthesized_file in path2runs
 
         binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
@@ -1068,7 +1061,7 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width,
         else
             run_parameters = binned_filled_fileparts(binned_synthesized_file)
             surface_mask = run_parameters.surface_mask
-            gemb_fit = GeoDataFrames.read(replace(binned_synthesized_file, ".jld2" => "_gemb_fit.arrow"))
+            gemb_fit = GeoDataFrames.read(replace(binned_synthesized_file, ".jld2" => "_gembfit.arrow"))
 
             geotiles0 = individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, gemb_fit, discharge, geotiles[surface_mask], area_km2[surface_mask])
 
@@ -1204,13 +1197,14 @@ function individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, 
     geotiles0[!, :pscale] .= 1.0
     geotiles0[!, :ΔT] .= 0.0
     geotiles0[!, :mie2cubickm] .= 0.0
+    geotiles0[!, :group] .= 0
 
     dpscale = dims(gemb, :pscale)
     dΔT = dims(gemb, :ΔT)
 
     dv_gemb0 = gemb_dv_sample(dpscale[1], dΔT[1], gemb[:smb][geotile=At(geotiles0.id[1])])
     ddate_gemb = dims(dv_gemb0, :date)
-    Δdecyear = decimalyear.(ddate_gemb) .- decimalyear.(ddate_gemb[floor(Int, length(ddate_gemb) / 2)])
+    Δdecyear = decimalyear.(ddate_gemb) .- decimalyear.(ddate_gemb)[1]
     geotiles0[!, :discharge] .= [fill(0.0, length(ddate_gemb)) for _ in 1:nrow(geotiles0)]
 
     for geotile in eachrow(geotiles0)
@@ -1221,6 +1215,7 @@ function individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, 
         
         geotile.pscale = gemb_fit[fit_index, :pscale]
         geotile.ΔT = gemb_fit[fit_index, :ΔT]
+        geotile.group = gemb_fit[fit_index, :group]
         area_km20 = sum(area_km2[geotile = At(geotile.id)])
         geotile.mie2cubickm = area_km20 / 1000  # Convert meters ice equivalent to cubic kilometers
 
@@ -1278,7 +1273,7 @@ function individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, 
     end
 
     # modeled dm
-    geotiles0[!, :dm] = geotiles0[:, :dv] .* volume2mass # to units of Gt
+    geotiles0[!, :dm] = (geotiles0[:, :dv] .- geotiles0[:, :fac]) .* volume2mass # to units of Gt
     colmetadata!(geotiles0, "dm", "date", collect(val(ddate_gemb)), style=:note)
     colmetadata!(geotiles0, "dm", "units", "Gt", style=:note)
 

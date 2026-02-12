@@ -190,7 +190,7 @@ end
 # - force_remake_before: DateTime threshold for forcing file regeneration
 # - single_geotile_test: Optional single geotile ID for testing
 
-begin
+#begin
     gemb_files = vcat(GGA.allfiles.(gembinfo.gemb_folder; subfolders=false, fn_endswith=".mat", fn_contains=gembinfo.file_uniqueid)...)
 
     # ensure expected number of files found
@@ -299,6 +299,18 @@ begin
         end
     end
 
+    # ensure that there are not negative values for melt rates.
+    for k in [:refreeze, :rain, :acc, :melt, :runoff]
+        diff_melt = diff(gemb_dv0[k], dims=:date)
+        if any(diff_melt .< -1E-9)
+            error("!!! Negative values found in $(k) !!!!")
+        end
+    end
+
+    if any(diff(gemb_dv0[:refreeze], dims=:date) .- diff(gemb_dv0[:melt], dims=:date) .> 1E-9)
+        error("!!! refreeze is greater than melt !!!!")
+    end
+    
     if !isnothing(single_geotile_test)
         # plot the first variable
         dpscale =  dims(gemb_dv0, :pscale)

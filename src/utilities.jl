@@ -2131,3 +2131,91 @@ function scale2dist(scale)
     dist = vcat(-1 ./ scale[scale .< 1], scale[scale .>= 1])
     return dist
 end
+
+
+function add_single_rgi_column!(df)
+
+    rgis = parse.(Int8, replace.(names(df)[occursin.("rgi", names(df))], "rgi" => ""))
+    
+    df[!, :rgi] = zeros(Int8, nrow(df))
+
+    for rgi in rgis
+        col = "rgi$rgi"
+        df[df[:, col].>0, :rgi] .= rgi
+    end
+
+    return df
+end
+
+function linear2scale(linear)
+
+    if (linear >= -1) & (linear < 1)
+        error("Linear values must be less than -1 or equal to or greater than 1")
+    end
+
+    if linear < 0
+        scale = linear -1
+    else
+        scale = linear + 1
+    end
+
+    if scale < -1
+        scale = -1 / scale
+    end
+
+    return scale
+end
+
+"""
+    scale2linear(scaled)
+
+Convert a scaled (asymmetric) value back to its corresponding linear value, as used in the scale2dist transformation.
+
+# Arguments
+- `scaled::Real`: Scaled value output from `scale2dist`.
+
+# Returns
+- `linear::Real`: The corresponding linear value.
+
+# Example
+```julia
+scale2linear(-2.0)  # returns 0.5
+scale2linear(2.0)   # returns 2.0
+scale2linear(1.0)   # returns 1.0
+```
+"""
+function scale2linear(scaled)
+    if scaled < 1
+        linear = -1 / scaled
+    else
+        linear = scaled
+    end
+
+    if linear < -1
+        linear += 1
+    else
+        linear -= 1
+    end
+
+    return linear
+end
+
+
+function linear2scale!(linear)
+
+    if (linear >= -1) & (linear < 1)
+        error("Linear values must be less than -1 or equal to or greater than 1")
+    end
+
+    if linear < 0
+        linear -= 1
+    else
+        linear += 1
+    end
+
+    if linear < -1
+        linear = -1 / linear
+    end
+
+    return linear
+end

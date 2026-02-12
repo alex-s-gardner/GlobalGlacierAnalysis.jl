@@ -381,11 +381,11 @@ end
 
 Create and save a plot of the spatial variogram.
 """
-function plot_variogram(ddistance, variogram, radius, synth_minus_obs_mad)
+function plot_variogram(ddistance, variogram, radius, synth_minus_obs_mad; plot_point=true)
     f = GGA._publication_figure(columns=1, rows=1)
     ax1 = CairoMakie.Axis(f[1, 1]; ylabel="mean absolute difference [m w.e. yr⁻¹]", xlabel="distance to other observations [km]")
     scatterlines!(ax1, ddistance.val ./ 1000, variogram.data)
-    plot!(ax1, Point(Float64(radius), synth_minus_obs_mad), color=:red)
+    plot_point ? plot!(ax1, Point(Float64(radius), synth_minus_obs_mad), color=:red) : nothing
     
     fname = joinpath(GGA.pathlocal.figures, "wgms_mb_variogram.png")
     CairoMakie.save(fname, f)
@@ -424,67 +424,4 @@ function create_misfit_histograms(wgms_mb, index)
     hist(wgms_mb[index, :synth_minus_obs])
     hist(wgms_mb[wgms_mb[:, :both_valid_summer], :synth_minus_obs_summer])
     hist(wgms_mb[wgms_mb[:, :both_valid_winter], :synth_minus_obs_winter])
-end
-
-"""
-    calculate_geotile_count_statistics(df2, thresholds=[1, 20, 65])
-
-Calculate and print statistics for geotile counts at different thresholds.
-"""
-function calculate_geotile_count_statistics(df2, thresholds=[1, 20, 65])
-    for threshold in thresholds
-        index_count = df2.nobs .> threshold
-        if threshold == 1
-            println("number of geotiles with at least $threshold observation: in $(nrow(df2)) geotiles")
-        else
-            percentage = round(Int, sum(df2.nobs[index_count]) ./ sum(df2.nobs) * 100)
-            println("number of geotiles with at least $threshold observations: in $(sum(index_count)) geotiles, representing $percentage% of all observations")
-        end
-    end
-end
-
-"""
-    plot_cumulative_distribution(df2)
-
-Create cumulative distribution plot for number of observations per geotile.
-"""
-function plot_cumulative_distribution(df2)
-    lines(cumsum(sort(df2.nobs; rev=true)) ./ sum(df2.nobs) * 100; 
-          ylabel="% of observations", xlabel="number of geotiles")
-end
-
-"""
-    analyze_historic_temporal_variability(wgms_mb, gdf)
-
-Analyze geotile temporal variability for historic (pre-2000) observations.
-"""
-function analyze_historic_temporal_variability(wgms_mb, gdf)
-    # Select valid annual balance observations before year 2000
-    index = .!ismissing.(wgms_mb.annual_balance) .& .!isnan.(wgms_mb.annual_balance) .& (wgms_mb.begin_date .< DateTime(2000, 1, 1))
-
-    # Remove any spurious missing groupby entries (defensive check)
-    if ismissing(gdf[1])
-        gdf = gdf[2:end]
-    end
-
-    # Calculate interannual std of annual balance within each geotile, 
-    # for varying minimum number of observations required per year group
-    for mincount in 5:15
-        geotile_stats = DataFrame(
-            geotile_centroid=Vector{Union{Missing,GGA.GI.Point}}(missing, length(gdf)),
-            in_situ_std=Vector{Union{Missing,Float64}}(missing, length(gdf)),
-            nyears=Vector{Union{Missing,Int64}}(missing, length(gdf))
-        )
-        for (i, k) in enumerate(keys(gdf))
-            geotile_stats[i, :geotile_centroid] = getindex(k, 1)
-            gdf2 = groupby(gdf[i], :year)
-            df2 = DataFrames.combine(gdf2, :annual_balance => std => :in_situ_std, :annual_balance => length => :nobs)
-            if any(df2.nobs .>= mincount)
-                geotile_stats[i, :in_situ_std] = mean(df2.in_situ_std[df2.nobs .>= mincount])
-                geotile_stats[i, :nyears] = sum(df2.nobs .>= mincount)
-            end
-        end
-        intertile_std = mean(geotile_stats.in_situ_std[.!ismissing.(geotile_stats.in_situ_std)])
-        println("mincount: $mincount, intertile_std: $intertile_std")
-    end
 end

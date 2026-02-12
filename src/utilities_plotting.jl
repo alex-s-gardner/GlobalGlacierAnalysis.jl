@@ -905,11 +905,12 @@ function plot_area_average_height_anomaly_with_error!(ax, dh_area_average_median
 end
 
 
-function plot_model_fit(gemb, discharge, dv_altim, cost, geotile;colormap=:thermal)
+function plot_model_fit(gemb, discharge, dv_altim, cost, geotiles_in_group; colormap=:thermal)
 
-    gemb0 = gemb[geotile=At(geotile)]
-    discharge0 = discharge[:discharge][geotile=At(geotile)]
-    dv_altim0 = dv_altim[geotile=At(geotile)]
+
+    dv_altim0 = dropdims(sum(dv_altim[geotile = At(geotiles_in_group)]; dims = :geotile); dims =:geotile)
+    gemb0 = dropdims(sum(gemb[geotile=At(geotiles_in_group)], dims=:geotile), dims=:geotile)
+    discharge0 = sum(discharge[:discharge][geotile=At(geotiles_in_group)])
 
     # align dv_altim and dv_gemb
     ddate_gemb = dims(gemb0, :date)
@@ -926,6 +927,18 @@ function plot_model_fit(gemb, discharge, dv_altim, cost, geotile;colormap=:therm
     best_smb = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:smb]);
     best_fac = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:fac]);
     best_fit = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:dv]);
+
+    
+    fit_gemb  = ts_seasonal_model(best_fit; interval=nothing)
+    fit_altim = ts_seasonal_model(dv_altim0; interval=nothing)
+    fit_gemb = fit_gemb.amplitude
+    fit_altim = fit_altim.amplitude
+    fit_diff = round(Int, ((fit_gemb - fit_altim) / fit_altim)*100)
+    fit_gemb = round(fit_gemb, digits=2)
+    fit_altim = round(fit_altim, digits=2)
+
+
+    println("dv amplitude: observed: $(fit_altim) km³, modeled: $(fit_gemb) km³: difference: $(fit_diff)%")
 
     f = plot_model_fit(best_smb, best_fac, discharge0, best_fit, dv_altim0, cost; colormap)
     return f
@@ -1039,53 +1052,38 @@ Plot a contour map of the cost metric as a function of precipitation scale (psca
 This function creates a contour plot of the cost metric over the parameter space of precipitation scale and ΔT.
 It highlights the minimum cost location with a marker and label, and adds a colorbar for reference.
 """
-function plot_cost_metric!(ax, cost_metric; colormap=:thermal)
+function plot_cost_metric!(ax, cost_metric; colormap=:thermal, step=1/35)
+
     dpscale = dims(cost_metric, :pscale)
     dΔT = dims(cost_metric, :ΔT)
 
     ax.xlabel = "precipitation scaling"
     ax.ylabel = "melt scaling"
-    
+
+    (x, xticks, xticklabels) = scale_linear_ticks(dpscale.val)
+    (y, yticks, yticklabels) = scale_linear_ticks(dΔT.val)
    
-    if all(dpscale .> 0)
-        dxtick = ceil(Int, length(dpscale) / 10)
-        ax.xticks = (eachindex(dpscale)[1:dxtick:end], string.(round.(collect(val(dpscale))[1:dxtick:end], digits=2)))
-    end
-
-    if all(dΔT .> 0)
-        dytick = ceil(Int, length(dΔT) / 10)
-        ax.yticks = (eachindex(dΔT)[1:dytick:end], string.(round.(collect(val(dΔT))[1:dytick:end], digits=2)))
-    else
-        ax.ytickformat = values -> ["$(round(Int,value))°" for value in values]
-    end
-
     # normalize cost metric to 0-1
     cost_metric .-= minimum(cost_metric[.!isinf.(cost_metric)])
     cost_metric ./= maximum(cost_metric[.!isinf.(cost_metric)])
 
     cost_metric[isinf.(cost_metric)] .= 9999
-    step = 1/50
     crange = (0, 1)
    
-    if all(dΔT .> 0)
-        contour!(ax, eachindex(dpscale),eachindex(dΔT), parent(cost_metric); colorrange=crange, levels=0:step:maximum(cost_metric), colormap)
-        ylims!(ax, extrema(collect(eachindex(dΔT))))
-    else
-        contour!(ax, eachindex(dpscale), collect(val(dΔT)), parent(cost_metric); colorrange=crange, levels=0:step:maximum(cost_metric), colormap)
-        ylims!(ax, extrema(collect(val(dΔT))))
-    end
 
-    xlims!(ax, extrema(collect(eachindex(dpscale))))
+    contour!(ax, x, y, cost_metric.data; colorrange=crange, levels=0:step:maximum(cost_metric), colormap)
+
+    ax.xticks = (xticks, xticklabels)
+    ax.yticks = (yticks, yticklabels)
 
     index_minimum = argmin(cost_metric)
     pscale_best = DimPoints(cost_metric)[index_minimum][1]
     ΔT_best = DimPoints(cost_metric)[index_minimum][2]
 
-     if all(dΔT .> 0)
-        scatter!(ax, findfirst(pscale_best .== dpscale), findfirst(ΔT_best .== dΔT); color=:black, markersize=15, marker=:xcross)
-    else
-        scatter!(ax, findfirst(pscale_best .== dpscale), ΔT_best; color=:black, markersize=15, marker=:xcross)
-    end
+    x_best = scale2linear(pscale_best)
+    y_best = scale2linear(ΔT_best)
+    scatter!(ax, x_best, y_best; color=:black, markersize=15, marker=:xcross)
+
     return ax, crange
 end
 
@@ -1131,43 +1129,6 @@ function plot_hist_gemb_altim_trend_amplitude(geotiles0)
 end
 
 
-
-"""
-    plot_hist_pscale_ΔT(gemb_fit)
-
-Plot histograms of precipitation scaling and melt scaling parameters from GEMB fit results.
-
-# Arguments
-- `gemb_fit`: A DataFrame or table containing columns `:pscale` (precipitation scaling) and `:ΔT` (melt scaling).
-
-# Returns
-- `f`: A CairoMakie Figure object with two panels:
-    - Left: Histogram of precipitation scaling values.
-    - Right: Histogram of melt scaling values.
-
-# Description
-Creates a two-panel figure. The first panel shows a histogram of precipitation scaling factors (`pscale`).
-The second panel shows a histogram of melt scaling values (`ΔT`). Both histograms have counts on the y-axis,
-and the y-axis is set to start at zero.
-"""
-function plot_hist_pscale_ΔT(gemb_fit)
-    f = _publication_figure(columns=2, rows=1)
-    ax1 = CairoMakie.Axis(f[1, 1]; xlabel="precipitation scaling", ylabel="count")
-    CairoMakie.hist!(ax1, gemb_fit[:, :pscale], bins=0.25:0.25:5)
-    ylims!(low=0)
-    ax2 = CairoMakie.Axis(f[1, 2]; xlabel="melt scaling")
-    ax2.xtickformat = values -> ["$(round(Int,value))" for value in values]
-    ΔT_lims = extrema(gemb_fit[:, :ΔT])
-    if any(abs.(ΔT_lims) .> 50) 
-        dbin = 200;
-    else
-        dbin = 0.2;
-    end
-    CairoMakie.hist!(ax2, gemb_fit[:, :ΔT], bins=ΔT_lims[1]:dbin:ΔT_lims[end])
-    ylims!(low=0)
-    #axislegend(ax1, framevisible = false)
-    return f
-end
 
 """
     plot_multiregion_dvdm(regions; kwargs...) -> Figure, Vector, Vector
@@ -1484,76 +1445,6 @@ end
 
 
 """
-    plot_area_average_height_gemb_ensemble(gemb0, area_km2; vars2plot=["melt", "refreeze", "acc", "fac", "rain", "ec"], geotiles2plot=[geotiles_golden_test[1]], title_prefix="")
-
-Plot area-averaged height change time series for GEMB ensemble variables and geotiles.
-
-# Arguments
-- `gemb0`: Dictionary or NamedTuple of GEMB output variables, each as a DimArray.
-- `area_km2`: DimArray or array of glacier area (km²) for each geotile.
-- `vars2plot`: Array of variable names to plot (default: ["melt", "refreeze", "acc", "fac", "rain", "ec"]).
-- `geotiles2plot`: Array of geotile identifiers to plot (default: [geotiles_golden_test[1]]).
-- `title_prefix`: String prefix for plot titles.
-
-# Returns
-- `figures`: Nested dictionary mapping geotile and variable names to Makie figures.
-"""
-function plot_area_average_height_gemb_ensemble(
-    gemb0, area_km2;
-    vars2plot = ["melt", "refreeze", "acc", "fac", "rain", "ec"],
-    geotiles2plot = [geotiles_golden_test[1]],
-    title_prefix = ""
-)
-    dpscale = dims(gemb0[first(vars2plot)], :pscale)
-    if hasdim(gemb0[first(vars2plot)], :ΔT)
-        dΔT = dims(gemb0[first(vars2plot)], :ΔT)
-        clrs = Makie.resample_cmap(:thermal, length(dpscale) * length(dΔT) + 1)
-    else
-        dΔT = nothing
-        clrs = Makie.resample_cmap(:thermal, length(dpscale) + 1)
-    end
-
-    figures = Dict()
-
-    for geotile2plot in geotiles2plot
-        figures[geotile2plot] = Dict()
-        for var0 in vars2plot
-            figures[geotile2plot][var0] = _publication_figure(columns=1, rows=1)
-            title = "$(title_prefix) $(var0)-$(geotile2plot)"
-            ax = CairoMakie.Axis(figures[geotile2plot][var0][1, 1]; title)
-            ax.ytickformat = values -> ["$(round(Int, value))m" for value in values]
-
-            cnt = 1
-            for pscale in dpscale
-                if isnothing(dΔT)
-                    dh = dh_area_average(
-                        gemb0[var0][geotile=At(geotile2plot), pscale=At(pscale)],
-                        area_km2[geotile=At(geotile2plot)]
-                    )
-                    
-                    time_range, = validrange(.!isnan.(dh))
-                    lines!(ax, dims(dh, :date).val[time_range], dh[time_range].data; label="p:$(pscale)", color=clrs[cnt])
-                    cnt += 1
-                else
-                    for ΔT in dΔT
-                        dh = dh_area_average(
-                            gemb0[var0][pscale=At(pscale), ΔT=At(ΔT)],
-                            area_km2[geotile=At(geotile2plot)]
-                        )
-                        time_range, = validrange(.!isnan.(dh))
-                        lines!(ax, dims(dh, :date).val[time_range], dh[time_range].data; label="p:$(pscale) Δh:$(ΔT)", color=clrs[cnt])
-                        cnt += 1
-                    end
-                end
-            end
-            axislegend(ax, position=:lt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1)
-        end
-    end
-    return figures
-end
-
-
-"""
     plot_dh_gemb_ensemble(gemb_dv, area_km2; geotile = "", title_prefix = "")
 
 Plot area-normalized height change ensemble results from GEMB model diagnostics.
@@ -1724,3 +1615,114 @@ function plot_point_location_river_flux(land_flux, glacier_flux, snow_flux; date
 
     return f
 end
+
+
+function plot_ref_pscale_mscale_summary(path2runs_synthesized, binned_synthesized_dv_file_ref; rgi2plot=[99], seasonality_weight=seasonality_weight, distance_from_origin_penalty=distance_from_origin_penalty, ΔT_to_pscale_weight=ΔT_to_pscale_weight, show_title=true, bin_width=0.25)
+
+    ensemble_reference_file = replace(binned_synthesized_dv_file_ref, "_gembfit_dv.jld2" => ".jld2")
+
+    region_fits = ensemble_summary(path2runs_synthesized, ensemble_reference_file;)
+    gemb_fit = GeoDataFrames.read(replace(ensemble_reference_file, ".jld2" => "_gembfit.arrow"))
+
+    title1 = "W_s: $(seasonality_weight), W_d: $(distance_from_origin_penalty), W_m2p: $(ΔT_to_pscale_weight)"
+
+    (pscale_linear, pscale_ticks, pscale_ticklabels) = scale_linear_ticks(gemb_fit[:, :pscale])
+    (ΔT_linear, ΔT_ticks, ΔT_ticklabels) = scale_linear_ticks(gemb_fit[:, :pscale])
+
+    e0 = ceil(Int, maximum(abs.(pscale_linear)))
+
+    pscale_linear_bins = (-e0-bin_width):bin_width:(e0+bin_width)
+    pscale_linear_bin_centers = (pscale_linear_bins[1:end-1] .+ pscale_linear_bins[2:end]) ./ 2
+
+    e0 = ceil(Int, maximum(abs.(ΔT_linear)))
+    ΔT_linear_bins = (-e0-bin_width):bin_width:(e0+bin_width)
+    ΔT_linear_bin_centers = (ΔT_linear_bins[1:end-1] .+ ΔT_linear_bins[2:end]) ./ 2
+
+
+    f = Vector{Any}(undef, length(rgi2plot))
+    for i in eachindex(rgi2plot)
+        rgi = rgi2plot[i]
+        runoff = round.(Int, region_fits[varname=At("runoff"), parameter=At("trend"), rgi=At(rgi), error=At(false)])
+        acc = round.(Int, region_fits[varname=At("acc"), parameter=At("trend"), rgi=At(rgi), error=At(false)])
+        fac = round.(Int, region_fits[varname=At("fac"), parameter=At("trend"), rgi=At(rgi), error=At(false)])
+
+        title2 = "runoff: $(runoff), acc: $(acc), fac:$(fac)"
+
+        title = "$(rginum2label(rgi)) [$(title2)] Gt/yr: $(title1)"
+
+        if rgi == 99
+            index = gemb_fit.rgi .> 0
+        elseif rgi == 98
+            index = (gemb_fit.rgi .> 12) .& (gemb_fit.rgi .< 16)
+        else
+            index = gemb_fit.rgi .== rgi
+        end
+        
+        h = StatsBase.fit(Histogram, scale2linear.(gemb_fit[index, :pscale]), pscale_linear_bins)
+        f[i] = _publication_figure(; columns=2, rows=1)
+        if show_title
+            f[i][0, 1:2] = Label(f[i], title)
+        end
+
+        ax = Makie.Axis(f[i][1, 1]; xlabel="pscale", ylabel="count", xticks=(pscale_ticks, pscale_ticklabels))
+        barplot!(ax, ΔT_linear_bin_centers, h.weights;)
+
+        h = StatsBase.fit(Histogram, scale2linear.(gemb_fit[index, :ΔT]), ΔT_linear_bins)
+        ax = Makie.Axis(f[i][1, 2]; xlabel="mscale", ylabel="count", xticks=(ΔT_ticks, ΔT_ticklabels))
+        barplot!(ax, ΔT_linear_bin_centers, h.weights;)
+    end
+
+    return f
+end
+
+
+function plot_ensemble_rgi_timeseries(vars2plot, path2runs_synthesized; center_on_dates=DateTime(2002, 5, 1):Month(1):DateTime(2005, 12, 15), rgi2plot=nothing)
+
+    # load results for all runs for each RGI [18s]
+    runs_rgi = runs2rgi(path2runs_synthesized)
+
+    dvarname = Dim{:varname}(vars2plot)
+
+    # center data
+    runs_rgi = runs_center!(runs_rgi, center_on_dates)
+    check_for_all_nans(runs_rgi)
+
+    clrs = DimArray(Makie.resample_cmap(:thermal, length(dvarname)), dvarname; name="colors")
+
+    if isnothing(rgi2plot)
+        rgi2plot = dims(runs_rgi[vars2plot[1]], :rgi)
+    end
+
+    f = Vector{Any}(undef, length(rgi2plot))
+    for i in eachindex(rgi2plot)
+        rgi = rgi2plot[i]
+        f[i] = _publication_figure(; columns=1, rows=1)
+        ax = Makie.Axis(f[i][1, 1]; title="$(rginum2label(rgi))", ylabel="mass/volume anomaly [Gt/km³]")
+        for i = eachindex(path2runs_synthesized)
+            for var2plot in vars2plot
+                decyear = decimalyear.(collect(dims(runs_rgi[var2plot][run=At(path2runs_synthesized[i]), rgi=At(rgi)], :date).val))
+                lines!(ax, decyear, runs_rgi[var2plot][run=At(path2runs_synthesized[i]), rgi=At(rgi)].data; label=var2plot, color=clrs[varname=At(var2plot)])
+            end
+        end
+        axislegend(ax, unique=true)
+    end
+
+    return f
+end
+
+
+function scale_linear_ticks(scale0)
+   
+    xlinear = scale2linear.(scale0)
+
+    xticks = round.([-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6], digits=4)
+    xticklabels = ["1/7", "1/6", "1/5", "1/4", "1/3", "1/2", "1", "2", "3", "4", "5", "6", "7"]
+
+    xlims = extrema(xlinear)
+    index = (xticks .<= ceil(Int, maximum(xlims))) .& (xticks .>= floor(Int,    minimum(xlims)))
+    xticks = xticks[index]
+    xticklabels = xticklabels[index]
+
+    return (xlinear, xticks, xticklabels)
+end
+

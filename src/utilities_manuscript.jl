@@ -33,27 +33,16 @@
 # - Analysis of endorheic vs. ocean-draining glacier contributions
 
 # NOTE: errors are at the 95% confidence interval from the reference run for this study and 95% confidence interval from GRACE
-#function regional_results(path2runs_synthesized, ensemble_reference_file; error_quantile=0.95, error_scaling=1.5)
-begin
-    error_quantile=0.95
-    error_scaling=1.5
+function regional_results(path2runs_synthesized, binned_synthesized_dv_file_ref; error_quantile=0.95, error_scaling=1.5)
 
-    using CSV
-    using DataFrames
-    using DimensionalData
-    using Dates
-    using Statistics
-    using CairoMakie
-    using DataInterpolations
-    using Unitful
-    import GlobalGlacierAnalysis as GGA
+#error_quantile=0.95
+#error_scaling=1.5
 
-    Unitful.register(GGA.MyUnits)
-    using GlobalGlacierAnalysis.MyUnits
+    #using Unitful
+    #Unitful.register(GGA.MyUnits)
+    #using GlobalGlacierAnalysis.MyUnits
 
-    reference_ensemble_file = GGA.reference_ensemble_file;
-    ensemble_reference_file = replace(reference_ensemble_file, "_aligned.jld2" => "_synthesized.jld2")
-    
+
     # to include in uncertainty
     paths = GGA.pathlocal
     
@@ -70,28 +59,12 @@ begin
 
     glacier_summary_file = GGA.pathlocal[:glacier_summary]
 
-    # path2perglacier = replace(ensemble_reference_file, ".jld2" => "_perglacier.jld2")
+    # path2perglacier = replace(binned_synthesized_dv_file_ref, ".jld2" => "_perglacier.jld2")
     path2discharge =  paths[:discharge_global]
     path2rgi_regions = paths[:rgi6_regions_shp]
 
     path2river_flux = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
-
-    path2runs_filled, params = GGA.binned_filled_filepaths(;
-        project_id=:v01,
-        surface_masks=["glacier", "glacier_rgi7"],
-        dem_ids=["best", "cop30_v2"],
-        curvature_corrects=[false, true],
-        amplitude_corrects=[true],
-        binning_methods=["median", "nmad3", "nmad5"],
-        fill_params=[1, 2, 3, 4],
-        binned_folders=[GGA.analysis_paths(; geotile_width=2).binned, replace(GGA.analysis_paths(; geotile_width=2).binned, "binned" => "binned_unfiltered")],
-        include_existing_files_only=true
-    )
-    path2runs_synthesized = replace.(path2runs_filled, "aligned.jld2" => "synthesized.jld2")
-end
-
-begin
     # pre-process data
     #begin #[10 min]
     # load discharge for each RGI [<1s]
@@ -107,11 +80,44 @@ begin
     runs_rgi = GGA.runs_center!(runs_rgi, center_on_dates);
     GGA.check_for_all_nans(runs_rgi)
 
+    # sanity check
+    begin
+        for rgi_to_plot in dims(runs_rgi["dv"], :rgi);
+            fig = Figure();
+            ax = Axis(fig[1, 1]; title="RGI $(rgi_to_plot)");
+            for file_to_plot = 1:length(path2runs_synthesized);
+
+
+            lines!(ax, runs_rgi["dv"][run = At(path2runs_synthesized[file_to_plot]), rgi = At(rgi_to_plot)]; label="dv", color = :grey)
+            lines!(ax, runs_rgi["dv_altim"][run = At(path2runs_synthesized[file_to_plot]), rgi = At(rgi_to_plot)]; label="dv_altim", color = :black)
+
+            display(runs_rgi_fits[varname = At(["dv", "dv_altim", "dm", "dm_altim"]), rgi = At(rgi_to_plot), parameter = At("trend")])
+
+            gemb_rgi1_trend_min = round(minimum(runs_rgi_fits[varname = At("dm"), rgi = At(rgi_to_plot), parameter = At("trend")]), digits=2)
+            gemb_dv_rgi1_trend_max = round(maximum(runs_rgi_fits[varname = At("dm"), rgi = At(rgi_to_plot), parameter = At("trend")]), digits=2)
+            altim_rgi1_trend_min = round(minimum(runs_rgi_fits[varname = At("dm_altim"), rgi = At(rgi_to_plot), parameter = At("trend")]), digits=2)
+            altim_dv_rgi1_trend_max = round(maximum(runs_rgi_fits[varname = At("dm_altim"), rgi = At(rgi_to_plot), parameter = At("trend")]), digits=2)
+
+            if false
+                if (altim_rgi1_trend_min - abs(altim_rgi1_trend_min *.5)) > gemb_rgi1_trend_min
+                    error("altim_rgi1_trend_min is not greater than gemb_rgi1_trend_min by at least 50%")
+                end
+
+                if (altim_dv_rgi1_trend_max + abs(altim_dv_rgi1_trend_max *0.5)) < gemb_dv_rgi1_trend_max
+                    error("altim_dv_rgi1_trend_max is not less than gemb_dv_rgi1_trend_max by at least 50%")
+                end
+            end
+        end
+        axislegend(ax, unique = true)
+                display(fig)
+    end
+
+
     # extract reference run and calculate 95% confidence interval
-    regions = GGA.runs_ref_and_err(runs_rgi, ensemble_reference_file; error_quantile, error_scaling);
+    regions = GGA.runs_ref_and_err(runs_rgi, binned_synthesized_dv_file_ref; error_quantile, error_scaling);
     GGA.check_for_all_nans(regions)
 
-    region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge = discharge_rgi)
+    region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, binned_synthesized_dv_file_ref; error_quantile, error_scaling, discharge = discharge_rgi)
     GGA.check_for_all_nans(region_fits)
 
     # load GRACE data [95% confidence interval]
@@ -126,16 +132,14 @@ begin
     GGA.check_for_all_nans(regions)
 
     # add discarge to region_fits
-    using DimensionalData
     (dvarname, drgi, dparameters, derr) = dims(region_fits)
-    dvarname_new = Dim{:varname}([collect(dvarname)..., "discharge"])
-    region_fits = cat(region_fits, zeros(Dim{:varname}(["discharge"]), drgi, dparameters, derr), dims=dvarname_new)
+    region_fits = cat(region_fits, zeros(Dim{:varname}(["discharge"]), drgi, dparameters, derr), dims=:varname)
     region_fits[At("discharge"), :, At("trend"), At(false)] = discharge_rgi[:, At(false)]
     region_fits[At("discharge"), :, At("trend"), At(true)] = discharge_rgi[:, At(true)]
    
     # deteremine endorheic and non-endorheic glacier runoff [3 min]
     # rivers have only been calculated for rgi6 so this will throw an error if using glacier_rgi7
-    if !occursin("glacier_rgi7", ensemble_reference_file)
+    if !occursin("glacier_rgi7", reference_run)
         error("rivers have only been calculated for rgi7 so this will throw an error if using rgi6")
     else
         dm_gt_sinktype = GGA.rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend)
@@ -146,7 +150,7 @@ begin
     runs_rgi_fits_grace = GGA.rgi_trends(runs_rgi, discharge_rgi, dates_altim_grace_overlap);
     dvarname2 = Dim{:varname}([collect(dvarname)..., "dm_grace"])
     region_fits_grace = zeros(dvarname2, drgi, dparameters, derr)
-    region_fits_grace[At(collect(dvarname)), :, : ,:] = GGA.region_fit_ref_and_err(runs_rgi_fits_grace, ensemble_reference_file; error_quantile, error_scaling, discharge = discharge_rgi)
+    region_fits_grace[At(collect(dvarname)), :, : ,:] = GGA.region_fit_ref_and_err(runs_rgi_fits_grace, binned_synthesized_dv_file_ref; error_quantile, error_scaling, discharge = discharge_rgi)
 
     # regions 12 and 99 contain NaN so exclude them in trend calculation
     region_fits_grace[At("dm_grace"), At(setdiff(drgi, [12, 99])), : , At(false)] = GGA.rgi_trends(regions["dm_grace"][At(setdiff(drgi, [12, 99])),:, At(false)], dates_altim_grace_overlap);
@@ -155,14 +159,14 @@ begin
     dvarname2 = Dim{:varname}([collect(dvarname)..., "dm_glambie"])
     region_fits_glambie = zeros(dvarname2, drgi, dparameters, derr)
     runs_rgi_fits_glambie = GGA.rgi_trends(runs_rgi, discharge_rgi, dates_glambie_overlap);
-    region_fits_glambie[At(collect(dvarname)), :, :, :] = GGA.region_fit_ref_and_err(runs_rgi_fits_glambie, ensemble_reference_file; error_quantile, error_scaling, discharge = discharge_rgi)
+    region_fits_glambie[At(collect(dvarname)), :, :, :] = GGA.region_fit_ref_and_err(runs_rgi_fits_glambie, binned_synthesized_dv_file_ref; error_quantile, error_scaling, discharge = discharge_rgi)
     region_fits_glambie[At("dm_glambie"), :, : , At(false)] = GGA.rgi_trends(regions["dm_glambie"][:,:, At(false)], dates_glambie_overlap);
 
     runs_rgi_noaltim = filter(p -> p[1] in setdiff(keys(runs_rgi), ["dm_altim", "dv_altim"]), runs_rgi)
     runs_rgi_fits_firstdecade = GGA.rgi_trends(runs_rgi_noaltim, discharge_rgi, dates_firstdecade);
-    region_fits_firstdecade = GGA.region_fit_ref_and_err(runs_rgi_fits_firstdecade, ensemble_reference_file; error_quantile, error_scaling, discharge = discharge_rgi);
+    region_fits_firstdecade = GGA.region_fit_ref_and_err(runs_rgi_fits_firstdecade, binned_synthesized_dv_file_ref; error_quantile, error_scaling, discharge = discharge_rgi);
     runs_rgi_fits_lastdecade = GGA.rgi_trends(runs_rgi_noaltim, discharge_rgi, dates_lastdecade);
-    region_fits_lastdecade = GGA.region_fit_ref_and_err(runs_rgi_fits_lastdecade, ensemble_reference_file; error_quantile, error_scaling, discharge = discharge_rgi);
+    region_fits_lastdecade = GGA.region_fit_ref_and_err(runs_rgi_fits_lastdecade, binned_synthesized_dv_file_ref; error_quantile, error_scaling, discharge = discharge_rgi);
 end;
 
 # CREATE OUTPUTS FOR PAPER
@@ -364,7 +368,7 @@ begin
     v = "dm"
     rgi = 99;
     val0 = region_fits[varname = At(v), rgi = At(rgi), parameter = At("trend"), error = At(false)]*endorheic_scale_correction[At(v), At(rgi)];
-    println("we determine that $(round(Int, val0)) Gt/yr of glacier loss contributed $(round((val0 / GGA.ocean_area_km2* 1E6), digits=2)) mm/yr SLR)")
+    println("we determine that $(round(Int, val0)) Gt/yr of glacier loss contributed $(round((val0 / ocean_area_km2* 1E6), digits=2)) mm/yr SLR)")
 
     val0 = region_fits[varname = At(v), rgi = At(rgi), parameter = At("trend"), error = At(false)]*(1. - endorheic_scale_correction[At(v), At(rgi)]);
     println("with $(round(Int, val0)) Gt yr-1 remaining within landlocked endorheic basins")
@@ -453,7 +457,7 @@ begin
         println("despite our finding of about  $(round(Int,((a1 - -3.6)/-3.6)*100))% larger rates of accelerated loss ($(round(a1,digits=1)) ± $(round(a2,digits=1)) Gt yr-1")
 end
 
-#begin
+begin
     println("\n----------------------Glaciers contributions to rivers and oceans--------------------")
 
     v = "runoff";
@@ -469,28 +473,6 @@ end
     rgi = 99;
     val1 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
     println("Of this total, $(round(Int,val1/val0*100))% ($(round(Int,val1)) ± $(round(Int,region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)])) Gt/yr) entered the ocean via frontal ablation")
-
-
-    rgi = 19;
-    val1A = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)]
-    val1Ae = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)]
-    println("Antarctic Islands ($(round(Int,val1A/val1*100))%; $(round(Int,val1A)) ± $(round(Int,val1Ae)) Gt yr⁻¹")
-
-    rgi = [3,4,5,6,7,9];
-    val1A = sum(region_fits[varname = At(v), rgi=At([3,4,5,6,7,8,9]), parameter= At(p), error = At(false)], dims=:rgi)[1]
-    val1Ae = sum(region_fits[varname = At(v), rgi=At([3,4,5,6,7,8,9]), parameter= At(p), error = At(true)], dims=:rgi)[1]
-    println("Arctic Islands including Greenland Periphery ($(round(Int,val1A/val1*100))%; $(round(Int,val1A)) ± $(round(Int,val1Ae)) Gt yr⁻¹")
-    
-    rgi = 17;
-    val1A = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)]
-    val1Ae = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)]
-    println("Southern Andes ($(round(Int,val1A/val1*100))%; $(round(Int,val1A)) ± $(round(Int,val1Ae)) Gt yr⁻¹")
-    
-    rgi = 1;
-    val1A = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)]
-    val1Ae = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(true)]
-    println("and Alaska ($(round(Int,val1A/val1*100))%; $(round(Int,val1A)) ± $(round(Int,val1Ae)) Gt yr⁻¹")
-
 
     v = "runoff";
     p = "trend";
@@ -629,8 +611,10 @@ end
     rgis = [8, 10, 11, 12, 98, 16, 17, 18]
     val13 = region_fits[varname = At(v), rgi=At(rgis), parameter= At(p), error = At(false)];
     println("$(GGA.rginum2label.(rgis)) have GSIs in a narrow range from $(round.(extrema(val13), digits=2))")
+end
 
 
+begin
     xvar = "dm_grace"
     yvar = "dm"
     rgis =rgis = setdiff(drgis, [5, 19, 13, 14, 15, 99])
@@ -638,24 +622,26 @@ end
     yscale = endorheic_scale_correction[At("dm"), At(rgis)]
     y = eachslice(runs_rgi_fits_grace[varname=At(yvar), rgi=At(rgis), parameter=At("trend")], dims=:run)
     rmse = [sqrt(mean((x .- (y .* yscale)) .^ 2)) for y in y]
-    rmse1 = rmse[run = At(ensemble_reference_file)]
+    rmse1 = rmse[run = At(binned_synthesized_dv_file_ref)]
 
     # without endorheic correction
     yscale0 = 1  
     rmse = [sqrt(mean((x .- (y .* yscale0)) .^ 2)) for y in y]
-    rmse2 = rmse[run = At(ensemble_reference_file)]
+    rmse2 = rmse[run = At(binned_synthesized_dv_file_ref)]
 
     # assuming a fac correction of 0.85
     yscale_fac = 0.85
     yvar = "dv"
     y = eachslice(runs_rgi_fits_grace[varname=At(yvar), rgi=At(rgis), parameter=At("trend")], dims=:run)
         rmse = [sqrt(mean((x .- (y .* yscale_fac .* yscale)) .^ 2)) for y in y]
-    rmse3 = rmse[run = At(ensemble_reference_file)]
+    rmse3 = rmse[run = At(binned_synthesized_dv_file_ref)]
 
     println("RMSE with GRACE: $(round(rmse1, digits=1)) Gt yr⁻¹, RMSE without endorheic correction: $(round(rmse2, digits=1)) Gt yr⁻¹, RMSE without fac correction: $(round(rmse3, digits=1)) Gt yr⁻¹")
+
+end
 end
 
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!! PLOTS !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# create plots
 begin
     # set grace Antarctic and Greenland to NaNs othersise ice sheet will be plotted with glaciers
     regions["dm_grace"][At([5, 19]), :, :] .= NaN;
@@ -681,7 +667,6 @@ begin
 
     # plot altimetry results with GRACE data for RGI regions
     variables = ["dm_grace", "dm"];
-    
     exclude_regions = [5, 19, 13, 14, 15, 99] 
 
     outfile = joinpath(paths[:figures], "regional_$(join(variables,"_")).png");
@@ -891,9 +876,6 @@ begin
         yscale = endorheic_scale_correction[At("dm"), At(rgis)]
         y = eachslice(runs_rgi_fits_grace[varname=At(yvar), rgi =At(rgis), parameter=At("trend")], dims = :run)
         rmse = [sqrt(mean((x .- (y.* yscale)).^2)) for y in y]
-
-        println("ensemble runs with minimum RMSE: dm vs dm_grace")
-        display(rmse[minimum(rmse) .== rmse])
      
         
         text!(-75, 15, text="RMSE = $(round(minimum(rmse), digits=1)) to $(round(maximum(rmse), digits=1)) Gt/yr", align=(:left, :top))
@@ -905,39 +887,4 @@ begin
         save(output_dir, f)
     end
 end
-
-
-# Plot global firn air content anomaly over time and save figure
-begin
-
-    center_on_dates = DateTime(2000, 2, 1):Month(1):DateTime(2001, 2, 1)
-    runs_rgi = GGA.runs2rgi(path2runs_synthesized_all_ensembles);
-    runs_rgi = GGA.runs_center!(runs_rgi, center_on_dates);
-
-    # extract reference run and calculate 95% confidence interval
-    regions = GGA.runs_ref_and_err(runs_rgi, ensemble_reference_file; error_quantile, error_scaling);
-
-    rgi = 99
-    var = "fac"
-    date_range = DateTime(2000, 1, 1) .. DateTime(2025, 1, 1)
-    
-    ts = regions[var][date = date_range, rgi = At(rgi), error = At(false)]
-    ts_error = regions[var][date = date_range, rgi = At(rgi), error = At(true)]
-    x = GGA.decimalyear.(collect(val(dims(ts, :date))))
-
-
-    f = GGA._publication_figure(columns=1, rows=1);
-    ax = Axis(f[1, 1]; ylabel="volume [km³]", title="Global firn air content anomaly")
-    low = ts .- ts_error
-    high = ts .+ ts_error
-
-    CairoMakie.band!(ax, x, collect(low), collect(high); color=(:gray, 0.4))
-
-    lines!(ax, x, ts.data)
-    xlims!(ax, minimum(x) - 30/365, maximum(x) + 30/365)
-    display(f)
-    save(joinpath(GGA.pathlocal.figures, "Figure3.png"), f)
-end
-
-
 end

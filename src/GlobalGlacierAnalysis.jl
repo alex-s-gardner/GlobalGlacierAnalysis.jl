@@ -11,7 +11,7 @@ module GlobalGlacierAnalysis
    # import geographic packages
    using Proj
    using GeoArrays
-   using SpaceLiDAR
+   #using SpaceLiDAR
    using Geodesy
    using FastGeoProjections
    using Rasters
@@ -48,6 +48,7 @@ module GlobalGlacierAnalysis
    using Logging
    using Printf
    using NearestNeighbors
+   using StatsBase
    using Stencils  
    using NonlinearSolve
    using ScatteredInterpolation
@@ -100,6 +101,7 @@ module GlobalGlacierAnalysis
    include("utilities.jl")
    include("utilities_plotting.jl")
    include("utilities_readers.jl")
+   include("utilities_manuscript.jl")
    include("mapzonal.jl")
 
    function Makie._register_argument_conversions!(::Type{P}, attr::Makie.ComputeGraph, user_kw) where {P}
@@ -156,5 +158,4 @@ module GlobalGlacierAnalysis
 
       return
    end
-
 end

@@ -10,16 +10,22 @@ begin
     using Statistics             # Statistical functions
     using CairoMakie             # Plotting library
     using LsqFit                 # Least-squares fitting
+
+
+    error_quantile = 0.95
+    error_scaling = 1.5
+
+    project_id = :v01
+    geotile_width = 2
+
 end
 
 # User-defined parameters
 
-outfile_suffix = "_ΔT"
 # Synthesis parameters of input data
 for geotile_width_out in [0.5, 2]
 begin
-    project_id = :v01
-    geotile_width = 2
+
 
     path2runs_filled, params = GGA.binned_filled_filepaths(;
         project_id,
@@ -35,14 +41,14 @@ begin
 
     path2runs_synthesized = replace.(path2runs_filled, "aligned.jld2" => "synthesized.jld2")
 
-    binned_synthesized_dv_files = replace.(path2runs_synthesized, ".jld2" => "_gembfit_dv$(outfile_suffix).jld2")
-    binned_synthesized_dv_file_ref = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_rgi7_dh_best_cc_nmad5_v01_filled_ac_p2_synthesized_gembfit_dv$(outfile_suffix).jld2"
+    reference_ensemble_file = GGA.reference_ensemble_file
+        
+    binned_synthesized_dv_files = replace.(path2runs_synthesized, ".jld2" => "_gembfit_dv.jld2")
+    binned_synthesized_dv_file_ref = replace.(reference_ensemble_file, "_aligned.jld2" => "_synthesized_gembfit_dv.jld2")
         
     path2ref = binned_synthesized_dv_file_ref
     path2files = setdiff(binned_synthesized_dv_files, [binned_synthesized_dv_file_ref])
 
-    error_quantile = 0.95
-    error_scaling = 1.5
 
     # set to be start of record for instantanious (not cumulative) error calculation
     reference_period = (DateTime(1979, 1, 1), DateTime(1979, 12, 31))
