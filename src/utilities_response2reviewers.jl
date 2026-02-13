@@ -15,7 +15,19 @@ using CFTime
     load_wgms_data(paths)
 
 Load and preprocess WGMS mass balance and glacier data.
-Returns a tuple containing (wgms_mb, wgms_glacier, ds, glaciers).
+
+# Arguments
+- `paths`: Named tuple or struct with keys :wgms_mb, :wgms_glacier, :path2glacier, :project_dir
+
+# Returns
+- Tuple (wgms_mb, wgms_glacier, ds, glaciers) where wgms_mb and wgms_glacier are DataFrames,
+  ds is a DimStack from the project NetCDF, and glaciers is a GeoDataFrame.
+
+# Examples
+```julia
+julia> paths = (wgms_mb="...", wgms_glacier="...", path2glacier="...", project_dir="...")
+julia> wgms_mb, wgms_glacier, ds, glaciers = load_wgms_data(paths)
+```
 """
 function load_wgms_data(paths)
     # Load WGMS mass balance and glacier attribute tables
@@ -41,7 +53,19 @@ end
 """
     preallocate_model_columns!(wgms_mb)
 
-Pre-allocate columns for modeled quantities in the WGMS DataFrame.
+Pre-allocate columns for modeled quantities in the WGMS DataFrame (in-place).
+
+# Arguments
+- `wgms_mb`: DataFrame of WGMS mass balance data; new columns are added for runoff, dm, smb, and seasonal variants.
+
+# Returns
+- The modified DataFrame (in-place).
+
+# Examples
+```julia
+julia> preallocate_model_columns!(wgms_mb)
+julia> # wgms_mb now has :runoff, :dm, :smb, etc.
+```
 """
 function preallocate_model_columns!(wgms_mb)
     wgms_mb[!, :runoff] = Vector{Union{Missing,Float64}}(missing, nrow(wgms_mb))
@@ -62,7 +86,18 @@ end
     setup_geotile_grid(ds)
 
 Setup gridded longitude and latitude intervals and cell areas for geotile calculations.
-Returns cell_area raster.
+
+# Arguments
+- `ds`: DimStack or similar with X and Y dimensions defining the grid spacing
+
+# Returns
+- Raster of cell areas (e.g. from Rasters.cellarea) in the same CRS as the grid.
+
+# Examples
+```julia
+julia> cell_area = setup_geotile_grid(ds)
+julia> # Use for area-weighted aggregation
+```
 """
 function setup_geotile_grid(ds)
     geotile_width_out = abs(dims(ds, :X)[1] - dims(ds, :X)[2])

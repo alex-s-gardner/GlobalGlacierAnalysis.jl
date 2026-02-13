@@ -45,10 +45,10 @@ This executes the complete pipeline in the following sequence:
 5. **Extract mask data** - Processes glacier, land ice, and other surface masks
 6. **Extract canopy height data** - Processes vegetation height information
 7. **Perform hypsometric analysis** - Analyzes elevation distribution patterns
-8. **Create glacier model (GEMB) classes** - Generates glacier energy and mass balance classifications
-9. **Perform statistical binning** - Applies statistical methods to elevation change data
-10. **Fill, extrapolate, and adjust binned data** - Completes missing data using interpolation methods
-11. **Synthesize processed geotile data** - Combines multiple altimetry missions with error corrections
+8. **Perform statistical binning** - Applies statistical methods to elevation change data
+9. **Fill, extrapolate, and adjust binned data** - Completes missing data using interpolation methods
+10. **Synthesize processed geotile data** - Combines multiple altimetry missions with error corrections
+11. **Create glacier model (GEMB) classes** - Generates glacier energy and mass balance classifications
 12. **Calculate global glacier discharge** - Computes ice discharge with filled Antarctic data using modeled SMB
 13. **Calibrate GEMB model to altimetry data** - Optimizes glacier model parameters for grouped geotiles
 14. **Calibrate GEMB model for each synthesized geotile dataset** - Applies model calibration to individual datasets
@@ -57,10 +57,11 @@ This executes the complete pipeline in the following sequence:
 17. **Route land surface model runoff** - Processes terrestrial water fluxes through river networks
 18. **Route glacier runoff** - Processes glacier meltwater through river networks
 19. **Calculate gmax** - Determines maximum glacier contribution to river flux
-20. **Analyze population affected by glacier-fed river changes** - Quantifies population impact using buffer analysis
-21. **Generate point-based figures** - Creates gmax visualization plots
-22. **Produce regional results** - Generates regional analysis outputs for sharing
-23. **Generate extended data figures** - Produces manuscript-quality visualizations
+20. **Generate point-based figures** - Creates gmax visualization plots
+21. **Produce regional results** - Generates regional analysis outputs for sharing
+22. **Generate extended data figures** - Produces manuscript-quality visualizations
+23. **Analyze population affected by glacier-fed river changes** - Quantifies population impact using buffer analysis
+24. **Create output files for the manuscript** - Generates submission-ready data and figures
 
 **Processing times (on RAID @ 100 MB/s):**
 - GEDI: ~4 days
@@ -86,16 +87,17 @@ The workflow implements checkpoint logic to avoid redundant processing:
 - `run_all.jl` — Main workflow orchestrator
 - `gemb_classes_binning.jl` — Glacier model classification
 - `land_surface_model_routing.jl` — Terrestrial runoff routing
-- `glacier_routing.jl` — Glacier runoff routing
+- `glacier_routing.jl` — Glacier runoff routing (called from `run_all.jl`)
 - `gmax_global.jl` — Maximum glacier contribution analysis
-- `river_buffer_population.jl` — Population impact analysis
 - `gmax_point_figure.jl` — Visualization generation
 - `regional_results.jl` — Regional analysis outputs
 - `manuscript_extended_data_figures.jl` — Publication figures
+- `river_buffer_population.jl` — Population impact analysis
+- `create_output_files.jl` — Manuscript submission outputs
 
 ### Utility Modules
 
-The package includes 13 utility modules that provide specialized functionality:
+The package includes 15 utility modules that provide specialized functionality:
 
 **Core Utilities:**
 - `utilities.jl` — General utility functions and helpers
@@ -117,6 +119,8 @@ The package includes 13 utility modules that provide specialized functionality:
 **Output & Visualization:**
 - `utilities_postprocessing.jl` — Post-processing and data export functions
 - `utilities_plotting.jl` — Visualization and plotting utilities
+- `utilities_manuscript.jl` — Manuscript figure and table utilities
+- `utilities_response2reviewers.jl` — Response-to-reviewers analysis and outputs
 
 **Geospatial:**
 - `mapzonal.jl` — Zonal statistics and spatial analysis functions

@@ -11,6 +11,12 @@ Aggregate glacier discharge data by RGI regions and calculate uncertainty.
 # Returns
 - Array with dimensions [region, error] containing discharge values and uncertainties
   for each RGI region, including special aggregations for HMA (98) and global (99)
+
+# Examples
+```julia
+julia> drgi = discharge_rgi(path2discharge, path2rgi_regions; fractional_error=0.15)
+julia> global_discharge = drgi[At(99), At(false)]
+```
 """
 function discharge_rgi(path2discharge, path2rgi_regions; fractional_error = 0.15)
 
@@ -64,6 +70,12 @@ and creates special aggregations for HMA (regions 13-15) and global (regions 1-1
 
 # Returns
 - Dictionary containing aggregated data for each variable, with dimensions [run, rgi, date]
+
+# Examples
+```julia
+julia> regional_sum = runs2rgi(path2runs; vars2sum=["runoff", "dm"])
+julia> runoff_rgi = regional_sum["runoff"]
+```
 """
 function runs2rgi(path2runs; vars2sum=["dv_altim", "runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze", "dv", "dm", "dm_altim", "discharge"])
 
@@ -135,6 +147,13 @@ and model runs, computing key parameters that characterize their temporal evolut
 The function handles special calculations for derived variables:
 - `net_acc`: Calculated as accumulation minus evaporation/condensation
 - `gsi`: Glacier sustainability index, calculated as (runoff + discharge) / net_acc
+
+# Examples
+```julia
+julia> daterange = DateTime(2000, 3, 1)..DateTime(2024, 12, 15)
+julia> region_fit = rgi_trends(regional_sum, discharge_rgi, daterange)
+julia> runoff_trends = region_fit[At("runoff"), :, :, At("trend")]
+```
 """
 function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
     varnames = vcat(collect(keys(regional_sum)), ["net_acc", "gsi"])
@@ -197,7 +216,8 @@ function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
 
     return region_fit
 end
-""" rgi_trends(da::AbstractDimArray, daterange)
+"""
+    rgi_trends(da::AbstractDimArray, daterange)
 
 Calculate trend, acceleration, amplitude, and phase parameters for each RGI region in a time series.
 
@@ -212,6 +232,13 @@ linear trend, acceleration, and seasonal components.
 # Returns
 - A DimensionalData array with dimensions for RGI region and parameter, where parameters include
   trend, acceleration, amplitude, and phase of the fitted curves.
+
+# Examples
+```julia
+julia> daterange = DateTime(2000, 3, 1)..DateTime(2024, 12, 15)
+julia> region_fit = rgi_trends(da, daterange)
+julia> trends = region_fit[:, At("trend")]
+```
 
 # Note
 The function first centers the decimal years around their mean to improve numerical stability.
@@ -263,6 +290,13 @@ based on the quantile of absolute differences between all values and the referen
 # Returns
 - A DimensionalData array with dimensions for variable name, RGI region, parameter, and error,
   where the error dimension contains the reference values (false) and error estimates (true)
+
+# Examples
+```julia
+julia> regions_fit = region_fit_ref_and_err(region_fit, path2reference; error_quantile=0.95)
+julia> ref_values = regions_fit[:, :, :, At(false)]
+julia> err_values = regions_fit[:, :, :, At(true)]
+```
 
 # Note
 When "net_acc" is present, the function also calculates error propagation for the glacier state index (gsi)
@@ -317,6 +351,12 @@ Center glacier model run data by subtracting the temporal mean for each variable
 
 This function modifies the input dictionary in-place, subtracting the temporal mean
 of each variable over the specified date range from all values of that variable.
+
+# Examples
+```julia
+julia> daterange = DateTime(2000, 3, 1)..DateTime(2024, 12, 15)
+julia> runs_center!(runs_rgi, daterange)
+```
 """
 function runs_center!(runs_rgi::Dict, daterange)
  
@@ -342,6 +382,12 @@ Center regional glacier data by subtracting the temporal mean.
 
 This function modifies the input array in-place, subtracting the temporal mean
 over the specified date range from all values in the array.
+
+# Examples
+```julia
+julia> daterange = DateTime(2000, 3, 1)..DateTime(2024, 12, 15)
+julia> regions_center!(runs_rgi, daterange)
+```
 """
 function regions_center!(runs_rgi, daterange)
     mean_rgi = dropdims(mean(runs_rgi[:, minimum(daterange)..maximum(daterange), At(false)], dims=:date), dims=:date)
@@ -365,6 +411,12 @@ Calculate differences between each run and a reference run for all variables.
 
 This function modifies the input dictionary in-place, subtracting the reference run
 from all runs for each variable, creating anomalies relative to the reference.
+
+# Examples
+```julia
+julia> runs_delta!(runs_rgi, path2reference)
+julia> # runs_rgi now contains anomalies relative to path2reference
+```
 """
 function runs_delta!(runs_rgi, path2reference)
     for k in keys(runs_rgi)
@@ -387,6 +439,12 @@ Calculate quantiles of glacier data across multiple model runs.
 
 This function computes quantiles across the run dimension for each variable, region, and date.
 When `on_abs=true`, quantiles are calculated on absolute values, useful for error estimation.
+
+# Examples
+```julia
+julia> runs_q = runs_quantile(runs_rgi, 0.95; on_abs=true)
+julia> runoff_95 = runs_q["runoff"]
+```
 """
 function runs_quantile(runs_rgi, p; on_abs=true)
     runs_quantile = Dict()
@@ -423,6 +481,12 @@ Extract a subset of model runs from a dictionary of glacier data.
 
 This function creates a new dictionary with the same structure as the input,
 but including only the specified model runs.
+
+# Examples
+```julia
+julia> runs_subset = runs_select(runs_rgi, [path2ref, path2run2])
+julia> # Dictionary contains only the two specified runs
+```
 """
 function runs_select(runs_rgi, runs2select)
     runs_selected = Dict()
@@ -449,6 +513,12 @@ Create a dictionary containing reference values and error estimates for glacier 
 
 This function calculates deviations from a reference run, computes quantile-based
 error estimates, and combines them into a single data structure with an error dimension.
+
+# Examples
+```julia
+julia> runs_with_err = runs_ref_and_err(runs_rgi, path2reference; error_quantile=0.95)
+julia> ref_runoff = runs_with_err["runoff"][:, :, :, At(false)]
+```
 """
 function runs_ref_and_err(runs_rgi, path2reference; error_quantile=0.95, error_scaling=1.0)
     # remove reference run
@@ -472,6 +542,26 @@ function runs_ref_and_err(runs_rgi, path2reference; error_quantile=0.95, error_s
 end
 
 
+"""
+    dimarray2netcdf(dict::Dict, filename; units=nothing, global_attributes=nothing)
+
+Write a dictionary of DimensionalArrays to a NetCDF file.
+
+# Arguments
+- `dict`: Dictionary mapping variable names to DimensionalArrays (all must share the same dimensions)
+- `filename`: Path to the output NetCDF file
+- `units`: Optional units string applied to all variables (default: use units from arrays)
+- `global_attributes`: Optional iterable of (name, value) pairs for global file attributes
+
+# Returns
+- The path `filename` after writing
+
+# Examples
+```julia
+julia> dict = Dict("runoff" => da_runoff, "dm" => da_dm)
+julia> dimarray2netcdf(dict, "output.nc"; global_attributes=[("source", "GGA")])
+```
+"""
 function dimarray2netcdf(dict::Dict, filename; units=nothing, global_attributes=nothing)
 
     if isfile(filename)
@@ -569,6 +659,12 @@ Calculate glacier mass change and runoff trends for endorheic and non-endorheic 
 This function identifies endorheic (landlocked) glaciers by matching glacier IDs to terminal river basins,
 calculates mass change and runoff trends, and aggregates results by RGI region including special
 aggregations for HMA (region 98) and global (region 99).
+
+# Examples
+```julia
+julia> glacier_dm_gt = rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend=(DateTime(2000,1,1), DateTime(2024,12,31)))
+julia> dm_all = glacier_dm_gt[At("dm"), :, At(false)]
+```
 """
 function rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend=nothing)
     ds = NCDataset(glacier_summary_file)
@@ -666,6 +762,12 @@ Create a formatted table of regional glacier parameter values with error estimat
 
 The function automatically determines appropriate units for each parameter type and includes
 them in the column headers.
+
+# Examples
+```julia
+julia> tbl = error_bar_table(region_fits; rgi_regions=[1, 2, 99], digits=2)
+julia> # DataFrame with columns for each variable and parameter
+```
 """
 function error_bar_table(region_fits; varnames=nothing, params=["trend", "acceleration", "amplitude", "phase"], rgi_regions=nothing, digits=2)
 
@@ -771,6 +873,12 @@ Convert geotile data to a dimensional array with standardized units (kg/m²).
 This function loads geotile data, converts variables to consistent units (kg/m²), and optionally
 calculates anomalies relative to a reference period. It handles special unit conversions for
 volume ('dv') and mass ('dm') variables.
+
+# Examples
+```julia
+julia> da = geotile2dimarray_kgm2(binned_synthesized_dv_file; vars2extract=["runoff", "dm"])
+julia> runoff_gt = da[At("runoff"), :, :]
+```
 """
 function geotile2dimarray_kgm2(
     binned_synthesized_dv_file; 
@@ -856,6 +964,12 @@ This function loads geotile data for a reference run and a set of comparison run
 - `DimArray`: A DimensionalArray with dimensions for variable name, geotile, time, and error,
   where the error dimension contains reference values (`false`) and error estimates (`true`).
 
+# Examples
+```julia
+julia> geotiles_with_err = geotiles_mean_error(path2ref, path2files; error_quantile=0.95)
+julia> ref_runoff = geotiles_with_err[At("runoff"), :, :, At(false)]
+```
+
 # Notes
 - The error estimate is computed as the specified quantile of the absolute deviation of each run from the reference, for each variable, geotile, and time step.
 - The function assumes all input files are compatible and aligned in variables, geotiles, and time.
@@ -919,6 +1033,12 @@ Downscale geotile-level data to individual glaciers, preserving reference values
 - A DimensionalArray with dimensions for variable name, glacier RGI ID, time, and error,
   where values are scaled by glacier area and the error dimension contains reference values (false)
   and error estimates (true)
+
+# Examples
+```julia
+julia> glacier_out = geotiles_mean_error_glaciers(glaciers, geotiles; show_progress=true)
+julia> runoff_glaciers = glacier_out[At("runoff"), :, :, At(false)]
+```
 """
 function geotiles_mean_error_glaciers(glaciers, geotiles; show_progress=true, vars2downscale=nothing)
 
@@ -948,17 +1068,24 @@ end
 
 
 """
-    _simrun_init(nsamples, single_geotile_test)
+    _simrun_init(; nsamples, missions2include, single_geotile_test)
 
 Initialize a dictionary of DimensionalArrays for simulation runs.
 
 # Arguments
 - `nsamples`: Number of simulation runs
+- `missions2include`: Mission identifiers to include (e.g. from `keys(project_products())`)
 - `single_geotile_test`: Geotile identifier for testing
 
 # Returns
 - Dictionary with mission keys containing DimensionalArrays filled with NaN values
   with dimensions for run, geotile, date, and height
+
+# Examples
+```julia
+julia> missions2include = ["hugonnet", "gedi", "icesat", "icesat2"]
+julia> dh = _simrun_init(; nsamples=100, missions2include, single_geotile_test="lat[+60+62]lon[-142-140]")
+```
 """
 function _simrun_init(;nsamples, missions2include, single_geotile_test)
     height_range, height_center = project_height_bins()
@@ -991,6 +1118,12 @@ Calculate area-averaged height anomalies from simulation runs.
 
 # Returns
 - Tuple of (median_values, error_estimates) dictionaries containing area-averaged statistics
+
+# Examples
+```julia
+julia> (dh_median, dh_error) = _simrun2areaaverage(dh; surface_mask="glacier", geotile2extract="lat[+60+62]lon[-142-140]")
+julia> synthesis_median = dh_median["Synthesis"]
+```
 """
 function _simrun2areaaverage(dh; surface_mask, geotile_width=2, geotile2extract=nothing, sigma_error=2)
     # Calculate area-averaged height anomalies
@@ -1038,6 +1171,32 @@ function _simrun2areaaverage(dh; surface_mask, geotile_width=2, geotile2extract=
 end
 
 
+"""
+    glacier_summary_file(binned_synthesized_dv_files, binned_synthesized_dv_file_ref; error_quantile=0.95, error_scaling=1.0, reference_period=(DateTime(2000, 4, 1), DateTime(2024, 12, 31)), surface_mask="glacier", force_remake_before=nothing, geotile_width=2)
+
+Build or update the glacier-level summary NetCDF from geotile runs and save to disk.
+
+Computes reference and error estimates from multiple runs, downscales from geotiles to glaciers,
+and writes a NetCDF file with time series and error variables per glacier.
+
+# Arguments
+- `binned_synthesized_dv_files`: Vector of paths to binned synthesized run files
+- `binned_synthesized_dv_file_ref`: Path to the reference run file
+- `error_quantile`: Quantile for error estimation (default: 0.95)
+- `error_scaling`: Scaling factor for error (default: 1.0)
+- `reference_period`: Tuple of (start, end) DateTime for reference (default: (2000-04-01, 2024-12-31))
+- `surface_mask`: Surface mask type (default: "glacier")
+- `force_remake_before`: If set, skip if output file is newer than this DateTime
+- `geotile_width`: Geotile width in degrees (default: 2)
+
+# Returns
+- Nothing; writes the glacier summary file to `pathlocal[:glacier_summary]`.
+
+# Examples
+```julia
+julia> glacier_summary_file(binned_synthesized_dv_files, binned_synthesized_dv_file_ref; reference_period=(DateTime(2000, 4, 1), DateTime(2024, 12, 31)))
+```
+"""
 function glacier_summary_file(
     binned_synthesized_dv_files, 
     binned_synthesized_dv_file_ref; 
@@ -1190,6 +1349,12 @@ It produces both total rates (in km³/yr) and area-averaged rates (in m/yr), sui
 - Arrow file with total rates in km³/yr.
 - GeoPackage files with total rates (km³/yr) and area-averaged rates (m/yr), excluding raw time series columns.
 
+# Examples
+```julia
+julia> gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="Gardner2025_geotiles_rates", datelimits=(DateTime(2000, 3, 1), DateTime(2025, 1, 1)))
+julia> # Writes Arrow and GeoPackage files to the project output directory
+```
+
 # Notes
 - The function fits trends to all time series variables, then computes area-averaged rates by dividing by geotile area.
 - Variable names containing "dv" are converted to "dh" for area-averaged rates.
@@ -1205,7 +1370,7 @@ function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="Gardner2025
     altim_cols = colnames[occursin.("_altim", colnames)]
     rename!(geotiles0, altim_cols .=> replace.(altim_cols, "_altim" => "_synthesis"))
 
-    vars_no_write = setdiff(names(geotiles0), ["id", "geometry", "group", "pscale", "ΔT", "area_km2", "rgiid"])
+    vars_no_write = setdiff(names(geotiles0), ["id", "geometry", "group", "pscale", "mscale", "area_km2", "rgiid"])
     geotiles0[!, :area_km2] = sum.(geotiles0[:, :area_km2])
 
     # Fit temporal trends to all variables with dates in metadata
@@ -1258,6 +1423,33 @@ function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="Gardner2025
     return outfile_km3yr, outfile_myr
 end
 
+"""
+    ensemble_summary(path2runs_synthesized, ensemble_reference_file; dates4trend=[DateTime(2000, 3, 1), DateTime(2024, 12, 15)], error_quantile=0.95, error_scaling=1.5, discharge_fractional_error=0.15)
+
+Compute regional fit parameters with reference values and error estimates for an ensemble of runs.
+
+Loads discharge by RGI region, aggregates runs by RGI, fits trends over the given date range,
+then computes reference values and quantile-based errors relative to the ensemble reference file.
+
+# Arguments
+- `path2runs_synthesized`: Vector of paths to synthesized run files
+- `ensemble_reference_file`: Path to the reference run file
+- `dates4trend`: Date range for trend fitting (default: [2000-03-01, 2024-12-15])
+- `error_quantile`: Quantile for error estimation (default: 0.95)
+- `error_scaling`: Scaling factor for error (default: 1.5)
+- `discharge_fractional_error`: Fractional error for discharge (default: 0.15)
+
+# Returns
+- DimensionalArray with dimensions for variable name, RGI region, parameter, and error
+  (reference values and error estimates)
+
+# Examples
+```julia
+julia> dates4trend = [DateTime(2000, 3, 1), DateTime(2024, 12, 15)]
+julia> region_fits = ensemble_summary(path2runs_synthesized, ensemble_reference_file; dates4trend, error_quantile=0.95)
+julia> runoff_trend_ref = region_fits[At("runoff"), :, At("trend"), At(false)]
+```
+"""
 function ensemble_summary(path2runs_synthesized, ensemble_reference_file; dates4trend=[DateTime(2000, 3, 1), DateTime(2024, 12, 15)], error_quantile=0.95, error_scaling=1.5, discharge_fractional_error=0.15)
 
     paths = pathlocal

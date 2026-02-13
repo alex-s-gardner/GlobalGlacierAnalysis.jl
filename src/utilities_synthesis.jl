@@ -17,6 +17,15 @@ This function performs a two-step synthesis process:
 2. Combines elevation change data from different satellite missions into a single dataset
 
 The synthesis improves spatial coverage and temporal consistency by leveraging multiple altimetry datasets.
+
+# Returns
+- Nothing; writes synthesized files to disk (or returns dh_synth, dh_synth_err when single_geotile_test is set).
+
+# Examples
+```julia
+julia> geotile_synthesize(path2runs; missions2include=["hugonnet", "gedi", "icesat", "icesat2"])
+julia> # Writes synthesis files next to each run file
+```
 """
 function geotile_synthesize(path2runs;
     error_file="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
@@ -65,6 +74,12 @@ Loads binned elevation change data and computes mission-specific error estimates
 absolute deviation (MAD) statistic. This provides robust error estimates for each satellite mission
 when measuring elevation changes over stable land surfaces, which can be used to assess data quality
 and inform synthesis weighting schemes.
+
+# Examples
+```julia
+julia> land_error = binned_mad_mission(binned_file)
+julia> gedi_error = land_error[At("gedi")]
+```
 """
 function binned_mad_mission(binned_file="/mnt/bylot-r3/data/binned_unfiltered/2deg/land_dh_best_cc_nmad5_v01.jld2")
 
@@ -108,6 +123,12 @@ Calculate standard deviation across model runs as an error metric for each satel
 # Description
 Computes error metrics by calculating standard deviation across multiple model runs for each satellite mission.
 The function handles incremental updates, file caching, and single geotile testing scenarios.
+
+# Examples
+```julia
+julia> (dh_hyps_error, files_included) = geotile_synthesis_error(; path2runs, outfile=error_file)
+julia> # Saves to outfile unless single_geotile_test is set
+```
 """
 function geotile_synthesis_error(;
     path2runs,
@@ -282,7 +303,13 @@ Synthesize elevation change data from multiple satellite missions into a single 
 - `force_remake_before`: Recompute if output file exists but was created before this date
 
 # Returns
-Path to synthesized output file with weighted average elevation change data and uncertainty estimates
+- Path to synthesized output file with weighted average elevation change data and uncertainty estimates (or dh_synth, dh_synth_err when single_geotile_test is set).
+
+# Examples
+```julia
+julia> geotile_synthesize_runs(; path2runs, dh_err=dh_hyps_error, missions2include=["hugonnet", "gedi", "icesat", "icesat2"])
+julia> # Writes synthesis files for each run
+```
 """
 function geotile_synthesize_runs(;
     path2runs,
@@ -482,6 +509,12 @@ Calculate hypsometric area distribution for each geotile and glacier polygon int
   - persistent_attribute: Preserved identifier from input (e.g. RGIId)
   - area_km2: Area in km² for each geotile-glacier intersection
 
+# Examples
+```julia
+julia> df = geotile_zonal_area_hyps(ras, 0:100:5000, zone_geom, geotile_ids; persistent_attribute=:RGIId)
+julia> # DataFrame with geotile, RGIId, area_km2 per intersection
+```
+
 # Notes
 - Crops raster data to intersection of geotiles and glacier polygons
 - Calculates areas using cell-by-cell accumulation into elevation bins
@@ -534,7 +567,12 @@ Accumulate values into elevation bins.
 - `bins`: Elevation bin edges
 
 # Returns
-Vector of accumulated values per elevation bin
+- Vector of accumulated values per elevation bin
+
+# Examples
+```julia
+julia> binned = geotile_zonal_area_hyps(elevations, areas, 0:100:5000)
+```
 """
 function geotile_zonal_area_hyps(x, y, bins::StepRange)
     n = length(bins) - 1
@@ -560,7 +598,12 @@ Accumulate values into elevation bins from a NamedTuple input.
 - `x_bin_edges`: Elevation bin edges as a StepRange
 
 # Returns
-Vector of accumulated values per elevation bin
+- Vector of accumulated values per elevation bin
+
+# Examples
+```julia
+julia> binned = geotile_zonal_area_hyps((elevations, areas), 0:100:5000)
+```
 """
 function geotile_zonal_area_hyps(nt, x_bin_edges)
     binned = geotile_zonal_area_hyps(getindex.(nt, 1), getindex.(nt, 2), x_bin_edges)
@@ -578,7 +621,13 @@ Group geotiles that share large glaciers and apply manual grouping overrides.
 - `geotile_groups_manual`: Optional manual grouping specifications
 
 # Returns
-Modified DataFrame with group assignments and rectangular geometries
+- Modified DataFrame with group assignments and rectangular geometries
+
+# Examples
+```julia
+julia> geotile_grouping!(geotiles0, glaciers, 100; geotile_groups_manual=geotile_groups_forced())
+julia> # geotiles0 now has :group column
+```
 """
 function geotile_grouping!(geotiles0, glaciers, min_area_km2; geotile_groups_manual=nothing)
     # Initialize columns to store discharge indices and geotile intersections
@@ -667,6 +716,12 @@ It either loads existing grouping results from file or calculates new groupings 
 
 The function uses caching to avoid recalculating groupings unless the output file
 doesn't exist or is older than the force_remake_before date.
+
+# Examples
+```julia
+julia> geotiles_out = geotile_grouping(; surface_mask="glacier", min_area_km2=100)
+julia> # GeoDataFrame with :geometry, :id, :group
+```
 """
 function geotile_grouping(; surface_mask="glacier", min_area_km2=100, geotile_width=2, force_remake_before=nothing)
 
@@ -710,6 +765,12 @@ Calculate discharge from surface mass balance (SMB) trends for glaciers below a 
 This function estimates glacier discharge by calculating SMB trends during an equilibrium period.
 For glaciers below the specified latitude threshold, it fits a linear trend to the SMB data
 and converts this to discharge in gigatons per year based on glacier area.
+
+# Examples
+```julia
+julia> discharge0 = discharge2smb(glaciers; discharge2smb_max_latitude=-60)
+julia> # DataFrame with latitude, longitude, discharge_gtyr
+```
 """
 function discharge2smb(glaciers; discharge2smb_max_latitude=-60, discharge2smb_equilibrium_period=(Date(1979), Date(2000)))
     index_discharge2smb = glaciers.CenLat .< discharge2smb_max_latitude
@@ -745,6 +806,12 @@ Convert elevation change (dh) to volume change (dv) using area information from 
 This function calculates volume change by multiplying elevation change by the corresponding 
 area for each geotile and height bin, then summing across all height bins. The result is 
 converted from km³ to Gt by dividing by 1000.
+
+# Examples
+```julia
+julia> dv = dh2dv(dh, area_km2)
+julia> # DimArray (geotile, date) in Gt
+```
 """
 function dh2dv(dh, area_km2)
 
@@ -764,6 +831,24 @@ function dh2dv(dh, area_km2)
     end
 end
 
+"""
+    dh2dv_geotile(dh, area_km2)
+
+Convert elevation change to volume change for each geotile.
+
+# Arguments
+- `dh`: DimArray of elevation changes with dimensions (geotile, date, height)
+- `area_km2`: DimArray of areas with dimensions (geotile, height)
+
+# Returns
+- DimArray of volume changes with dimensions (geotile, date) in km³ (ice equivalent).
+
+# Examples
+```julia
+julia> dv = dh2dv_geotile(dh, area_km2)
+julia> dv_geotile_1 = dv[At(geotile_id), :]
+```
+"""
 function dh2dv_geotile(dh, area_km2)
 
     dgeotile = dims(dh, :geotile)
@@ -787,7 +872,13 @@ Aggregates geotile data to glacier-level time series using area-weighted averagi
 - `varname`: Column name for storing the resulting glacier time series
 
 # Returns
-Modified `glaciers` DataFrame with new `varname` column containing glacier-level time series
+- Modified `glaciers` DataFrame with new `varname` column containing glacier-level time series
+
+# Examples
+```julia
+julia> geotile2glacier!(glaciers, var0; varname=:runoff)
+julia> # glaciers now has glaciers.runoff filled
+```
 """
 function geotile2glacier!(glaciers, var0; varname)
     # Pre-allocate output arrays
@@ -848,7 +939,7 @@ end
         discharge2smb_max_latitude=-60,
         discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
         pscale=1,
-        ΔT=1,
+        mscale=1,
         geotile_width=2,
         force_remake_before=nothing,
         force_remake_before_hypsometry=nothing
@@ -877,7 +968,7 @@ The routine performs the following steps:
 - `discharge2smb_max_latitude`: (Float) Only glaciers south of this latitude have discharge estimated via SMB-to-discharge when not observed. Default: -60.
 - `discharge2smb_equilibrium_period`: (Tuple{Date,Date}) Date range for SMB equilibrium (long-term mean). Default: (1979, 2000).
 - `pscale`: (Real) Precipitation scaling factor used for GEMB data extraction. Default: 1.
-- `ΔT`: (Real) Elevation offset (m) to sample GEMB data at when extracting timeseries. Default: 1.
+- `mscale`: (Real) Elevation offset (m) to sample GEMB data at when extracting timeseries. Default: 1.
 - `geotile_width`: (Integer) Geotile side length in degrees. Default: 2.
 - `force_remake_before`: (Union{Nothing,DateTime}) Force regeneration if file is older than this. Default: nothing.
 - `force_remake_before_hypsometry`: (Union{Nothing,DateTime}) Like above, but only for internal DEM/hypsometry products.
@@ -891,11 +982,16 @@ The routine performs the following steps:
 - Results are clipped so that discharge cannot be negative.
 - Antarctic discharge sanity check: final total must be 80–110 Gt/yr, otherwise an error is raised.
 
+# Examples
+```julia
+julia> discharge = global_discharge_filled(; surface_mask="glacier", geotile_width=2)
+julia> # DimStack or DataFrame with discharge per geotile
+```
+
 # Notes
 - Discharge is in units of Gt/yr.
 - The function can be forced to remake its output if `force_remake_before` is newer than the last save time.
 - Downscaling to individual glaciers uses area-weighting.
-
 """
 function global_discharge_filled(;
     surface_mask="glacier",
@@ -904,7 +1000,7 @@ function global_discharge_filled(;
     discharge2smb_max_latitude=-60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
     pscale=1,
-    ΔT=1,
+    mscale=1,
     geotile_width=2,
     force_remake_before=nothing,
     force_remake_before_hypsometry=nothing
@@ -927,7 +1023,7 @@ function global_discharge_filled(;
             only_geotiles_w_area_gt_0=true
         )
 
-        smb = gemb[:smb][pscale=At(pscale), ΔT=At(ΔT)]
+        smb = gemb[:smb][pscale=At(pscale), mscale=At(mscale)]
 
         surface_mask_hypsometry = geotile_hypsometry(geotiles, surface_mask; dem_id=:cop30_v2, force_remake_before=force_remake_before_hypsometry)
 
@@ -1002,7 +1098,7 @@ Synthesize geotile-level data with GEMB fit parameters and compute calibrated ti
 This function processes multiple runs to create calibrated geotile-level datasets by:
 1. Loading and aligning geotiles for each surface mask.
 2. Calculating glacier hypsometry and identifying geotiles with glaciers.
-3. Applying GEMB fit parameters (pscale, ΔT) to calibrate variables.
+3. Applying GEMB fit parameters (pscale, mscale) to calibrate variables.
 4. Computing derived variables (discharge, volume change, mass change).
 5. Averaging certain variables by geotile groups.
 6. Adding regional glacier inventory (RGI) identifiers.
@@ -1021,6 +1117,12 @@ This function processes multiple runs to create calibrated geotile-level dataset
 # Variables Processed
 - Input variables: dv_altim, runoff, fac, smb, rain, acc, melt, ec, refreeze
 - Derived variables: discharge, dv (volume change), dm (mass change), dm_altim (altimetry mass change)
+
+# Examples
+```julia
+julia> geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width=2, force_remake_before=nothing)
+julia> # Writes _gembfit_dv.jld2 files for each run
+```
 """
 function geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width, force_remake_before, geotile_grouping_min_feature_area_km2 = 100)
    
@@ -1091,6 +1193,11 @@ For each run (i.e., each path in `path2runs_synthesized_all_ensembles`), this fu
 
 Area weighting is based on surface-specific geotile areas loaded per unique surface mask.
 
+# Examples
+```julia
+julia> dh_area_averaged = ensemble_area_average_height_anomalies(path2runs; geotiles2extract=["lat[+60+62]lon[-142-140]"])
+julia> # DimArray (run, geotile, date)
+```
 """
 function ensemble_area_average_height_anomalies(path2runs_synthesized_all_ensembles; geotiles2extract = nothing)
     # read in example file
@@ -1138,6 +1245,12 @@ Aggregate discharge variables from a DataFrame to geotile regions.
 # Description
 For each geotile, this function sums the values of each discharge variable for all points within the geotile's extent.
 The result is a DimArray indexed by variable name and geotile id.
+
+# Examples
+```julia
+julia> discharge0 = discharge2geotile(discharge, geotiles)
+julia> runoff_by_geotile = discharge0[At("discharge_gtyr"), :]
+```
 """
 function discharge2geotile(discharge, geotiles)
     dgeotile = Dim{:geotile}(geotiles.id)
@@ -1157,8 +1270,25 @@ function discharge2geotile(discharge, geotiles)
     return discharge0
 end
 
+"""
+    discharge2geotile(discharge, dgeotile::Dim; mass2volume=false)
 
+Aggregate discharge from a DataFrame to geotiles using a dimension of geotile IDs.
 
+# Arguments
+- `discharge`: DataFrame with longitude, latitude, and discharge columns (e.g. discharge_gtyr)
+- `dgeotile`: Dim{:geotile} of geotile identifiers
+- `mass2volume`: If true, convert mass (Gt/yr) to volume (km³/yr) using ice density (default: false)
+
+# Returns
+- DimStack with one layer per discharge variable, dimensioned by geotile (units Gt/yr or km³/yr).
+
+# Examples
+```julia
+julia> dgeotile = Dim{:geotile}(geotiles.id)
+julia> discharge0 = discharge2geotile(discharge, dgeotile; mass2volume=true)
+```
+"""
 function discharge2geotile(discharge, dgeotile::Dim; mass2volume = false)
 
     if mass2volume
@@ -1187,7 +1317,30 @@ function discharge2geotile(discharge, dgeotile::Dim; mass2volume = false)
     return discharge0
 end
 
+"""
+    individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, gemb_fit, discharge, geotiles0, area_km2)
 
+Compute calibrated geotile-level time series for a single run using GEMB fit parameters.
+
+Combines altimetry-derived volume change with GEMB-scaled SMB, discharge, and derived variables
+for each geotile, applying per-geotile pscale and mscale from gemb_fit.
+
+# Arguments
+- `binned_synthesized_file`: Path to binned synthesized altimetry file
+- `gemb`: GEMB model output (e.g. DimStack from gemb_ensemble_dv)
+- `gemb_fit`: DataFrame with per-geotile fit parameters (pscale, mscale, group)
+- `discharge`: Discharge aggregated to geotiles (e.g. from discharge2geotile)
+- `geotiles0`: DataFrame of geotiles to process
+- `area_km2`: DimArray of area per geotile and height
+
+# Returns
+- DataFrame of geotiles with time series columns (dv_altim, runoff, fac, smb, etc.) and metadata.
+
+# Examples
+```julia
+julia> geotiles0 = individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, gemb_fit, discharge, geotiles0, area_km2)
+```
+"""
 function individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, gemb_fit, discharge, geotiles0, area_km2)
     # Filter to only include geotiles containing glaciers
     volume2mass = δice / 1000
@@ -1195,14 +1348,14 @@ function individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, 
 
     # Add GEMB fit parameters and mass conversion factors
     geotiles0[!, :pscale] .= 1.0
-    geotiles0[!, :ΔT] .= 0.0
+    geotiles0[!, :mscale] .= 0.0
     geotiles0[!, :mie2cubickm] .= 0.0
     geotiles0[!, :group] .= 0
 
     dpscale = dims(gemb, :pscale)
-    dΔT = dims(gemb, :ΔT)
+    dmscale = dims(gemb, :mscale)
 
-    dv_gemb0 = gemb_dv_sample(dpscale[1], dΔT[1], gemb[:smb][geotile=At(geotiles0.id[1])])
+    dv_gemb0 = gemb_dv_sample(dpscale[1], dmscale[1], gemb[:smb][geotile=At(geotiles0.id[1])])
     ddate_gemb = dims(dv_gemb0, :date)
     Δdecyear = decimalyear.(ddate_gemb) .- decimalyear.(ddate_gemb)[1]
     geotiles0[!, :discharge] .= [fill(0.0, length(ddate_gemb)) for _ in 1:nrow(geotiles0)]
@@ -1214,7 +1367,7 @@ function individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, 
         end
         
         geotile.pscale = gemb_fit[fit_index, :pscale]
-        geotile.ΔT = gemb_fit[fit_index, :ΔT]
+        geotile.mscale = gemb_fit[fit_index, :mscale]
         geotile.group = gemb_fit[fit_index, :group]
         area_km20 = sum(area_km2[geotile = At(geotile.id)])
         geotile.mie2cubickm = area_km20 / 1000  # Convert meters ice equivalent to cubic kilometers
@@ -1267,7 +1420,7 @@ function individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, 
         # Apply GEMB scaling and convert units for each geotile
         if in(geotile.id, dgeotile)
             for k in keys(gemb)
-                geotile[Symbol(k)][:] = gemb_dv_sample(geotile.pscale, geotile.ΔT, gemb[k][geotile=At(geotile.id)]).data
+                geotile[Symbol(k)][:] = gemb_dv_sample(geotile.pscale, geotile.mscale, gemb[k][geotile=At(geotile.id)]).data
             end
         end
     end

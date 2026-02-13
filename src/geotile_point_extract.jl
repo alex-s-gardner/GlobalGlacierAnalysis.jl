@@ -11,7 +11,7 @@ x = -122.6360
 y = 50.3997
 
 reference_run = "binned/2deg/glacier_dh_best_nmad5_v01_filled_ac_p2_synthesized.jld2"
-outfile_suffix = "_ΔT"
+outfile_suffix = "_mscale"
 
 paths = GGA.pathlocal
 path2reference = joinpath(paths[:data_dir], reference_run) 

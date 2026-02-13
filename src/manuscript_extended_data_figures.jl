@@ -198,7 +198,7 @@ discharge = GGA.global_discharge_filled(;
     discharge2smb_max_latitude=-60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
     pscale=1,
-    ΔT=1,
+    mscale=1,
     geotile_width=2,
     force_remake_before=DateTime("2025-01-31T14:00") + GGA.local2utc,
     force_remake_before_hypsometry=nothing
@@ -219,7 +219,7 @@ for calibrate_to in calibrate_to
         single_geotile_test,
         seasonality_weight=GGA.seasonality_weight,
         distance_from_origin_penalty=GGA.distance_from_origin_penalty,
-        ΔT_to_pscale_weight=GGA.ΔT_to_pscale_weight,
+        mscale_to_pscale_weight=GGA.mscale_to_pscale_weight,
         force_remake_before=DateTime("2025-01-31T14:00"),
         calibrate_to
     );

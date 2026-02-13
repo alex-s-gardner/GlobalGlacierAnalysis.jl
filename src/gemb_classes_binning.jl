@@ -190,7 +190,7 @@ end
 # - force_remake_before: DateTime threshold for forcing file regeneration
 # - single_geotile_test: Optional single geotile ID for testing
 
-#begin
+begin
     gemb_files = vcat(GGA.allfiles.(gembinfo.gemb_folder; subfolders=false, fn_endswith=".mat", fn_contains=gembinfo.file_uniqueid)...)
 
     # ensure expected number of files found
@@ -314,13 +314,13 @@ end
     if !isnothing(single_geotile_test)
         # plot the first variable
         dpscale =  dims(gemb_dv0, :pscale)
-        dΔT = dims(gemb_dv0, :ΔT)
-        cmap = Makie.resample_cmap(:thermal, max(length(dpscale), length(dΔT)))
+        dmscale = dims(gemb_dv0, :mscale)
+        cmap = Makie.resample_cmap(:thermal, max(length(dpscale), length(dmscale)))
 
         if elevation_classes_method == :mscale
-                dΔT_center = 1
+                dmscale_center = 1
         else
-                dΔT_center = 0
+                dmscale_center = 0
         end
 
         for k in keys(gemb_dv0)
@@ -328,8 +328,8 @@ end
             ax = Axis(f[1, 1]; title="$single_geotile_test [pscale = 1]: $k")
         
             for pscale in [1] #dpscale
-                for ΔT in dΔT
-                    lines!(ax, gemb_dv0[k][geotile = At(single_geotile_test), pscale = At(pscale), ΔT = At(ΔT)]; label="ΔT: $ΔT", color=cmap[findfirst(ΔT .== dΔT)])
+                for mscale in dmscale
+                    lines!(ax, gemb_dv0[k][geotile = At(single_geotile_test), pscale = At(pscale), mscale = At(mscale)]; label="mscale: $mscale", color=cmap[findfirst(mscale .== dmscale)])
                 end
             end
 
@@ -338,11 +338,11 @@ end
 
             for k in keys(gemb_dv0)
                 f = GGA._publication_figure(; columns=1, rows=1)
-                ax = Axis(f[1, 1]; title="$single_geotile_test [ΔT = $dΔT_center]: $k")
+                ax = Axis(f[1, 1]; title="$single_geotile_test [mscale = $dmscale_center]: $k")
 
                 for pscale in dpscale
-                    for ΔT in [dΔT_center]
-                        lines!(ax, gemb_dv0[k][geotile=At(single_geotile_test), pscale=At(pscale), ΔT=At(ΔT)]; label="pscale: $pscale", color=cmap[findfirst(pscale .== dpscale)])
+                    for mscale in [dmscale_center]
+                        lines!(ax, gemb_dv0[k][geotile=At(single_geotile_test), pscale=At(pscale), mscale=At(mscale)]; label="pscale: $pscale", color=cmap[findfirst(pscale .== dpscale)])
                     end
                 end
                 axislegend(ax, position=:lt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false)

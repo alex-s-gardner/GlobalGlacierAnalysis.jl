@@ -911,7 +911,7 @@ end
 begin
 
     center_on_dates = DateTime(2000, 2, 1):Month(1):DateTime(2001, 2, 1)
-    runs_rgi = GGA.runs2rgi(path2runs_synthesized_all_ensembles);
+    runs_rgi = GGA.runs2rgi(path2runs_synthesized);
     runs_rgi = GGA.runs_center!(runs_rgi, center_on_dates);
 
     # extract reference run and calculate 95% confidence interval

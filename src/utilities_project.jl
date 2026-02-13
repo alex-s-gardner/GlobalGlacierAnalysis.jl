@@ -2,8 +2,8 @@
 const δice = 910; #kg m-3
 const local2utc = Hour(7) # LA timezone to UTC
 const seasonality_weight = 85/100
-const distance_from_origin_penalty = 20 / 100 # NOTE FOR PAPER THIS == 10/100 for Wd when when ΔT_to_pscale_weight == 50/100
-const ΔT_to_pscale_weight = 50/100
+const distance_from_origin_penalty = 20 / 100 # NOTE FOR PAPER THIS == 10/100 for Wd when when mscale_to_pscale_weight == 50/100
+const mscale_to_pscale_weight = 50/100
 const ocean_area_km2 = 362.5 * 1E6
 const reference_ensemble_file = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_rgi7_dh_cop30_v2_cc_nmad5_v01_filled_ac_p2_aligned.jld2"; 
 
@@ -18,6 +18,12 @@ Get the elevation products configuration for a specific project.
 # Returns
 - Named tuple containing configured ElevationProduct instances for different missions
 - NOTE: latitude_limits are the latitude limits of the mission's data product and need to be specified as Integers
+
+# Examples
+```julia
+julia> product = project_products(; project_id=:v01)
+julia> icesat2_cfg = product.icesat2
+```
 """
 function project_products(; project_id = :v01)
     if project_id == :v01
@@ -45,6 +51,12 @@ Get the file paths configuration for a specific project.
 
 # Returns
 - Named tuple containing configured paths for different data products
+
+# Examples
+```julia
+julia> paths = project_paths(; project_id=:v01)
+julia> hugonnet_path = paths.hugonnet
+```
 """
 function project_paths(; project_id = :v01)
     if project_id == :v01
@@ -74,6 +86,12 @@ Define geotiles for the project, optionally filtered by domain.
 
 # Returns
 - DataFrame of geotiles with their properties
+
+# Examples
+```julia
+julia> geotiles = project_geotiles(; geotile_width=2, domain=:all)
+julia> geotiles_ice = project_geotiles(; geotile_width=2, domain=:landice)
+```
 """
 function project_geotiles(; geotile_width = 2, domain = :all, extent=nothing)
     paths = setpaths()
@@ -104,6 +122,18 @@ Create and return paths for analysis outputs.
 
 # Returns
 - Named tuple containing paths for analysis outputs
+
+# Examples
+```julia
+julia> paths = analysis_paths(; geotile_width=2)
+julia> binned_path = paths.binned
+```
+
+# Arguments
+- `geotile_width::Int`: Width of geotiles in degrees (default: 2)
+
+# Returns
+- Named tuple containing paths for analysis outputs
 """
 function analysis_paths(; geotile_width = 2)
     paths = (
@@ -128,6 +158,12 @@ Define temporal bins for the project.
 - Tuple containing (date_range, date_center) where:
   - date_range: DateTime range with 30-day intervals
   - date_center: DateTime values at the center of each bin
+
+# Examples
+```julia
+julia> date_range, date_center = project_date_bins()
+julia> ddate = Dim{:date}(date_center)
+```
 """
 function project_date_bins()
         Δd = 30
@@ -146,6 +182,12 @@ Define elevation bins for the project.
 - Tuple containing (height_range, height_center) where:
   - height_range: Range of elevation bin edges from 0 to 10000m at 100m intervals
   - height_center: Values at the center of each elevation bin
+
+# Examples
+```julia
+julia> height_range, height_center = project_height_bins()
+julia> dheight = Dim{:height}(height_center)
+```
 """
 function project_height_bins()
     Δh = 100;
@@ -155,15 +197,40 @@ function project_height_bins()
     return height_range, height_center
 end
 
+"""
+    project_mscale_bins()
 
-function project_ΔT_bins()
-    ΔT = 1
-    ΔT_range = -10.5:ΔT:10.5
-    ΔT_center = ΔT_range[1:end-1] .+ ΔT / 2
+Define melt-scaling bins (linear spacing).
 
-    return ΔT_range, ΔT_center
+# Returns
+- Tuple containing (mscale_range, mscale_center) with linear spacing from -10.5 to 10.5.
+
+# Examples
+```julia
+julia> mscale_range, mscale_center = project_mscale_bins()
+```
+"""
+function project_mscale_bins()
+    mscale = 1
+    mscale_range = -10.5:mscale:10.5
+    mscale_center = mscale_range[1:end-1] .+ mscale / 2
+
+    return mscale_range, mscale_center
 end
 
+"""
+    project_mscale_bins()
+
+Define melt-scaling bins (log-style spacing).
+
+# Returns
+- Tuple containing (mscale_range, mscale_center) with values [1/6, 1/4, 1/2, 2, 4, 6] and centers.
+
+# Examples
+```julia
+julia> mscale_range, mscale_center = project_mscale_bins()
+```
+"""
 function project_mscale_bins()
 
     mscale_range = [1/6, 1/4, 1/2, 2, 4, 6]
@@ -181,6 +248,12 @@ Get the land elevation trend correction for each mission.
 
 # Returns
 - DimensionalArray with trend values (m/yr) for each mission
+
+# Examples
+```julia
+julia> mission_trend = mission_land_trend()
+julia> gedi_trend = mission_trend[At("gedi")]
+```
 """
 function mission_land_trend()
     missions0 = ["icesat", "icesat2", "gedi", "hugonnet"]
@@ -233,6 +306,12 @@ Get GEMB (Glacier Energy and Mass Balance) model configuration for a specific ru
 
 # Throws
 - `ErrorException`: If gemb_run_id is not recognized
+
+# Examples
+```julia
+julia> gembinfo = gemb_info(; gemb_run_id=4)
+julia> dpscale = gembinfo.precipitation_scale
+```
 """
 function gemb_info(; gemb_run_id = 4)
 
@@ -326,9 +405,23 @@ function gemb_info(; gemb_run_id = 4)
 end
 
 
-# Manual override for specific geotile groups
-# This handles cases where large glaciers cross multiple tiles but should be treated separately
-# NOTE: groupings are only updated if force_remake == true
+"""
+    geotile_groups_forced()
+
+Return manual overrides for geotile groupings where large glaciers span multiple tiles.
+
+Used when glaciers that cross tile boundaries should be grouped or treated separately.
+Groupings are only applied when geotile grouping is recomputed (e.g. force_remake_before is set).
+
+# Returns
+- Vector of vectors of geotile ID strings; each inner vector is one forced group.
+
+# Examples
+```julia
+julia> forced = geotile_groups_forced()
+julia> geotile_grouping!(geotiles0, glaciers, 100; geotile_groups_manual=forced)
+```
+"""
 function geotile_groups_forced() 
     out = [
         ["lat[+62+64]lon[-148-146]"],
@@ -350,32 +443,52 @@ end
 
 plot_order = Dict("missions" => ["hugonnet", "icesat", "gedi", "icesat2"], "synthesis" => ["hugonnet", "ICESat & ICESat 2", "gedi", "Synthesis"])
 
+"""
+    gemb_altim_cost(x, dv_altim, dv_gemb, kwargs)
 
+Compute cost between altimetry-derived volume change and GEMB-sampled volume change.
 
+Samples GEMB at (pscale, mscale) from x, subtracts from dv_altim, then evaluates
+model_fit_cost_function on the residuals with the given kwargs.
+
+# Arguments
+- `x`: Parameter vector [pscale, mscale]
+- `dv_altim`: DimArray of altimetry-derived volume change (geotile, date)
+- `dv_gemb`: GEMB volume change array used for sampling
+- `kwargs`: Keyword arguments passed to model_fit_cost_function (e.g. seasonality_weight, distance_from_origin_penalty)
+
+# Returns
+- Scalar cost value.
+
+# Examples
+```julia
+julia> cost = gemb_altim_cost([1.0, 0.0], dv_altim, dv_gemb, (; seasonality_weight=0.85, distance_from_origin_penalty=0.2, mscale_to_pscale_weight=0.5))
+```
+"""
 function gemb_altim_cost(x, dv_altim, dv_gemb, kwargs)
     pscale = x[1]
-    ΔT = x[2]
+    mscale = x[2]
     
-    res = dv_altim .- gemb_dv_sample(pscale, ΔT, dv_gemb)
+    res = dv_altim .- gemb_dv_sample(pscale, mscale, dv_gemb)
     res .-= mean(res)
 
-    cost = model_fit_cost_function(res, pscale, ΔT; kwargs...)
+    cost = model_fit_cost_function(res, pscale, mscale; kwargs...)
 
     return cost
 end
 
 """
-    model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_from_origin_penalty, calibrate_to_trend_only=false, calibrate_to_annual_change_only=true)
+    model_fit_cost_function(res, pscale, mscale; seasonality_weight, distance_from_origin_penalty, calibrate_to_trend_only=false, calibrate_to_annual_change_only=true)
 
 Compute a composite cost function for fitting a model to altimetry data, incorporating trend, seasonality, and parameter penalties.
 
 # Arguments
 - `res`: Residuals between observed and modeled values. Should be a DimArray or array-like object with a :date dimension.
 - `pscale`: Precipitation scaling factor (numeric).
-- `ΔT`: Elevation offset (numeric, in meters).
+- `mscale`: Elevation offset (numeric, in meters).
 - `seasonality_weight`: Weight (0–1) for the seasonal amplitude in the cost function. Higher values emphasize seasonality.
 - `distance_from_origin_penalty`: Penalty factor for deviation of parameters from their reference values.
-- `ΔT_to_pscale_weight`: Weight for the difference between melt scaling and precipitation scaling in the cost function.
+- `mscale_to_pscale_weight`: Weight for the difference between melt scaling and precipitation scaling in the cost function.
 - `calibrate_to`` = [:all, :annual, :five_year, :trend]
 
 # Returns
@@ -387,9 +500,14 @@ A tuple `cost` where:
 - If `calibrate_to_annual_change_only` is `true`, the cost is computed using only the annual change (residuals at the seasonal minimum).
 - If `calibrate_to_trend_only` is `true`, the cost is based only on the absolute value of the linear trend.
 - Otherwise, the cost is a weighted sum of RMSE and the amplitude of the seasonal cycle.
-- Penalty terms are applied for deviation of `pscale` from 1 and `ΔT` from 0 (scaled to kilometers).
+- Penalty terms are applied for deviation of `pscale` from 1 and `mscale` from 0 (scaled to kilometers).
+
+# Examples
+```julia
+julia> cost = model_fit_cost_function(res, 1.0, 0.0; seasonality_weight=0.85, distance_from_origin_penalty=0.2, mscale_to_pscale_weight=0.5)
+```
 """
-function model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to = :all, is_scaling_factor=Dict("pscale" => true, "ΔT" => true))
+function model_fit_cost_function(res, pscale, mscale; seasonality_weight, distance_from_origin_penalty, mscale_to_pscale_weight, calibrate_to = :all, is_scaling_factor=Dict("pscale" => true, "mscale" => true))
     
     # remove linear trend to emphasize seasonality
     if calibrate_to != :five_year
@@ -419,23 +537,23 @@ function model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_
         dp = pscale;
     end
 
-    if is_scaling_factor["ΔT"]
-         if ΔT < 1
-            dT = 1/ΔT - 1
+    if is_scaling_factor["mscale"]
+         if mscale < 1
+            dT = 1/mscale - 1
         else
-            dT = ΔT - 1
+            dT = mscale - 1
         end
     else
-        dT = ΔT;
+        dT = mscale;
     end
 
     if calibrate_to == :all
         rmse = sqrt(mean(res .^ 2)) 
-        cost = (((1 - seasonality_weight) * rmse) + (seasonality_weight * fit.amplitude)) * (1 + (sqrt((dT * (ΔT_to_pscale_weight))^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty))
+        cost = (((1 - seasonality_weight) * rmse) + (seasonality_weight * fit.amplitude)) * (1 + (sqrt((dT * (mscale_to_pscale_weight))^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty))
     elseif calibrate_to == :trend
-        cost = ((1 - seasonality_weight) * abs(fit.trend)) * (1 + (sqrt((dT * (ΔT_to_pscale_weight))^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty))
+        cost = ((1 - seasonality_weight) * abs(fit.trend)) * (1 + (sqrt((dT * (mscale_to_pscale_weight))^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty))
     else
-        cost = ((1 - seasonality_weight) * rmse_cost) * (1 + (sqrt((dT * (ΔT_to_pscale_weight))^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty))
+        cost = ((1 - seasonality_weight) * rmse_cost) * (1 + (sqrt((dT * (mscale_to_pscale_weight))^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty))
     end
 
     return cost

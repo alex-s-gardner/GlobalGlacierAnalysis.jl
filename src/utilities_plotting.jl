@@ -19,6 +19,12 @@ proper rendering and margins.
 
 # Throws
 - `ErrorException`: If columns is not 1 or 2
+
+# Examples
+```julia
+julia> f = _publication_figure(; columns=2, rows=1)
+julia> ax = Axis(f[1, 1])
+```
 """
 function _publication_figure(; columns=1, rows=1)
     mm = 3.7795275590551176
@@ -54,6 +60,12 @@ Create a visualization of raw height anomalies and their monthly medians over ti
 Creates a two-panel plot showing height anomaly measurements over time. The top panel
 uses a y-axis scaled to the 95th percentile of anomalies, while the bottom panel
 shows the full range. Both panels include raw measurements and monthly median values.
+
+# Examples
+```julia
+julia> f = plot_unbinned_height_anomalies(datetime, dh; title="Geotile height anomalies")
+julia> save("height_anomalies.png", f)
+```
 """
 function plot_unbinned_height_anomalies(datetime, dh; title="")
 
@@ -108,6 +120,11 @@ Create a visualization showing the relationship between surface curvature and he
 Creates a two-panel plot showing how height anomalies vary with surface curvature. The top panel
 displays raw observations, the model fit, and corrected values. The bottom panel shows the
 distribution of observations across curvature bins.
+
+# Examples
+```julia
+julia> f = plot_curvature(bin_center, dh_obs, dh_cor, nrow; title="Curvature correction")
+```
 """
 function plot_curvature(bin_center, dh_obs, dh_cor, nrow; title = "")
     f = _publication_figure(columns=2, rows=2)
@@ -232,7 +249,7 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
 
     missions = mission_proper_name.(collect(keys(dh)))
     dheight = dims(dh[first(keys(dh))], :height)
-    ΔT = val(dheight)[2] - val(dheight)[1]
+    mscale = val(dheight)[2] - val(dheight)[1]
     ddate = dims(dh[first(keys(dh))], :date)
     
     valid = falses(size(dh[first(keys(dh))]))
@@ -297,8 +314,8 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
         xlims!(ax[i], xlims)
     end
 
-    height_min = max(0.0, (floor(height_min / ΔT) * ΔT) - ΔT)
-    height_max = ceil(height_max / ΔT) * ΔT
+    height_min = max(0.0, (floor(height_min / mscale) * mscale) - mscale)
+    height_max = ceil(height_max / mscale) * mscale
 
     for (i, mission) in enumerate(mission_order)
         ylims!(ax[i], (height_min, height_max))
@@ -331,7 +348,7 @@ function plot_hypsometry!(ax, area_km2)
     ax.title="glacier area-elevation distribution"
 
     dheight = dims(area_km2, :height)
-    ΔT = val(dheight)[2] - val(dheight)[1]
+    mscale = val(dheight)[2] - val(dheight)[1]
 
     pts0 = Point2f.(collect(area_km2), parent(val(dheight)))
     pts = similar(pts0, (length(pts0) * 2)+2)
@@ -351,7 +368,7 @@ function plot_hypsometry!(ax, area_km2)
     end
 
     poly!(ax, pts, color=:skyblue2, strokecolor=:black, strokewidth=1)
-    xlims!(ax, (0, ceil(maximum(area_km2)*1.05 / ΔT) * ΔT))
+    xlims!(ax, (0, ceil(maximum(area_km2)*1.05 / mscale) * mscale))
     ax.ygridvisible = false
     ax.xgridvisible = false
     ax.yticklabelsvisible = false
@@ -922,11 +939,11 @@ function plot_model_fit(gemb, discharge, dv_altim, cost, geotiles_in_group; colo
 
     index_minimum = argmin(cost)
     pscale_best = DimPoints(cost)[index_minimum][1]
-    ΔT_best = DimPoints(cost)[index_minimum][2]
+    mscale_best = DimPoints(cost)[index_minimum][2]
 
-    best_smb = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:smb]);
-    best_fac = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:fac]);
-    best_fit = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:dv]);
+    best_smb = gemb_dv_sample(pscale_best, mscale_best, gemb0[:smb]);
+    best_fac = gemb_dv_sample(pscale_best, mscale_best, gemb0[:fac]);
+    best_fit = gemb_dv_sample(pscale_best, mscale_best, gemb0[:dv]);
 
     
     fit_gemb  = ts_seasonal_model(best_fit; interval=nothing)
@@ -1022,7 +1039,7 @@ function plot_best_fit!(ax, best_smb, best_fac, best_discharge, best_fit, dv0; c
     ax.ytickformat=values -> ["$(round(Int,value))m" for value in values]
     #ax.xticks = xlims[1]:xtickspacing:xlims[2]
     #xlims!(ax, xlims)
-    #title="best fit for $single_geotile_test [pscale = $pscale0, ΔT = $ΔT0, mad = $(round(cost_metric_minimum; digits=2))]"
+    #title="best fit for $single_geotile_test [pscale = $pscale0, mscale = $mscale0, mad = $(round(cost_metric_minimum; digits=2))]"
 
     CairoMakie.lines!(ax, decyear, parent(dv0); label="observed", color=clrs[1])
     CairoMakie.lines!(ax, decyear, parent(best_fac); label="FAC", color=clrs[2])
@@ -1037,11 +1054,11 @@ end
 """
     plot_cost_metric!(ax, cost_metric; colormap=:thermal)
 
-Plot a contour map of the cost metric as a function of precipitation scale (pscale) and ΔT.
+Plot a contour map of the cost metric as a function of precipitation scale (pscale) and mscale.
 
 # Arguments
 - `ax`: A CairoMakie Axis object to plot on.
-- `cost_metric`: 2D array (or NamedDimsArray) of cost metric values, with dimensions :pscale and :ΔT.
+- `cost_metric`: 2D array (or NamedDimsArray) of cost metric values, with dimensions :pscale and :mscale.
 
 # Keyword Arguments
 - `colormap`: Colormap to use for the contour plot (default: `:thermal`).
@@ -1049,19 +1066,19 @@ Plot a contour map of the cost metric as a function of precipitation scale (psca
 # Returns
 - `(ax, crange)`: The modified axis object and the color range tuple used for the plot.
 
-This function creates a contour plot of the cost metric over the parameter space of precipitation scale and ΔT.
+This function creates a contour plot of the cost metric over the parameter space of precipitation scale and mscale.
 It highlights the minimum cost location with a marker and label, and adds a colorbar for reference.
 """
 function plot_cost_metric!(ax, cost_metric; colormap=:thermal, step=1/35)
 
     dpscale = dims(cost_metric, :pscale)
-    dΔT = dims(cost_metric, :ΔT)
+    dmscale = dims(cost_metric, :mscale)
 
     ax.xlabel = "precipitation scaling"
     ax.ylabel = "melt scaling"
 
     (x, xticks, xticklabels) = scale_linear_ticks(dpscale.val)
-    (y, yticks, yticklabels) = scale_linear_ticks(dΔT.val)
+    (y, yticks, yticklabels) = scale_linear_ticks(dmscale.val)
    
     # normalize cost metric to 0-1
     cost_metric .-= minimum(cost_metric[.!isinf.(cost_metric)])
@@ -1078,10 +1095,10 @@ function plot_cost_metric!(ax, cost_metric; colormap=:thermal, step=1/35)
 
     index_minimum = argmin(cost_metric)
     pscale_best = DimPoints(cost_metric)[index_minimum][1]
-    ΔT_best = DimPoints(cost_metric)[index_minimum][2]
+    mscale_best = DimPoints(cost_metric)[index_minimum][2]
 
     x_best = scale2linear(pscale_best)
-    y_best = scale2linear(ΔT_best)
+    y_best = scale2linear(mscale_best)
     scatter!(ax, x_best, y_best; color=:black, markersize=15, marker=:xcross)
 
     return ax, crange
@@ -1450,7 +1467,7 @@ end
 Plot area-normalized height change ensemble results from GEMB model diagnostics.
 
 # Arguments
-- `gemb_dv`: Dictionary or NamedTuple of GEMB diagnostic variables, each as a DimArray with `:pscale` and `:ΔT` dimensions.
+- `gemb_dv`: Dictionary or NamedTuple of GEMB diagnostic variables, each as a DimArray with `:pscale` and `:mscale` dimensions.
 - `area_km2`: DimArray or array representing the area (in km²) for normalization.
 - `geotile`: (Optional) String identifier for the geotile being plotted (used in plot titles).
 - `title_prefix`: (Optional) String prefix for plot titles.
@@ -1458,14 +1475,14 @@ Plot area-normalized height change ensemble results from GEMB model diagnostics.
 # Returns
 - `figures`: Dictionary mapping each variable name to its corresponding Makie figure.
 
-Each figure shows the area-normalized height change for all parameter scale (`pscale`) and height change (`ΔT`) ensemble members, with a legend indicating the parameter combinations.
+Each figure shows the area-normalized height change for all parameter scale (`pscale`) and height change (`mscale`) ensemble members, with a legend indicating the parameter combinations.
 """
 function plot_dh_gemb_ensemble(gemb_dv, area_km2; geotile = "", title_prefix="")
     area_total = sum(parent(area_km2))
     vars2plot = keys(gemb_dv)
     dpscale = dims(gemb_dv[first(vars2plot)], :pscale)
-    dΔT = dims(gemb_dv[first(vars2plot)], :ΔT)
-    clrs = Makie.resample_cmap(:thermal, length(dpscale) * length(dΔT) + 1)
+    dmscale = dims(gemb_dv[first(vars2plot)], :mscale)
+    clrs = Makie.resample_cmap(:thermal, length(dpscale) * length(dmscale) + 1)
     figures = Dict()
 
     for var0 in vars2plot
@@ -1476,10 +1493,10 @@ function plot_dh_gemb_ensemble(gemb_dv, area_km2; geotile = "", title_prefix="")
 
         cnt = 1
         for pscale in dpscale
-            for ΔT in dΔT
-                dh = gemb_dv[var0][pscale=At(pscale), ΔT=At(ΔT)] ./ area_total
+            for mscale in dmscale
+                dh = gemb_dv[var0][pscale=At(pscale), mscale=At(mscale)] ./ area_total
                 height_range, = validrange(.!isnan.(dh))
-                lines!(ax, dh[height_range]; label="p:$(pscale) Δh:$(ΔT)", color=clrs[cnt])
+                lines!(ax, dh[height_range]; label="p:$(pscale) Δh:$(mscale)", color=clrs[cnt])
                 cnt += 1
             end
         end
@@ -1617,26 +1634,26 @@ function plot_point_location_river_flux(land_flux, glacier_flux, snow_flux; date
 end
 
 
-function plot_ref_pscale_mscale_summary(path2runs_synthesized, binned_synthesized_dv_file_ref; rgi2plot=[99], seasonality_weight=seasonality_weight, distance_from_origin_penalty=distance_from_origin_penalty, ΔT_to_pscale_weight=ΔT_to_pscale_weight, show_title=true, bin_width=0.25)
+function plot_ref_pscale_mscale_summary(path2runs_synthesized, binned_synthesized_dv_file_ref; rgi2plot=[99], seasonality_weight=seasonality_weight, distance_from_origin_penalty=distance_from_origin_penalty, mscale_to_pscale_weight=mscale_to_pscale_weight, show_title=true, bin_width=0.25)
 
     ensemble_reference_file = replace(binned_synthesized_dv_file_ref, "_gembfit_dv.jld2" => ".jld2")
 
     region_fits = ensemble_summary(path2runs_synthesized, ensemble_reference_file;)
     gemb_fit = GeoDataFrames.read(replace(ensemble_reference_file, ".jld2" => "_gembfit.arrow"))
 
-    title1 = "W_s: $(seasonality_weight), W_d: $(distance_from_origin_penalty), W_m2p: $(ΔT_to_pscale_weight)"
+    title1 = "W_s: $(seasonality_weight), W_d: $(distance_from_origin_penalty), W_m2p: $(mscale_to_pscale_weight)"
 
     (pscale_linear, pscale_ticks, pscale_ticklabels) = scale_linear_ticks(gemb_fit[:, :pscale])
-    (ΔT_linear, ΔT_ticks, ΔT_ticklabels) = scale_linear_ticks(gemb_fit[:, :pscale])
+    (mscale_linear, mscale_ticks, mscale_ticklabels) = scale_linear_ticks(gemb_fit[:, :pscale])
 
     e0 = ceil(Int, maximum(abs.(pscale_linear)))
 
     pscale_linear_bins = (-e0-bin_width):bin_width:(e0+bin_width)
     pscale_linear_bin_centers = (pscale_linear_bins[1:end-1] .+ pscale_linear_bins[2:end]) ./ 2
 
-    e0 = ceil(Int, maximum(abs.(ΔT_linear)))
-    ΔT_linear_bins = (-e0-bin_width):bin_width:(e0+bin_width)
-    ΔT_linear_bin_centers = (ΔT_linear_bins[1:end-1] .+ ΔT_linear_bins[2:end]) ./ 2
+    e0 = ceil(Int, maximum(abs.(mscale_linear)))
+    mscale_linear_bins = (-e0-bin_width):bin_width:(e0+bin_width)
+    mscale_linear_bin_centers = (mscale_linear_bins[1:end-1] .+ mscale_linear_bins[2:end]) ./ 2
 
 
     f = Vector{Any}(undef, length(rgi2plot))
@@ -1665,11 +1682,11 @@ function plot_ref_pscale_mscale_summary(path2runs_synthesized, binned_synthesize
         end
 
         ax = Makie.Axis(f[i][1, 1]; xlabel="pscale", ylabel="count", xticks=(pscale_ticks, pscale_ticklabels))
-        barplot!(ax, ΔT_linear_bin_centers, h.weights;)
+        barplot!(ax, mscale_linear_bin_centers, h.weights;)
 
-        h = StatsBase.fit(Histogram, scale2linear.(gemb_fit[index, :ΔT]), ΔT_linear_bins)
-        ax = Makie.Axis(f[i][1, 2]; xlabel="mscale", ylabel="count", xticks=(ΔT_ticks, ΔT_ticklabels))
-        barplot!(ax, ΔT_linear_bin_centers, h.weights;)
+        h = StatsBase.fit(Histogram, scale2linear.(gemb_fit[index, :mscale]), mscale_linear_bins)
+        ax = Makie.Axis(f[i][1, 2]; xlabel="mscale", ylabel="count", xticks=(mscale_ticks, mscale_ticklabels))
+        barplot!(ax, mscale_linear_bin_centers, h.weights;)
     end
 
     return f

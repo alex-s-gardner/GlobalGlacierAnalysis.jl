@@ -265,7 +265,7 @@ GGA.geotile_synthesize(path2runs_filled;
 include("gemb_classes_binning.jl")
 
 # parms_ref = GGA.binned_filled_fileparts(binned_synthesized_dv_file_ref)
-force_remake_before_gemb = DateTime("2026-01-31T14:00") + GGA.local2utc
+force_remake_before_gemb = DateTime("2026-02-12T19:00") + GGA.local2utc
 
 gemb = GGA.gemb_ensemble_dv(; gemb_run_id);
 
@@ -277,7 +277,7 @@ discharge = GGA.global_discharge_filled(;
     discharge2smb_max_latitude = -60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
     pscale=1,
-    ΔT=1,
+    mscale=1,
     geotile_width=2,
     force_remake_before=force_remake_before_gemb,
     force_remake_before_hypsometry=nothing
@@ -296,7 +296,7 @@ GGA.gemb_calibration(
     single_geotile_test,
     seasonality_weight=GGA.seasonality_weight,
     distance_from_origin_penalty=GGA.distance_from_origin_penalty,
-    ΔT_to_pscale_weight=GGA.ΔT_to_pscale_weight,
+    mscale_to_pscale_weight=GGA.mscale_to_pscale_weight,
     force_remake_before=DateTime("2028-01-31T14:00"),
     calibrate_to=:all
 )
@@ -313,16 +313,16 @@ GGA.geotile_synthesis_gembfit_dv(
 
 
 vars2plot = ["dm", "dm_altim", "dv"]
-rgi2plot = [3,99]
+rgi2plot = [99]
 
 f = GGA.plot_ensemble_rgi_timeseries(vars2plot, path2runs_synthesized;  center_on_dates=DateTime(2002, 5, 1):Month(1):DateTime(2005, 12, 15), rgi2plot)
 display.(f);
 
-f = GGA.plot_ref_pscale_mscale_summary(path2runs_synthesized, binned_synthesized_dv_file_ref; rgi2plot, seasonality_weight=seasonality_weight, distance_from_origin_penalty=distance_from_origin_penalty, ΔT_to_pscale_weight=ΔT_to_pscale_weight);
+f = GGA.plot_ref_pscale_mscale_summary(path2runs_synthesized, binned_synthesized_dv_file_ref; rgi2plot, seasonality_weight=GGA.seasonality_weight, distance_from_origin_penalty=GGA.distance_from_origin_penalty, mscale_to_pscale_weight=GGA.mscale_to_pscale_weight);
 display.(f);
 
 for i in eachindex(rgi2plot)
-    fname = "RGI$(rgi2plot[i])_Ws$(seasonality_weight)_Wd$(distance_from_origin_penalty)_Wm2p$(ΔT_to_pscale_weight).png"
+    fname = "RGI$(rgi2plot[i])_Ws$(seasonality_weight)_Wd$(GGA.distance_from_origin_penalty)_Wm2p$(GGA.mscale_to_pscale_weight).png"
     CairoMakie.save(joinpath(GGA.pathlocal[:figures], fname), f[i])
 end
 
