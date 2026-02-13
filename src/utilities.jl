@@ -116,19 +116,6 @@ function decimalyear(datetime)
     return decyear
 end
 
-function match_rgi6_rgi7_attribute_names(path2glacier_rgi7_individual)
-   gdf = GDF.read(path2glacier_rgi7_individual)
-
-   # match rgi 6.0 attribute names
-   rename!(gdf, "rgi_id" => "RGIId")
-   rename!(gdf, "cenlat" => "CenLat")
-   rename!(gdf, "cenlon" => "CenLon")
-   rename!(gdf, "area_km2" => "Area")
-
-   # save to disk
-   GDF.write(path2glacier_rgi7_individual, gdf)
-end
-
 """
     decimalyear2datetime(decyear)
 
@@ -888,43 +875,6 @@ function vector_overlap(a, b)
 end
 
 
-"""
-    nanmean(x) -> Number
-
-Calculate the mean of non-NaN values in a collection.
-
-# Arguments
-- `x`: Collection of values that may contain NaN elements
-
-# Returns
-- Mean of all non-NaN values, or NaN if all values are NaN
-"""
-function nanmean(x)
-    mean(x[.!isnan.(x)])
-end
-
-"""
-    nanmedian(x) -> Number
-
-Calculate the median of non-NaN values in a collection.
-
-# Arguments
-- `x`: Collection of values that may contain NaN elements
-
-# Returns
-- Median of all non-NaN values, or NaN if all values are NaN
-"""
-function nanmedian(x)
-    valid = .!isnan.(x)
-    if any(valid)
-        y = median(x[valid])
-    else
-        y = NaN
-    end
-    return y
-end
-
-
 const MATLAB_EPOCH = Dates.DateTime(-1, 12, 31)
 
 """
@@ -1679,38 +1629,6 @@ end
 
 
 """
-    overlap_range(x1, x2) -> (range_overlap1, range_overlap2)
-
-Find the overlapping range indices between two arrays.
-
-# Arguments
-- `x1`: First array of values
-- `x2`: Second array of values
-
-# Returns
-- `range_overlap1`: Range of indices in x1 that overlap with x2
-- `range_overlap2`: Range of indices in x2 that overlap with x1
-
-# Description
-Calculates the minimum and maximum values that exist in both arrays,
-then returns the index ranges for each array that fall within this
-overlapping range. Useful for finding common data ranges between
-two datasets.
-"""
-function overlap_range(x1, x2)
-    x_min = max(minimum(x1), minimum(x2))
-    x_max = min(maximum(x1), maximum(x2))
-
-    ind1 = (x1 .>= x_min) .& (x1 .<= x_max)
-    range_overlap1 = findfirst(ind1):findlast(ind1)
-
-    ind2 = (x2 .>= x_min) .& (x2 .<= x_max)
-    range_overlap2 = findfirst(ind2):findlast(ind2)
-
-    return range_overlap1, range_overlap2
-end
-
-"""
     geotiles_mutually_exclusive_rgi!(geotiles) -> (geotiles, reg)
 
 Make RGI (Randolph Glacier Inventory) regions mutually exclusive in the geotiles DataFrame.
@@ -1830,33 +1748,6 @@ function _trim_data(f::Dict{String, Any}, geotile_ids)
     end
     return f
 end
-
-"""
-    trim_files(path2runs, geotile_ids)
-
-Trim data files to only include specified geotiles, overwriting original files.
-
-# Arguments
-- `path2runs`: Vector of file paths to process
-- `geotile_ids`: Vector of geotile IDs to keep
-
-# Warning
-This function overwrites the original data files.
-"""
-function trim_files(path2runs, geotile_ids)
-    @showprogress desc="Trimming data to only include geotiles with glacier coverage... !! WARNING DATA WILL BE OVERWRITTEN !!"  for path2file in path2runs
-        f = load(path2file)::Dict{String, Any}
-        dgeotile = dims(f[first(keys(f))]["hugonnet"], :geotile)
-
-        if length(dgeotile) != length(geotile_ids)
-            @warn "Geotile dimensions do not match, removing excess geotiles: $(path2file)"
-            f = _trim_data(f, geotile_ids) 
-
-            save(path2file, f)
-        end
-    end
-end
-
 
 """
     _geotile_load_align(; surface_mask="glacier", geotile_width=2, geotile_order=nothing)
@@ -1998,58 +1889,6 @@ function ts_seasonal_model(ts; interval=nothing)
     return (;trend, amplitude, phase_peak_month)
 end
 
-function polyfit(x, y; order)
-    A = ones(length(x), order + 1)
-    for i in 1:order
-        A[:, i+1] = x.^i
-    end
-    p = A \ y;
-    return p
-end
-
-function polyval(x, p)
-    out = zeros(length(x))
-    for i in eachindex(p)
-        out .+= p[i] .* x .^ (i-1)
-    end
-    return out
-end
-
-
-
-# This is a Work In Progress.... need to move away from DataFames for geotile info... and the DimStack should be passed to functions... not read in for each function
-function geotile_fullservice(; surface_mask ="glacier", geotile_width=2, geotile_grouping_min_feature_area_km2 = 100, force_remake_before = nothing)
-
-    # Load and align geotiles with the synthesized data dimensions
-    geotiles = _geotile_load_align(;
-        surface_mask,
-        geotile_width,
-        only_geotiles_w_area_gt_0=true,
-    )
-
-    # Add in groups
-    geotiles_groups = geotile_grouping(; surface_mask, min_area_km2=geotile_grouping_min_feature_area_km2, geotile_width, force_remake_before)
-
-    # Add groups to geotiles
-    _, grp_index = intersectindices(geotiles.id, geotiles_groups.id)
-    geotiles[!, :group] = geotiles_groups[grp_index, :group]
-
-
-    geotiles[!, :rgi] .= 0
-    for rgi in 1:19
-        geotiles[geotiles[:,"rgi$rgi"].>0, :rgi] .= rgi
-        select!(geotiles, Not("rgi$rgi"))
-    end
-
-    dgeotile = Dim{:geotile}(geotiles.id)
-
-    select!(geotiles, Not([:geometry, :id]))
-   
-    varname = tuple(Symbol.(names(geotiles))...)
-    geotiles = DimStack(NamedTuple{varname}([DimVector(geotiles[:,name], dgeotile) for name in names(geotiles)]))
-end
-
-
 function gt_per_yr_to_m3_per_s(gt_per_yr)
     return gt_per_yr * 1e9 / 365.25 / 24 / 60 / 60
 end
@@ -2106,30 +1945,6 @@ function calculate_slope(data::DimArray)
 
     slope = numerator / denominator
     return slope
-end
-
-
-"""
-    scale2dist(scale::AbstractVector)
-
-Convert scaling factors into a 'distance' metric with symmetric scaling around 1.
-For elements less than 1, returns `-1 ./ scale`; for elements greater than or equal to 1, returns them unchanged.
-This mapping makes deviation from 1 symmetric in terms of distance for optimization/penalty calculations.
-
-# Arguments
-- `scale::AbstractVector`: Vector of scaling factors.
-
-# Returns
-- `dist::Vector`: Vector of transformed distance values, symmetric about scale=1.
-
-# Example
-```julia
-scale2dist([0.5, 1.0, 2.0])  # returns [-2.0, 1.0, 2.0]
-```
-"""
-function scale2dist(scale)
-    dist = vcat(-1 ./ scale[scale .< 1], scale[scale .>= 1])
-    return dist
 end
 
 
