@@ -60,6 +60,10 @@ begin
     glacier_flux_path = GGA.pathlocal[:glacier_summary]
 
     discharge_fractional_error = 0.15
+    trend_fractional_error_min = 0.2;
+    trend_fractional_error_parameters = ["trend", "acceleration"]
+    trend_fractional_error_varnames = ["fac", "refreeze", "rain", "acc", "melt", "runoff", "smb", "ec", "net_acc"]
+
     dates2plot = [DateTime(1980, 1, 1),DateTime(2025, 1, 15)] # also dates used for trend fitting
     dates4trend = [DateTime(2000, 3, 1), DateTime(2024, 12, 15)] # use these date for comparing individual model runs to GRACE (only need for rmse anlysis)
     dates_firstdecade = [DateTime(2000, 1, 1), DateTime(2010, 1, 1)] 
@@ -75,7 +79,6 @@ begin
     path2rgi_regions = paths[:rgi6_regions_shp]
 
     path2river_flux = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
-
 
     path2runs_filled, params = GGA.binned_filled_filepaths(;
         project_id=:v01,
@@ -114,6 +117,9 @@ begin
     region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge = discharge_rgi)
     GGA.check_for_all_nans(region_fits)
 
+    region_fits = GGA.region_min_frac_error!(region_fits; fractional_error_min = trend_fractional_error_min, varnames=trend_fractional_error_varnames, parameters=trend_fractional_error_parameters);
+
+
     # load GRACE data [95% confidence interval]
     grace = GGA.grace_masschange();
     grace[:,:,At(false)] = GGA.regions_center!(grace[:,:,At(false)], center_on_dates)
@@ -148,6 +154,8 @@ begin
     region_fits_grace = zeros(dvarname2, drgi, dparameters, derr)
     region_fits_grace[At(collect(dvarname)), :, : ,:] = GGA.region_fit_ref_and_err(runs_rgi_fits_grace, ensemble_reference_file; error_quantile, error_scaling, discharge = discharge_rgi)
 
+    region_fits_grace = GGA.region_min_frac_error!(region_fits_grace; fractional_error_min = trend_fractional_error_min, varnames=trend_fractional_error_varnames, parameters=trend_fractional_error_parameters);
+
     # regions 12 and 99 contain NaN so exclude them in trend calculation
     region_fits_grace[At("dm_grace"), At(setdiff(drgi, [12, 99])), : , At(false)] = GGA.rgi_trends(regions["dm_grace"][At(setdiff(drgi, [12, 99])),:, At(false)], dates_altim_grace_overlap);
 
@@ -156,13 +164,21 @@ begin
     region_fits_glambie = zeros(dvarname2, drgi, dparameters, derr)
     runs_rgi_fits_glambie = GGA.rgi_trends(runs_rgi, discharge_rgi, dates_glambie_overlap);
     region_fits_glambie[At(collect(dvarname)), :, :, :] = GGA.region_fit_ref_and_err(runs_rgi_fits_glambie, ensemble_reference_file; error_quantile, error_scaling, discharge = discharge_rgi)
+
+    region_fits_glambie = GGA.region_min_frac_error!(region_fits_glambie; fractional_error_min = trend_fractional_error_min, varnames=trend_fractional_error_varnames, parameters=trend_fractional_error_parameters);
+
     region_fits_glambie[At("dm_glambie"), :, : , At(false)] = GGA.rgi_trends(regions["dm_glambie"][:,:, At(false)], dates_glambie_overlap);
 
     runs_rgi_noaltim = filter(p -> p[1] in setdiff(keys(runs_rgi), ["dm_altim", "dv_altim"]), runs_rgi)
     runs_rgi_fits_firstdecade = GGA.rgi_trends(runs_rgi_noaltim, discharge_rgi, dates_firstdecade);
     region_fits_firstdecade = GGA.region_fit_ref_and_err(runs_rgi_fits_firstdecade, ensemble_reference_file; error_quantile, error_scaling, discharge = discharge_rgi);
+
+    region_fits_firstdecade = GGA.region_min_frac_error!(region_fits_firstdecade; fractional_error_min = trend_fractional_error_min, varnames=trend_fractional_error_varnames, parameters=trend_fractional_error_parameters);
+
     runs_rgi_fits_lastdecade = GGA.rgi_trends(runs_rgi_noaltim, discharge_rgi, dates_lastdecade);
     region_fits_lastdecade = GGA.region_fit_ref_and_err(runs_rgi_fits_lastdecade, ensemble_reference_file; error_quantile, error_scaling, discharge = discharge_rgi);
+
+    runs_rgi_fits_lastdecade = GGA.region_min_frac_error!(runs_rgi_fits_lastdecade; fractional_error_min = trend_fractional_error_min, varnames=trend_fractional_error_varnames, parameters=trend_fractional_error_parameters);
 end;
 
 # CREATE OUTPUTS FOR PAPER
@@ -171,12 +187,19 @@ begin
 
     exclude_regions = []#[13, 14, 15]
     params = ["trend", "acceleration", "amplitude", "phase"]
-    regional_results = GGA.error_bar_table(region_fits; params = params, rgi_regions = setdiff(drgi, exclude_regions));
+
+    # create a Table 1 of rates and accelerations
+    regional_results = GGA.region_fits_table(region_fits, varnames=["dv_altim", "dv", "dm",  "acc", "runoff", "melt", "refreeze", "ec", "discharge", "smb", "fac", "gsi"], rgi_regions=vcat(1:12, 98, 16:19, 99), no_err=["gsi"], no_acceleration=["gsi","discharge"], amplitude = ["dv_altim", "dv"], digits=1)
+
 
     altim_cols = names(regional_results)[occursin.("_altim", names(regional_results))]
     rename!(regional_results, altim_cols .=> replace.(altim_cols, "_altim" => "_synthesis"))
-    
-    rename!(regional_results, "gsi_trend_[Gt/yr]" => "gsi")
+    trend_cols = names(regional_results)[occursin.("_trend", names(regional_results))]
+    rename!(regional_results, trend_cols .=> replace.(trend_cols, "_trend" => ""))
+    acceleration_cols = names(regional_results)[occursin.("_acceleration", names(regional_results))]
+    rename!(regional_results, acceleration_cols .=> replace.(acceleration_cols, "_acceleration" => ""))
+
+    rename!(regional_results, "gsi_[Gt/yr]" => "gsi")
 
     # add area_km2 to regional_results
     regional_results[!, :area_km2] .= 0.0
@@ -193,16 +216,9 @@ begin
     end
 
     # dump table to console
-    GGA.show_error_bar_table(regional_results)
+    regional_results
 
     # for saving to csv
-    regional_results_out = copy(regional_results)
-    colnames = names(regional_results_out)
-    delete_index = falses(length(colnames))
-    delete_cols_containing =["discharge_amplitude", "discharge_phase", "discharge_acceleration", "gsi_phase", "gsi_amplitude", "gsi_acceleration"]
-    for delete_col in delete_cols_containing
-        delete_index .|= occursin.(Ref(delete_col), colnames)
-    end
     regional_results_out = regional_results_out[:, .!delete_index]
 
 
@@ -239,7 +255,6 @@ begin
     decyear = GGA.decimalyear.(val(ddate))
     derror = dims(regions_out[var0], :error)
 
-
     for k in keys(regions_out)
         #k = first(keys(regions_out))
 
@@ -274,7 +289,6 @@ begin
         var1 *= unit
         regions_out[k] = var1[rgi = At(setdiff(drgi, exclude_regions))]
     end
-
 
     # convert to DimStack
     foo0 = [];
@@ -331,7 +345,6 @@ begin
     regional_results = GGA.error_bar_table(region_fits; varnames, params, rgi_regions=setdiff(drgi, exclude_regions), digits=2)
 
     GGA.show_error_bar_table(regional_results; cols2display = 1)
-
 end
 
 # dump summary conclusions to console
@@ -605,11 +618,9 @@ end
 
     println("$(GGA.rginum2label.(rgis)) —are in the poorest health, with GSIs between $(round.(extrema(region_fits[varname = At(v), rgi = At(rgis), parameter= At(p), error = At(false)]), digits=2))")
 
-
     rgi = 4;
     val9 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
     println("The highest GSI of $(round(val9, digits=2)) is observed in Arctic Canada South, implying that net accumulation would need to increase by $(round(Int, (val9-1)*100))%")
-
 
     rgi = 3;
     val10 = region_fits[varname = At(v), rgi=At(rgi), parameter= At(p), error = At(false)];
@@ -939,5 +950,12 @@ begin
     save(joinpath(GGA.pathlocal.figures, "Figure3.png"), f)
 end
 
+
+# create a Table 1 of rates and accelerations
+result_table = GGA.region_fits_table(region_fits, varnames=["dv", "dm",  "net_acc", "runoff", "gsi"], rgi_regions=vcat(1:12, 98, 16:19, 99), no_err=["gsi"], no_acceleration=["gsi",], digits=1)
+
+# save result_table to CSV
+result_table_file = joinpath(GGA.pathlocal.figures, "regional_fits_table.csv")
+CSV.write(result_table_file, result_table; bom=true)
 
 end

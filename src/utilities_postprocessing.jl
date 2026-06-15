@@ -216,6 +216,7 @@ function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
 
     return region_fit
 end
+
 """
     rgi_trends(da::AbstractDimArray, daterange)
 
@@ -248,7 +249,7 @@ function rgi_trends(da::AbstractDimArray, daterange)
     dparameter = Dim{:parameter}(["trend", "acceleration", "amplitude", "phase"])
     drgi = dims(da, :rgi)
 
-    ddate = dims(da[:,minimum(daterange)..maximum(daterange)], :date)
+    ddate = dims(da[:,minimum(daterange).. maximum(daterange)], :date)
 
     d = decimalyear.(ddate)
     d = d .- ceil(mean(d))
@@ -333,7 +334,17 @@ function region_fit_ref_and_err(region_fit, path2reference; error_quantile=0.95,
         regions_fit[At("gsi"), :, At("trend"), At(true)] = err
     end
 
+
     return regions_fit
+end
+
+
+function region_min_frac_error!(region_fits; fractional_error_min, varnames, parameters)
+    err = region_fits[varname=At(varnames), parameter = At(parameters), error = At(true)]
+    err_frac = abs.(region_fits[varname=At(varnames), parameter = At(parameters), error = At(false)] .* fractional_error_min)
+    err = max.(err_frac, err)
+    region_fits[varname=At(varnames), parameter = At(parameters), error = At(true)] = err_frac
+    return region_fits
 end
 
 
@@ -852,6 +863,140 @@ function error_bar_table(region_fits; varnames=nothing, params=["trend", "accele
         end
     end
     return regional_results
+end
+
+
+"""
+    region_fits_table(region_fits; varnames=nothing, rgi_regions=nothing, no_err=String[], no_acceleration=String[], amplitude=String[], digits=2)
+
+Create a DataFrame table from region_fits DimArray with trend and acceleration columns for specified variables.
+
+# Arguments
+- `region_fits`: DimArray with dimensions (varname, rgi, parameter, error)
+- `varnames`: Optional vector of variable names to include, in desired order (default: nothing, includes all variables)
+- `rgi_regions`: Optional vector of RGI region IDs to include (default: nothing, includes all regions)
+- `no_err`: Vector of variable names to display without error bars (default: empty array)
+- `no_acceleration`: Vector of variable names to exclude acceleration column for (default: empty array)
+- `amplitude`: Vector of variable names to include amplitude column for (without error) (default: empty array)
+- `digits`: Number of decimal places for rounding (default: 2)
+
+# Returns
+- DataFrame with rows for each RGI region and columns for each variable's trend and acceleration,
+  formatted as "value ± error" strings (unless variable is in no_err list). Amplitude is included
+  without error for variables specified in the amplitude list.
+
+# Example
+```julia
+# Include all variables and regions
+result_table = region_fits_table(region_fits)
+
+# Specify variables in desired order
+result_table = region_fits_table(region_fits, varnames=["fac", "refreeze", "rain", "acc"])
+
+# Suppress errors for certain variables
+result_table = region_fits_table(region_fits, varnames=["gsi", "fac"], no_err=["gsi"])
+
+# Exclude acceleration for certain variables
+result_table = region_fits_table(region_fits, varnames=["gsi", "discharge", "fac"], no_acceleration=["gsi", "discharge"])
+
+# Include amplitude column for specific variables
+result_table = region_fits_table(region_fits, varnames=["dm", "runoff"], amplitude=["dm"])
+
+# Combine options
+result_table = region_fits_table(region_fits,
+    varnames=["gsi", "fac", "refreeze"],
+    no_err=["gsi"],
+    no_acceleration=["gsi"],
+    amplitude=["fac"])
+```
+"""
+function region_fits_table(region_fits; varnames=nothing, rgi_regions=nothing, no_err=String[], no_acceleration=String[], amplitude=String[], digits=2)
+
+    # Extract variable names from DimArray if not specified
+    if isnothing(varnames)
+        varnames = val(dims(region_fits, :varname))
+    end
+
+    # Extract RGI regions from DimArray if not specified
+    if isnothing(rgi_regions)
+        rgi_regions = val(dims(region_fits, :rgi))
+    end
+
+    # Create base DataFrame with RGI numbers and region names
+    rgi_labels = rginum2label.(rgi_regions)
+    df = DataFrames.DataFrame(rgi = rgi_regions, region_name = rgi_labels)
+
+    # Initialize columns for each varname (trend first, then acceleration, then amplitude if requested)
+    for varname in varnames
+        # Determine unit based on variable type
+        ismass = !(occursin("dv", varname) || occursin("fac", varname))
+        base_unit = ismass ? "Gt" : "km³"
+
+        # Create column labels
+        trend_label = Symbol("$(varname)_trend_[$(base_unit)/yr]")
+        df[!, trend_label] .= ""
+
+        # Only create acceleration column if not in no_acceleration list
+        if !(varname in no_acceleration)
+            accel_label = Symbol("$(varname)_acceleration_[$(base_unit)/yr²]")
+            df[!, accel_label] .= ""
+        end
+
+        # Create amplitude column if in amplitude list
+        if varname in amplitude
+            amp_label = Symbol("$(varname)_amplitude_[$(base_unit)]")
+            df[!, amp_label] .= ""
+        end
+    end
+
+    # Populate data for each region and variable
+    for (i, rgi) in enumerate(rgi_regions)
+        for varname in varnames
+            # Determine unit based on variable type
+            ismass = !(occursin("dv", varname) || occursin("fac", varname))
+            base_unit = ismass ? "Gt" : "km³"
+
+            # Extract and format trend values
+            trend_val = region_fits[At(varname), At(rgi), At("trend"), At(false)]
+            trend_err = region_fits[At(varname), At(rgi), At("trend"), At(true)]
+            trend_val = round(trend_val; digits)
+            trend_err = round(trend_err; digits)
+            trend_label = Symbol("$(varname)_trend_[$(base_unit)/yr]")
+
+            # Format with or without error based on no_err list
+            if varname in no_err
+                df[i, trend_label] = "$(trend_val)"
+            else
+                df[i, trend_label] = "$(trend_val) ± $(trend_err)"
+            end
+
+            # Extract and format acceleration values (only if not in no_acceleration list)
+            if !(varname in no_acceleration)
+                accel_val = region_fits[At(varname), At(rgi), At("acceleration"), At(false)]
+                accel_err = region_fits[At(varname), At(rgi), At("acceleration"), At(true)]
+                accel_val = round(accel_val; digits)
+                accel_err = round(accel_err; digits)
+                accel_label = Symbol("$(varname)_acceleration_[$(base_unit)/yr²]")
+
+                # Format with or without error based on no_err list
+                if varname in no_err
+                    df[i, accel_label] = "$(accel_val)"
+                else
+                    df[i, accel_label] = "$(accel_val) ± $(accel_err)"
+                end
+            end
+
+            # Extract and format amplitude values (only if in amplitude list)
+            if varname in amplitude
+                amp_val = region_fits[At(varname), At(rgi), At("amplitude"), At(false)]
+                amp_val = round(amp_val; digits)
+                amp_label = Symbol("$(varname)_amplitude_[$(base_unit)]")
+                df[i, amp_label] = "$(amp_val)"
+            end
+        end
+    end
+
+    return df
 end
 
 

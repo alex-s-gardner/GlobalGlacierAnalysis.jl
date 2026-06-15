@@ -12,6 +12,7 @@ begin
     using FileIO
     using CFTime
     using GeoDataFrames
+    import GeometryOps as GO
     
     # Import functions from utilities
     include("utilities_response2reviewers.jl")
@@ -28,6 +29,10 @@ begin
         path2glacier = GGA.pathlocal[Symbol("glacier_individual")],
     )
 
+    # to include in uncertainty
+    paths = merge(GGA.pathlocal, paths)
+
+
     # Analysis parameters
     study_start_year = 2000
     min_neighbors_variogram = 3
@@ -38,9 +43,171 @@ begin
     # RGI glacier counts for context
     rgi6_count = 215547
     rgi7_count = 274531
+
+    error_quantile=0.95
+    error_scaling=1.5
+
+    discharge_fractional_error = 0.15
+
+    reference_ensemble_file = GGA.reference_ensemble_file
+    ensemble_reference_file = replace(reference_ensemble_file, "_aligned.jld2" => "_synthesized.jld2")
+
+    glacier_summary_file = GGA.pathlocal[:glacier_summary]
+
+    # path2perglacier = replace(ensemble_reference_file, ".jld2" => "_perglacier.jld2")
+    path2discharge = paths[:discharge_global]
+    path2rgi_regions = paths[:rgi6_regions_shp]
+
+    path2river_flux = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
+
+
+    path2runs_filled, params = GGA.binned_filled_filepaths(;
+        project_id=:v01,
+        surface_masks=["glacier", "glacier_rgi7"],
+        dem_ids=["best", "cop30_v2"],
+        curvature_corrects=[false, true],
+        amplitude_corrects=[true],
+        binning_methods=["median", "nmad3", "nmad5"],
+        fill_params=[1, 2, 3, 4],
+        binned_folders=[GGA.analysis_paths(; geotile_width=2).binned, replace(GGA.analysis_paths(; geotile_width=2).binned, "binned" => "binned_unfiltered")],
+        include_existing_files_only=true
+    )
+    path2runs_synthesized = replace.(path2runs_filled, "aligned.jld2" => "synthesized.jld2")
+end
+
+# load glacier summary data for context 
+glacier_summary_file = GGA.pathlocal[:glacier_summary]
+
+glacier_flux_nc = NCDataset(glacier_summary_file)
+
+glacier_points = Point.(glacier_flux_nc[:longitude][:], glacier_flux_nc[:latitude][:])
+
+basins = vcat(GeoDataFrames.read(GGA.pathlocal[:river_level03_as_basins]), GeoDataFrames.read(GGA.pathlocal[:river_level03_si_basins]))
+# find index to basin for each glacier point
+
+index_basin = zeros(Int, length(glacier_points))
+
+Threads.@threads for i in eachindex(basins.geometry)
+    ind = GO.contains.(Ref(basins.geometry[i]), glacier_points)
+    lock = ReentrantLock()
+    if any(ind)
+        Base.lock(lock) do
+            index_basin[ind] .= i
+        end
+    end
+end
+
+table_basins = Dict()
+table_basins["indus"] = [4030033640]
+table_basins["ganges + brahmaputra"] = [4030025450, 4030022790]
+table_basins["amu darya + syr darya"] = [4030050220, 4030050240]
+table_basins["Tarim"] = [4030050210, 4030050980, 4030050270]
+table_basins["Lake Balkash + Gobi Interior"] = [4030050230, 4030050290, 4030050430, 3030024310, 4030050320]
+
+time_index = (glacier_flux_nc[:Ti] .> Date("2000-01-01")) .& (glacier_flux_nc[:Ti] .< Date("2025-01-01"))
+decyear = collect(GGA.decimalyear.(glacier_flux_nc[:Ti]))
+
+n = sum(time_index);
+
+basin_results = DataFrame(
+    basin_name = String[],
+    basin_ids = Vector{Int}[],
+    net_acc_gtyr = Float64[],
+    dm_gtyr = Float64[],
+    runoff_gtyr = Float64[]
+)
+
+# Dictionary to store raw time series for each basin and variable
+basin_timeseries = Dict{String, Dict{Symbol, Vector{Float64}}}()
+
+# Store the time vector for the time series
+basin_time_vector = decyear[time_index]
+
+for (basin_name, basin_ids) in table_basins
+    println("Basin: $basin_name")
+
+    trend_values = Dict{Symbol, Float64}()
+    basin_timeseries[basin_name] = Dict{Symbol, Vector{Float64}}()
+
+    for var in [:net_acc, :dm, :runoff]
+        foo = zeros(n)
+        for basin_id in basin_ids
+            index = index_basin .== findfirst(basins.HYBAS_ID .== basin_id)
+            if any(index)
+                if :net_acc == var
+                    foo += vec(sum(glacier_flux_nc[:acc][index, time_index], dims=1)) .- vec(sum(glacier_flux_nc[:ec][index, time_index], dims=1))
+                else
+                    foo += vec(sum(glacier_flux_nc[var][index, time_index], dims=1))
+                end
+            end
+        end
+
+        # Store the raw time series
+        basin_timeseries[basin_name][var] = foo
+
+        foo_fit = GGA.curve_fit(GGA.offset_trend_seasonal, decyear[time_index] .- mean(decyear[time_index]), foo, GGA.p3)
+        trend_values[var] = foo_fit.param[2]
+
+        println("  $var: $(round(foo_fit.param[2], digits=1)) Gt/yr")
+    end
+
+    push!(basin_results, (
+        basin_name = basin_name,
+        basin_ids = basin_ids,
+        net_acc_gtyr = trend_values[:net_acc],
+        dm_gtyr = trend_values[:dm],
+        runoff_gtyr = trend_values[:runoff]
+    ))
 end
 
 
+
+# pre-process data
+#begin #[10 min]
+# load discharge for each RGI [<1s]
+discharge_rgi = GGA.discharge_rgi(path2discharge, path2rgi_regions; fractional_error=discharge_fractional_error);
+
+# load results for all runs for each RGI [18s]
+runs_rgi = GGA.runs2rgi(path2runs_synthesized);
+
+# fit trends for overlaping periods with RACMO studies
+
+# Arctic Canada North and South: 2000-2015
+dates4trend = [DateTime(2000, 3, 1), DateTime(2015, 12, 15)]
+runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
+region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
+
+r = region_fits[rgi=At(3), varname=At("runoff"), parameter=At("trend"), error=At(false)];
+println("Arctic Canada North Runoff 2000-2015: $(round(r, digits=2))) Gt/yr")
+
+r = region_fits[rgi=At(4), varname=At("runoff"), parameter=At("trend"), error=At(false)];
+println("Arctic Canada South Runoff 2000-2015: $(round(r, digits=2))) Gt/yr")
+
+# Iceland: 2000-2019
+dates4trend = [DateTime(2000, 3, 1), DateTime(2019, 12, 15)]
+runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
+region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
+
+r = region_fits[rgi=At(6), varname=At("runoff"), parameter=At("trend"), error=At(false)];
+println("Iceland Runoff 2000-2015: $(round(r, digits=2))) Gt/yr")
+
+
+# Svalbard: 2000-2018
+dates4trend = [DateTime(2000, 3, 1), DateTime(2018, 12, 15)]
+runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
+region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
+
+r = region_fits[rgi=At(7), varname=At("runoff"), parameter=At("trend"), error=At(false)];
+println("Svalbard Runoff 2000-2018: $(round(r, digits=2))) Gt/yr")
+
+
+# Southern Andes: 2000-2023
+dates4trend = [DateTime(2000, 3, 1), DateTime(2023, 12, 15)]
+runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
+region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
+
+r = region_fits[rgi=At(17), varname=At("runoff"), parameter=At("trend"), error=At(false)];
+println("Southern Andes Runoff 2000-2023: $(round(r, digits=2))) Gt/yr")
 
 
 # load hugonnet data
@@ -125,6 +292,3 @@ begin
 
     GGA.Rasters.write(output_path, precip_max, force=true)
 end;
-
-
-

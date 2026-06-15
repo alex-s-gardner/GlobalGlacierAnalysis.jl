@@ -127,6 +127,9 @@ function setpaths()
             river_basins = "/mnt/bylot-r3/data/rivers/BasinATLAS_Data_v10.gdb/BasinATLAS_v10_lev02.geojson",
             # Major river basins: https://grdc.bafg.de/products/basin_layers/major_rivers/
             river_major_basins = "/mnt/bylot-r3/data/rivers/GRDC_Major_River_Basins/mrb_basins.json",
+            # HydroBASINS_v1c major river basins:https://www.hydrosheds.org/products/hydrobasins
+            river_level03_as_basins = "/mnt/bylot-r3/data/rivers/HydroBASINS_v1c/hybas_as_lev01-12_v1c/hybas_as_lev03_v1c.shp",
+            river_level03_si_basins="/mnt/bylot-r3/data/rivers/HydroBASINS_v1c/hybas_si_lev01-12_v1c/hybas_si_lev03_v1c.shp",
 
             # Kochtitzky NH discharge and terminus retreate 
             discharge_nh="/mnt/bylot-r3/data/GlacierOutlines/GlacierDischarge/Kochtitzky2022/41467_2022_33231_MOESM4_ESM.csv",

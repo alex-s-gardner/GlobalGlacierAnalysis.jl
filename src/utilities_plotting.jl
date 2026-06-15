@@ -1130,7 +1130,7 @@ function plot_hist_gemb_altim_trend_amplitude(geotiles0)
     ax1 = CairoMakie.Axis(f[1, 1]; xlabel="trend", ylabel="count")
     ax1.xtickformat = values -> ["$(round(Int,value))m yr⁻¹" for value in values]
     CairoMakie.stephist!(geotiles0[:, var1], bins=-5:0.25:5; label="model")
-    CairoMakie.stephist!(geotiles0[:, var2], bins=-5:0.25:5; label="synthesis")
+    CairoMakie.stephist!(geotiles0[:, var2], bins=-5:0.25:5; label="observed")
     axislegend(ax1, framevisible=false)
 
     var1 = "dh_amplitude"
@@ -1139,7 +1139,7 @@ function plot_hist_gemb_altim_trend_amplitude(geotiles0)
     ax2.xtickformat = values -> ["$(round(Int,value))m" for value in values]
 
     CairoMakie.stephist!(geotiles0[:, var1], bins=0:0.25:5; label="model")
-    CairoMakie.stephist!(geotiles0[:, var2], bins=0:0.25:5; label="synthesis")
+    CairoMakie.stephist!(geotiles0[:, var2], bins=0:0.25:5; label="observed")
     axislegend(ax2, framevisible=false)
 
     return f
@@ -1681,11 +1681,11 @@ function plot_ref_pscale_mscale_summary(path2runs_synthesized, binned_synthesize
             f[i][0, 1:2] = Label(f[i], title)
         end
 
-        ax = Makie.Axis(f[i][1, 1]; xlabel="pscale", ylabel="count", xticks=(pscale_ticks, pscale_ticklabels))
+        ax = Makie.Axis(f[i][1, 1]; xlabel="precipitation scaling", ylabel="count", xticks=(pscale_ticks, pscale_ticklabels))
         barplot!(ax, mscale_linear_bin_centers, h.weights;)
 
         h = StatsBase.fit(Histogram, scale2linear.(gemb_fit[index, :mscale]), mscale_linear_bins)
-        ax = Makie.Axis(f[i][1, 2]; xlabel="mscale", ylabel="count", xticks=(mscale_ticks, mscale_ticklabels))
+        ax = Makie.Axis(f[i][1, 2]; xlabel="melt scaling", ylabel="count", xticks=(mscale_ticks, mscale_ticklabels))
         barplot!(ax, mscale_linear_bin_centers, h.weights;)
     end
 
