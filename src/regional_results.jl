@@ -182,10 +182,10 @@ begin
 end;
 
 # CREATE OUTPUTS FOR PAPER
-begin
-    geotiles = GGA._geotile_load_align(; surface_mask="glacier")
+#begin
+    geotiles = GGA._geotile_load_align(; surface_mask="glacier_rgi7")
 
-    exclude_regions = []#[13, 14, 15]
+    exclude_regions = [13, 14, 15]
     params = ["trend", "acceleration", "amplitude", "phase"]
 
     # create a Table 1 of rates and accelerations
@@ -216,19 +216,15 @@ begin
     end
 
     # dump table to console
-    regional_results
+    colnames = names(regional_results)
 
-    # for saving to csv
-    regional_results_out = regional_results_out[:, .!delete_index]
-
-
-    dm_altim_index = findall(occursin.(Ref("dm_altim"), colnames))
+    dm_altim_index = findall(occursin.(Ref("altim"), colnames))
     for i in dm_altim_index
-        rename!(regional_results_out, colnames[i] => replace(colnames[i], "altim" => "altimetry"))
+        rename!(regional_results, colnames[i] => replace(colnames[i], "altim" => "synthesis"))
     end
 
     output_file = joinpath(paths[:project_dir], "Gardner2025_regional_results.csv")
-    CSV.write(output_file, regional_results_out; bom=true)
+    CSV.write(output_file, regional_results; bom=true)
 
     endorheic_fraction = DataFrame() 
     endorheic_fraction[!, :rgi] = val(dims(endorheic_scale_correction, :rgi))
@@ -292,15 +288,16 @@ begin
 
     # convert to DimStack
     foo0 = [];
-    for k in keys(regions_out)
+    drgi2 = Dim{:rgi}(setdiff(val(drgi), exclude_regions))
+    for k in setdiff(keys(regions_out))
         
-        foo = DimArray(fill(zero(eltype(regions_out[k]))*NaN, drgi, ddate, derror); name=k)
+        foo = DimArray(fill(zero(eltype(regions_out[k]))*NaN, drgi2, ddate, derror); name=k)
         
         try
             foo[DimSelectors(regions_out[k])] = regions_out[k]
         catch
             @warn "Interpolating $(k) in time to match other regional time series)"
-            for rgi in dims(regions_out[k],:rgi)
+            for rgi in drgi2
 
                 for error0 in dims(regions_out[k],:error)
 
@@ -323,13 +320,24 @@ begin
     end
 
     regions_out_stack = DimStack( foo1... ; metadata = Dict(
-        "title" => "glacier mass and volume change time series",
+        "title" => "regionalglacier mass and volume change time series",
+        "note" => "errors are only the formal errors at the 95% confidence interval, an additional minimum 20% fractional error should be applied to all component rates",
         "version" => "final - " * Dates.format(now(), "yyyy-mm-dd"),))
+
+    # snow is being scaled in GEMB runs to account for avalanching and wind redistibutions, rain is also being scaled by the same factor making it unrealistic.
+    regions_out_stack = regions_out_stack[Not((:rain, :rain_error))]
+
+    # rename "_altim" to "_synthesis" for consistency with table and figure labels
+    new_layers = NamedTuple(
+        Symbol(replace(string(k), "_altim" => "_synthesis")) => v
+        for (k, v) in pairs(regions_out_stack)
+    )
+    
+    regions_out_stack = DimStack(new_layers; metadata=DimensionalData.metadata(regions_out_stack))
 
     filename0 = joinpath(paths[:project_dir], "Gardner2025_regional_timseries.nc")
 
     GGA.dimstack2netcdf(regions_out_stack, filename0)
-
 
     # copy data readme file to project directory
     cp("/home/gardnera/Documents/GitHub/GlobalGlacierAnalysis.jl/src/Gardner2025_DataReadMe.txt", joinpath(paths[:project_dir], "Gardner2025_DataReadMe.txt"); force=true)
