@@ -17,7 +17,6 @@
 # NOTE: Some sections (e.g., Extended Data Figure 3) may not run due to missing data.
 # =============================================================================
 begin
-
     using CSV
     using DataFrames
     import GlobalGlacierAnalysis as GGA
@@ -49,12 +48,16 @@ begin
     missions2replace_with_model = ["hugonnet"]
     missions2align2 = ["icesat2", "icesat"]
     missions2update = nothing
-    plots_show = true
+    plots_show = false
     plots_save = false
     plot_save_format = ".png"
-    geotiles2plot = GGA.geotiles_golden_test[1]
-    single_geotile_test = GGA.geotiles_golden_test[1] # nothing  "lat[+78+80]lon[-080-078]" #
-    #single_geotile_test = "lat[+60+62]lon[-148-146]"; #"lat[+62+64]lon[-148-146]"; #"lat[+58+60]lon[-136-134]"; #"lat[+58+60]lon[-138-136]"
+    
+    single_geotile_test = GGA.geotiles_golden_test[15] # nothing  "lat[+78+80]lon[-080-078]" #
+    geotiles2plot = [single_geotile_test]
+
+    #single_geotile_test = #"lat[+60+62]lon[-148-146]"; #"lat[+62+64]lon[-148-146]"; #"lat[+58+60]lon[-136-134]"; #"lat[+58+60]lon[-138-136]"
+    #single_geotile_test = "lat[-44-42]lon[+170+172]" # New Zealand
+    #geotiles2plot = [single_geotile_test]  # Match the geotile being processed
 
     # for sub-sampling experiment
     nsamples = 100;
@@ -67,6 +70,9 @@ begin
 
     reference_ensemble_file = GGA.reference_ensemble_file;
     path2runs_synthesized = [replace.(reference_ensemble_file, "aligned.jld2" => "synthesized.jld2")]
+
+    # parse run parameters from reference ensemble file
+    params_ref = GGA.binned_filled_fileparts(reference_ensemble_file)
 
     # file for synthesis error
     path2runs_filled_all_ensembles, params = GGA.binned_filled_filepaths(; 
@@ -81,7 +87,6 @@ begin
         )
 
     path2runs_synthesized_all_ensembles = replace.(path2runs_filled_all_ensembles, "aligned.jld2" => "synthesized.jld2")
-
 
     # data paths
     paths = (
@@ -103,6 +108,18 @@ begin
     # RGI glacier counts for context
     rgi6_count = 215547
     rgi7_count = 274531
+
+
+    discharge_fractional_error = 0.15
+
+    glacier_summary_file = GGA.pathlocal[:glacier_summary]
+
+    # path2perglacier = replace(ensemble_reference_file, ".jld2" => "_perglacier.jld2")
+    path2discharge = GGA.pathlocal[:discharge_global]
+
+   
+    path2rgi_regions = GGA.pathlocal[:rgi6_regions_shp]
+
 end;
 
 #[Extended Data Figure 3]
@@ -143,22 +160,22 @@ foo = GGA.geotile_binned_fill(;
     missions2update, # All missions must update if ICESat-2 updates
     mission_reference_for_amplitude_normalization,
     all_permutations_for_glacier_only,
-    surface_masks,
-    binned_folders,
-    binning_methods,
-    dem_ids,
-    curvature_corrects, 
-    fill_params,
-    amplitude_corrects, 
+    surface_masks = [:glacier],
+    binned_folders = [replace(GGA.analysis_paths(; geotile_width).binned, "binned" => params_ref.binned_folder)],
+    binning_methods = [params_ref.binning_method],
+    dem_ids = [Symbol(params_ref.dem)],
+    curvature_corrects = [params_ref.curvature_correct],
+    fill_params = [params_ref.fill_param],
+    amplitude_corrects = [params_ref.amplitude_correct],
     remove_land_surface_trend,
     regions2replace_with_model,
     missions2replace_with_model,
     missions2align2,
-    plots_show,
-    plots_save,
+    plots_show = true,
+    plots_save = true,
     plot_save_format,
     geotiles2plot,
-    single_geotile_test#GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
+    single_geotile_test,
 )
 
 #[Extended Data Figure 7]
@@ -207,7 +224,7 @@ discharge = GGA.global_discharge_filled(;
 gemb = GGA.dv_adjust4discharge!(gemb, discharge)
 
 # [Extended Data Figure 8 & 11d]
-single_geotile_test = GGA.geotiles_golden_test[1];
+#single_geotile_test = GGA.geotiles_golden_test[1];
 
 calibrate_to = [:trend, :five_year, :annual, :all];
 for calibrate_to in calibrate_to
@@ -218,13 +235,14 @@ for calibrate_to in calibrate_to
         geotile_grouping_min_feature_area_km2=100,
         single_geotile_test,
         seasonality_weight=GGA.seasonality_weight,
-        distance_from_origin_penalty=GGA.distance_from_origin_penalty,
+        distance_from_origin_penalty=1.5,
         mscale_to_pscale_weight=GGA.mscale_to_pscale_weight,
         force_remake_before=DateTime("2025-01-31T14:00"),
         calibrate_to
     );
 
     print("when calibrate to $(calibrate_to), the model fit is: ")
+
     f = GGA.plot_model_fit(gemb, discharge, dv_altim, cost, geotiles_in_group)
     display(f)
 
@@ -232,7 +250,6 @@ for calibrate_to in calibrate_to
     fpath = joinpath(GGA.pathlocal[:figures], splitpath(first(path2runs_synthesized))[5], fname)
     save(fpath, f)
 end
-
 
 
 # [Extended Data Figure 9 & 10]
@@ -252,9 +269,7 @@ begin
     display(f)
 
     outfile = joinpath(GGA.pathlocal[:figures], "Extended_Data_Figure_10.png")
-    CairoMakie.save(outfile, f)
-
-    
+    CairoMakie.save(outfile, f)    
 end
 
 # [Extended Data Figure 9]
@@ -271,10 +286,9 @@ end
 
 # [Extended Data Figure 10]
 begin
-    dh = GGA._simrun_init(;nsamples, missions2include, single_geotile_test)
+   dh = GGA._simrun_init(;nsamples, missions2include, single_geotile_test)
 
-    @showprogress desc = "Running sampling experiment ..." for i in 1:nsamples
-    
+   @showprogress desc = "Running sampling experiment ..." for i in 1:nsamples
         dh0, _, _ = GGA.geotile_binned_fill(;
             project_id,
             geotile_width,
@@ -282,13 +296,13 @@ begin
             missions2update = nothing, # All missions must update if ICESat-2 updates
             mission_reference_for_amplitude_normalization,
             all_permutations_for_glacier_only,
-            surface_masks,
-            binned_folders,
-            binning_methods,
-            dem_ids,
-            curvature_corrects, 
-            fill_params,
-            amplitude_corrects, 
+            surface_masks = [params_ref.surface_mask],
+            binned_folders = [replace(GGA.analysis_paths(; geotile_width).binned, "binned" => params_ref.binned_folder)],
+            binning_methods = [params_ref.binning_method],
+            dem_ids = [params_ref.dem],
+            curvature_corrects = [params_ref.curvature_correct], 
+            fill_params = [params_ref.fill_param],
+            amplitude_corrects = [params_ref.amplitude_correct],
             remove_land_surface_trend,
             regions2replace_with_model,
             missions2replace_with_model,
@@ -298,7 +312,7 @@ begin
             plot_save_format = nothing,
             geotiles2plot = nothing,
             single_geotile_test,
-            subsample_fraction#GGA.geotiles_golden_test[1], #GGA.geotiles_golden_test[2],
+            subsample_fraction
         );
 
         dh0["Synthesis"], dh_synth_err =  GGA.geotile_synthesize_runs(;
@@ -327,8 +341,6 @@ begin
     
     GGA.FileIO.save(joinpath(data_dir, replace(fname, ".png" => ".jld2")), Dict("dh_area_average_median" => dh_area_average_median, "dh_area_average_error" => dh_area_average_error))
 end
-
-
 
 # --- Example: compare modeled runoff to external (Rounce 2022) dataset (disabled/block comment) ---
 begin
@@ -558,4 +570,54 @@ begin
     # --- Histograms for misfit statistics by season/period ---
     create_misfit_histograms(wgms_mb, index)
     save(joinpath(GGA.pathlocal.figures, "wgms_mb_misfit_histograms.png"), f_hist)
+end
+
+
+
+
+# SI Table for comparing runoff from other studies
+begin
+
+    # load discharge for each RGI [<1s]
+    discharge_rgi = GGA.discharge_rgi(path2discharge, path2rgi_regions; fractional_error=discharge_fractional_error);
+
+    # load results for all runs for each RGI [18s]
+    runs_rgi = GGA.runs2rgi(path2runs_synthesized);
+
+    # fit trends for overlaping periods with RACMO studies
+
+    # Arctic Canada North and South: 2000-2015
+    dates4trend = [DateTime(2000, 3, 1), DateTime(2015, 12, 15)]
+    runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
+    region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
+
+    r = region_fits[rgi=At(3), varname=At("runoff"), parameter=At("trend"), error=At(false)];
+    println("Arctic Canada North Runoff 2000-2015: $(round(r, digits=2))) Gt/yr")
+
+    r = region_fits[rgi=At(4), varname=At("runoff"), parameter=At("trend"), error=At(false)];
+    println("Arctic Canada South Runoff 2000-2015: $(round(r, digits=2))) Gt/yr")
+
+    # Iceland: 2000-2019
+    dates4trend = [DateTime(2000, 3, 1), DateTime(2019, 12, 15)]
+    runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
+    region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
+
+    r = region_fits[rgi=At(6), varname=At("runoff"), parameter=At("trend"), error=At(false)];
+    println("Iceland Runoff 2000-2015: $(round(r, digits=2))) Gt/yr")
+
+    # Svalbard: 2000-2018
+    dates4trend = [DateTime(2000, 3, 1), DateTime(2018, 12, 15)]
+    runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
+    region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
+
+    r = region_fits[rgi=At(7), varname=At("runoff"), parameter=At("trend"), error=At(false)];
+    println("Svalbard Runoff 2000-2018: $(round(r, digits=2))) Gt/yr")
+
+    # Southern Andes: 2000-2023
+    dates4trend = [DateTime(2000, 3, 1), DateTime(2023, 12, 15)]
+    runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
+    region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
+
+    r = region_fits[rgi=At(17), varname=At("runoff"), parameter=At("trend"), error=At(false)];
+    println("Southern Andes Runoff 2000-2023: $(round(r, digits=2))) Gt/yr")
 end

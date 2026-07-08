@@ -17,7 +17,7 @@ julia> gemb = gemb_read2(gemb_file; vars=["smb", "runoff", "acc"])
 julia> gemb_all = gemb_read2(gemb_file; datebin_edges=date_edges)
 ```
 """
-function gemb_read2(gemb_file; vars="all", datebin_edges=nothing)
+function gemb_read2(gemb_file; vars="all", datebin_edges=nothing, remove_rain_from_accumulation=false)
 
     vars0 = ["latitude", "longitude", "date", "smb", "fac", "ec", "acc", "runoff", "melt", "fac_to_depth", "height", "refreeze", "t_air", "rain"]
 
@@ -245,26 +245,62 @@ end
 
 
 """
-    gemb_bestfit_grouped(dv_altim, smb, fac, discharge, geotiles; single_geotile_test = nothing)
+    gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
+                         distance_from_origin_penalty=0.20,
+                         mscale_to_pscale_weight=1,
+                         seasonality_weight=0.85,
+                         calibrate_to=:all,
+                         is_scaling_factor=Dict("pscale"=>true, "mscale"=>true))
 
-Calibrate the SMB model to grouped geotiles to handle glaciers that cross multiple geotiles.
+Calibrate GEMB (Glacier Energy and Mass Balance) model precipitation and melt scaling factors
+to altimetry-derived volume changes for groups of geotiles. Glaciers often span multiple geotiles,
+so calibration is performed on mutually exclusive geotile groups rather than individual tiles to
+ensure consistent parameter estimates across connected glacierized regions.
+
+Uses evolutionary coordinate ascent (ECA) optimization to find optimal `pscale` (precipitation
+scaling) and `mscale` (melt scaling) parameters that minimize the cost function between modeled
+GEMB volume changes and altimetry observations. The cost function balances temporal agreement,
+seasonal cycle matching, and distance from nominal (1.0) scaling factors.
 
 # Arguments
-- `dv_altim`: Volume change from altimetry data
-- `smb`: Surface mass balance data
-- `fac`: Firn air content data
-- `discharge`: Discharge data
-- `geotiles`: DataFrame containing geotile information
-- `single_geotile_test`: Optional geotile ID to examine model fits for debugging 
+- `dv_altim`: DimArray of volume change from altimetry [Gt] with dimensions (:date, :geotile)
+- `dv_gemb`: DimArray of GEMB modeled volume change [Gt] with dimensions (:date, :geotile, :pscale, :mscale)
+- `geotiles0`: DataFrame containing geotile metadata with columns :id, :group, :rgi, :extent, :area_km2
+  - The :group column identifies mutually exclusive geotile groups for joint calibration
+
+# Keyword Arguments
+- `distance_from_origin_penalty=0.20`: Weight (0-1) for penalty on deviation from pscale=1, mscale=1
+- `mscale_to_pscale_weight=1`: Weight (0-1) balancing mscale vs pscale in optimization (1=equal weight)
+- `seasonality_weight=0.85`: Weight (0-1) for matching seasonal cycle vs absolute volume change
+- `calibrate_to=:all`: Which component to calibrate to (:all, :seasonal, :trend, etc.)
+- `is_scaling_factor`: Dict indicating whether pscale/mscale are multiplicative (true) or additive (false)
 
 # Returns
-- DataFrame with calibrated parameters for each geotile: id, extent, pscale, mscale, and rmse
+- **Normal mode (multiple groups)**: DataFrame with columns [:id, :extent, :group, :pscale, :mscale, :rgi]
+  - One row per geotile with optimized scaling factors (shared within each group)
+- **Debug mode (single group)**: Tuple of (cost grid, geotile_ids) for examining optimization landscape
+
+# Implementation Details
+The function operates differently depending on the number of unique groups:
+- **Multiple groups**: Uses parallel threaded optimization with ECA algorithm
+- **Single group**: Performs full grid search for diagnostic visualization and comparison with ECA
+
+Threading is used to accelerate optimization across groups, with each thread having independent
+RNG seeding for reproducibility. Data aggregation is pre-computed outside the parallel loop to
+avoid thread-safety issues with DimensionalData operations.
 
 # Examples
 ```julia
-julia> geotiles_fit = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0; seasonality_weight=0.85)
-julia> pscale = geotiles_fit.pscale
+# Typical usage for calibration
+julia> geotiles_fit = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
+                                           seasonality_weight=0.85)
+julia> pscale = geotiles_fit.pscale  # Extract precipitation scaling factors
+
+# Debug mode for single geotile/group
+julia> cost_grid, geotile_ids = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles_subset)
 ```
+
+See also: `gemb_altim_cost`, `gemb_dv_sample`, `gemb_fit_to_altimetry`
 """
 function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
     distance_from_origin_penalty = 20/100,
@@ -303,15 +339,13 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
  
     bounds = boxconstraints(lb=[minimum(dpscale.val), minimum(dmscale.val)].+.01, ub=[maximum(dpscale.val), maximum(dmscale.val)].-.01);
 
-
-    kwargs2 = (seasonality_weight=seasonality_weight, distance_from_origin_penalty=distance_from_origin_penalty, mscale_to_pscale_weight=mscale_to_pscale_weight, calibrate_to=calibrate_to, is_scaling_factor=is_scaling_factor)
+    kwargs2 = (seasonality_weight, distance_from_origin_penalty, mscale_to_pscale_weight=mscale_to_pscale_weight, calibrate_to, is_scaling_factor)
 
     geotile_groups = copy(geotiles.group);
     geotile_ids = copy(geotiles.id)
     groups_unique = unique(geotile_groups)
 
-
-     # for full grid search
+    # for full grid search
     begin
         step_size = 0.05
         s0 = -1 / minimum(dpscale.val)
@@ -375,7 +409,6 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
         geotiles_in_group = geotile_ids[groups_unique[i] .== geotile_groups]
         f2 = Base.Fix{2}(Base.Fix{3}(Base.Fix{4}(gemb_altim_cost, kwargs2), dv_gemb0[i]), dv_altim0[i])
        
-
         time_grid_search = @elapsed begin
             cost = fill(NaN, dpscale_search, dmscale_search)
             for pscale in dpscale_search

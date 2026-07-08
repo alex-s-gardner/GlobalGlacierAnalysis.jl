@@ -2,7 +2,7 @@
 const δice = 910; #kg m-3
 const local2utc = Hour(7) # LA timezone to UTC
 const seasonality_weight = 85/100
-const distance_from_origin_penalty = 20 / 100 # NOTE FOR PAPER THIS == 10/100 for Wd when when mscale_to_pscale_weight == 50/100
+const distance_from_origin_penalty = 70 / 100 # NOTE FOR PAPER THIS == 35/100 for Wd when when mscale_to_pscale_weight == 50/100
 const mscale_to_pscale_weight = 50/100
 const ocean_area_km2 = 362.5 * 1E6
 const reference_ensemble_file = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_rgi7_dh_cop30_v2_cc_nmad5_v01_filled_ac_p2_aligned.jld2"; 
@@ -514,9 +514,8 @@ function model_fit_cost_function(res, pscale, mscale; seasonality_weight, distan
         fit = ts_seasonal_model(res; interval=nothing);
     else
         res0 = groupby(res, :date => Bins(year, 5))
-        res0 = ts_seasonal_model.(res0)
-        interval_trends = map(p -> p.trend, res0)
-        rmse_cost =sqrt(mean(interval_trends .^ 2))
+        res0 = mean.(res0)
+        rmse_cost = sqrt(mean(res0 .^ 2))
     end
     
     # calibrate to annual change only

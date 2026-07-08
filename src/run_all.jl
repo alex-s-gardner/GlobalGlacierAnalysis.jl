@@ -206,7 +206,7 @@ GGA.geotile_binning(;
     plots_show,
 
     # run parameters
-    force_remake_before,
+    force_remake_before = Date(2024, 1, 1),
     missions2update,# this will load in prevous results to update select geotiles or missions
 
     # run parameters
@@ -258,14 +258,14 @@ GGA.geotile_synthesize(path2runs_filled;
     error_file="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
     mission_error=GGA.binned_mad_mission(binned_file_for_over_land_mission_error),
     missions2update=nothing,
-    force_remake_before=DateTime("2028-01-31T14:00") + GGA.local2utc,
+    force_remake_before,
 )
 
 # 11. Create glacier model (GEMB) classes for each geotile
 include("gemb_classes_binning.jl")
 
 # parms_ref = GGA.binned_filled_fileparts(binned_synthesized_dv_file_ref)
-force_remake_before_gemb = DateTime("2026-02-12T19:00") + GGA.local2utc
+force_remake_before_gemb = DateTime("2027-07-6T00:00") + GGA.local2utc
 
 gemb = GGA.gemb_ensemble_dv(; gemb_run_id);
 
@@ -308,7 +308,7 @@ GGA.geotile_synthesis_gembfit_dv(
     gemb;
     geotile_grouping_min_feature_area_km2 = 100, 
     geotile_width, 
-    force_remake_before=DateTime(2027, 1, 1),
+    force_remake_before=DateTime(2028, 1, 1),
 )
 
 
@@ -322,7 +322,7 @@ f = GGA.plot_ref_pscale_mscale_summary(path2runs_synthesized, binned_synthesized
 display.(f);
 
 for i in eachindex(rgi2plot)
-    fname = "RGI$(rgi2plot[i])_Ws$(seasonality_weight)_Wd$(GGA.distance_from_origin_penalty)_Wm2p$(GGA.mscale_to_pscale_weight).png"
+    fname = "RGI$(rgi2plot[i])_Ws$(GGA.seasonality_weight)_Wd$(GGA.distance_from_origin_penalty)_Wm2p$(GGA.mscale_to_pscale_weight).png"
     CairoMakie.save(joinpath(GGA.pathlocal[:figures], fname), f[i])
 end
 
@@ -335,7 +335,7 @@ glacier_summary_file = GGA.glacier_summary_file(
     error_scaling=1.5, 
     reference_period=(DateTime(2000, 4, 1), DateTime(2024, 12, 31)), 
     surface_mask="glacier",  # = parms_ref.surface_mask, # having issues changing this to :glacier_rgi7
-    force_remake_before=DateTime(2027, 1, 1),
+    force_remake_before=DateTime(2028, 1, 1),
 )
     
 

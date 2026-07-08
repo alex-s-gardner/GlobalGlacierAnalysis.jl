@@ -159,8 +159,8 @@ function geotile_binning(;
 
         # skip permutations if all_permutations_for_glacier_only = true
         if all_permutations_for_glacier_only
-            if ((!(param.surface_mask == :glacier) && Base.contains(param.binned_folder, "unfiltered")) &&
-                ((param.dem_id != :best) && (param.binning_method != "mad3") && param.curvature_correct))
+            if ((!(occursin("glacier", string(param.surface_mask))) && occursin("unfiltered", param.binned_folder)) &&
+                ((string(param.dem_id) != "best") && (param.binning_method != "mad3") && param.curvature_correct))
                 continue
             end
         end
@@ -552,6 +552,12 @@ function geotile_binned_fill(;
 
     if .!isnothing(single_geotile_test)
         @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)], OUTPUT WILL NOT BE SAVED TO FILE  !!!!!!!!!!!!!!"
+
+        # Check if single_geotile_test is in geotiles2plot
+        if !isnothing(geotiles2plot) && !(single_geotile_test in geotiles2plot)
+            @warn "single_geotile_test [$(single_geotile_test)] is not contained in geotiles2plot $(geotiles2plot). Overriding geotiles2plot to match single_geotile_test."
+        end
+
         geotiles2plot = [single_geotile_test]
     end
 
@@ -566,12 +572,15 @@ function geotile_binned_fill(;
 
     # usings threads here cuases the memory usage to explode, Threads is implimented at
     # lower level with reasonable performance
+
     @showprogress desc = "Filling hypsometric elevation change data ..." for param in params
 
         # skip permutations if all_permutations_for_glacier_only = true
         if all_permutations_for_glacier_only
-            if ((!(param.surface_mask == :glacier) && Base.contains(param.binned_folder, "unfiltered")) &&
-                ((param.dem_id != :best) && (param.binning_method != "nmad3") && param.curvature_correct))
+            if ((!(occursin("glacier", string(param.surface_mask))) && occursin("unfiltered", param.binned_folder)) &&
+                ((string(param.dem_id) != "best") && (param.binning_method != "nmad3") && param.curvature_correct))
+
+                @warn("skipping due to all_permutations_for_glacier_only = true condition")
                 continue
             end
         end
@@ -579,7 +588,7 @@ function geotile_binned_fill(;
         binned_file = binned_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct)
 
         if !isfile(binned_file)
-            @warn "binned_file does not exist, skipping: $binned_file"
+            @warn "binned_file does not exist ($binned_file), skipping: $binned_file"
             continue
         end
 

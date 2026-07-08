@@ -162,52 +162,6 @@ end
 
 
 
-# pre-process data
-#begin #[10 min]
-# load discharge for each RGI [<1s]
-discharge_rgi = GGA.discharge_rgi(path2discharge, path2rgi_regions; fractional_error=discharge_fractional_error);
-
-# load results for all runs for each RGI [18s]
-runs_rgi = GGA.runs2rgi(path2runs_synthesized);
-
-# fit trends for overlaping periods with RACMO studies
-
-# Arctic Canada North and South: 2000-2015
-dates4trend = [DateTime(2000, 3, 1), DateTime(2015, 12, 15)]
-runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
-region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
-
-r = region_fits[rgi=At(3), varname=At("runoff"), parameter=At("trend"), error=At(false)];
-println("Arctic Canada North Runoff 2000-2015: $(round(r, digits=2))) Gt/yr")
-
-r = region_fits[rgi=At(4), varname=At("runoff"), parameter=At("trend"), error=At(false)];
-println("Arctic Canada South Runoff 2000-2015: $(round(r, digits=2))) Gt/yr")
-
-# Iceland: 2000-2019
-dates4trend = [DateTime(2000, 3, 1), DateTime(2019, 12, 15)]
-runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
-region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
-
-r = region_fits[rgi=At(6), varname=At("runoff"), parameter=At("trend"), error=At(false)];
-println("Iceland Runoff 2000-2015: $(round(r, digits=2))) Gt/yr")
-
-
-# Svalbard: 2000-2018
-dates4trend = [DateTime(2000, 3, 1), DateTime(2018, 12, 15)]
-runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
-region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
-
-r = region_fits[rgi=At(7), varname=At("runoff"), parameter=At("trend"), error=At(false)];
-println("Svalbard Runoff 2000-2018: $(round(r, digits=2))) Gt/yr")
-
-
-# Southern Andes: 2000-2023
-dates4trend = [DateTime(2000, 3, 1), DateTime(2023, 12, 15)]
-runs_rgi_fits = GGA.rgi_trends(runs_rgi, discharge_rgi, dates4trend);
-region_fits = GGA.region_fit_ref_and_err(runs_rgi_fits, ensemble_reference_file; error_quantile, error_scaling, discharge=discharge_rgi)
-
-r = region_fits[rgi=At(17), varname=At("runoff"), parameter=At("trend"), error=At(false)];
-println("Southern Andes Runoff 2000-2023: $(round(r, digits=2))) Gt/yr")
 
 
 # load hugonnet data

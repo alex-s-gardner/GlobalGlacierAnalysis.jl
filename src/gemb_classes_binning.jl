@@ -23,7 +23,7 @@ begin
     # mirror files from Nicole's home directory to RAID storage
     mirror_raw_files = false;
 
-    single_geotile_test = nothing #GGA.geotiles_golden_test[1] #"lat[+60+62]lon[-142-140]"; GGA.geotiles_golden_test[1]
+    single_geotile_test = nothing; #"lat[-44-42]lon[+170+172]"; #nothing #GGA.geotiles_golden_test[1] #"lat[+60+62]lon[-142-140]"; GGA.geotiles_golden_test[1]
 
     # run parameters 
     project_id = :v01;
@@ -50,7 +50,7 @@ begin
     # define date and hight binning ranges 
     date_range, date_center = GGA.project_date_bins()
 
-    # expand daterange to 1940 by make sure to match exisiting project ranges 
+    # expand daterange to 1940 but make sure to match exisiting project ranges 
     date_end_new = Date(1970,1,1)
     Δd = 30
     date_range = reverse(last(date_range):-Day(Δd):date_end_new)
@@ -89,6 +89,15 @@ if sanity_check
     fn = gemb_files[findfirst(occursin.("p2_t2", gemb_files))]
     file = GGA.matopen(fn)
     foo = GGA.MAT.read(file)
+
+    # remove refrozen rain from rain and remove rain that does not refreeze from accumulation
+    RefrozenRain = min.(foo["Rain"], foo["Refreeze"])
+    foo["Rain"] .-= RefrozenRain
+    foo["Accumulation"] .-= foo["Rain"]
+
+
+    # Change sign of "ec" so that positive values indicate mass loss
+    foo["EC"] .*= -1
 
     # plot land sea mask with accepted and rejected points 
     land_sea_mask = GGA.Raster(GGA.pathlocal.era5_land_sea_mask)[:,:,1];
@@ -153,7 +162,13 @@ if sanity_check
     end
 
     begin
-        gemb0 = GGA.gemb_read2(fn; datebin_edges = GGA.decimalyear.(date_range))
+        gemb0 = GGA.gemb_read2(fn; datebin_edges = GGA.decimalyear.(date_range), remove_rain_from_accumulation=true)
+
+        # remove rain from accumulation
+        gemb0["acc"] .-= gemb0["rain"]
+
+        # Change sign of "ec" so that positive values indicate mass loss
+        gemb0["ec"] .*= -1
 
         point_2_select = 7;
         ind = findall(GGA.within.(Ref(GGA.geotile_extent(GGA.geotiles_golden_test[1])), gemb0["longitude"][:], gemb0["latitude"][:]))[point_2_select]
@@ -208,6 +223,11 @@ begin
     # units of m i.e. [m of air for fac]
     gembX = GGA.read_gemb_files(gemb_files, gembinfo; vars2extract=vcat(dims2extract, vars2extract), date_range, date_center, path2land_sea_mask=GGA.pathlocal.era5_land_sea_mask, minimum_land_coverage_fraction)
 
+    # remove refrozen rain from rain and remove rain that does not refreeze from accumulation
+    RefrozenRain = min.(gembX["rain"], gembX["refreeze"])
+    gembX["rain"] .-= RefrozenRain
+    gembX["acc"] .-= gembX["rain"]
+
     # check that elvation and precipitaiton classes of the raw data look correct
     if !isnothing(single_geotile_test)
 
@@ -223,15 +243,15 @@ begin
 
         index = (pscale .== 1.0) .& index_point
 
-        cmap = Makie.resample_cmap(:thermal, length(elevation_delta[index])+1);
+        cmap = Makie.resample_cmap(:thermal, length(Δelevation[index])+1);
         for k in keys(gembX)
             # Only plot if the variable matches the size of "Rain" (assume same grid & time structure)
             if length(gembX[k]) == length(gembX["fac"])
                 f = Figure();
                 ax = Axis(f[1, 1], title="gemb (lat = $(round(gembX["latitude"][findfirst(index_geotile)], digits=3)), lon = $(round(gembX["longitude"][findfirst(index_geotile)], digits=3))): $k");
-                for edelta in [0] #sort(elevation_delta[index])
-                    index0 = findfirst((elevation_delta .== edelta) .& index)
-                    lines!(ax, gembX["date"], gembX[k][index0,:]; label="$edelta", color=cmap[findfirst(edelta .== sort(elevation_delta[index]))])
+                for edelta in [0] #sort(Δelevation[index])
+                    index0 = findfirst((Δelevation .== edelta) .& index)
+                    lines!(ax, gembX["date"], gembX[k][index0,:]; label="$edelta", color=cmap[findfirst(edelta .== sort(Δelevation[index]))])
                 end
             f[1, 2] = Legend(f, ax, "Δelevation [m]", framevisible = false)
             display(f)

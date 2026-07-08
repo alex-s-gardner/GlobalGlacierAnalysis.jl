@@ -182,165 +182,188 @@ begin
 end;
 
 # CREATE OUTPUTS FOR PAPER
-#begin
+begin
     geotiles = GGA._geotile_load_align(; surface_mask="glacier_rgi7")
 
-    exclude_regions = [13, 14, 15]
-    params = ["trend", "acceleration", "amplitude", "phase"]
+    for apply_exclude_regions = [false, true];
 
-    # create a Table 1 of rates and accelerations
-    regional_results = GGA.region_fits_table(region_fits, varnames=["dv_altim", "dv", "dm",  "acc", "runoff", "melt", "refreeze", "ec", "discharge", "smb", "fac", "gsi"], rgi_regions=vcat(1:12, 98, 16:19, 99), no_err=["gsi"], no_acceleration=["gsi","discharge"], amplitude = ["dv_altim", "dv"], digits=1)
-
-
-    altim_cols = names(regional_results)[occursin.("_altim", names(regional_results))]
-    rename!(regional_results, altim_cols .=> replace.(altim_cols, "_altim" => "_synthesis"))
-    trend_cols = names(regional_results)[occursin.("_trend", names(regional_results))]
-    rename!(regional_results, trend_cols .=> replace.(trend_cols, "_trend" => ""))
-    acceleration_cols = names(regional_results)[occursin.("_acceleration", names(regional_results))]
-    rename!(regional_results, acceleration_cols .=> replace.(acceleration_cols, "_acceleration" => ""))
-
-    rename!(regional_results, "gsi_[Gt/yr]" => "gsi")
-
-    # add area_km2 to regional_results
-    regional_results[!, :area_km2] .= 0.0
-    for dfr in eachrow(regional_results)
-        if dfr.rgi == 98
-            index_rgi = (geotiles[:, "rgi13"] .> 0) .| (geotiles[:, "rgi14"] .> 0) .| (geotiles[:, "rgi15"] .> 0)
-        elseif dfr.rgi == 99
-            index_rgi = trues(nrow(geotiles))
+        if apply_exclude_regions
+            exclude_regions = [13, 14, 15]
         else
-            index_rgi = geotiles[:, "rgi$(dfr.rgi)"].>0
+            exclude_regions = [9999]
         end
 
-        dfr.area_km2 = sum(sum(geotiles.area_km2[index_rgi]))
-    end
+        params = ["trend", "acceleration", "amplitude", "phase"]
 
-    # dump table to console
-    colnames = names(regional_results)
+        # create a Table 1 of rates and accelerations
+        regional_results = GGA.region_fits_table(region_fits, varnames=["dv_altim", "dv", "dm", "acc", "runoff", "melt", "refreeze", "ec", "rain", "discharge", "smb", "fac", "gsi"], rgi_regions=setdiff(vcat(1:15, 98, 16:19, 99), exclude_regions), no_err=["gsi"], no_acceleration=["gsi","discharge"], amplitude = ["dv_altim", "dv"], digits=1)
 
-    dm_altim_index = findall(occursin.(Ref("altim"), colnames))
-    for i in dm_altim_index
-        rename!(regional_results, colnames[i] => replace(colnames[i], "altim" => "synthesis"))
-    end
+        altim_cols = names(regional_results)[occursin.("_altim", names(regional_results))]
+        rename!(regional_results, altim_cols .=> replace.(altim_cols, "_altim" => "_synthesis"))
+        trend_cols = names(regional_results)[occursin.("_trend", names(regional_results))]
+        rename!(regional_results, trend_cols .=> replace.(trend_cols, "_trend" => ""))
+        acceleration_cols = names(regional_results)[occursin.("_acceleration", names(regional_results))]
+        rename!(regional_results, acceleration_cols .=> replace.(acceleration_cols, "_acceleration" => ""))
 
-    output_file = joinpath(paths[:project_dir], "Gardner2025_regional_results.csv")
-    CSV.write(output_file, regional_results; bom=true)
+        rename!(regional_results, "gsi_[Gt/yr]" => "gsi")
 
-    endorheic_fraction = DataFrame() 
-    endorheic_fraction[!, :rgi] = val(dims(endorheic_scale_correction, :rgi))
-    endorheic_fraction[!, :region_name] = GGA.rginum2label.(endorheic_fraction[!, :rgi])
-    endorheic_fraction[!, :dm_endorheic_fraction] = GGA.rginum2label.(endorheic_fraction[!, :rgi])
-    for varname in dims(endorheic_scale_correction, :varname)
-        col_name = "$(varname)_endorheic_fraction"
-        endorheic_fraction[!, col_name] = 1 .- endorheic_scale_correction[varname = At(varname)]
-    end
+        # add area_km2 to regional_results
+        regional_results[!, :area_km2] .= 0.0
+        for dfr in eachrow(regional_results)
+            if dfr.rgi == 98
+                index_rgi = (geotiles[:, "rgi13"] .> 0) .| (geotiles[:, "rgi14"] .> 0) .| (geotiles[:, "rgi15"] .> 0)
+            elseif dfr.rgi == 99
+                index_rgi = trues(nrow(geotiles))
+            else
+                index_rgi = geotiles[:, "rgi$(dfr.rgi)"].>0
+            end
 
-    include_regions = .!in.(endorheic_fraction.rgi, Ref(exclude_regions))
-    CSV.write(joinpath(paths[:project_dir], "Gardner2025_endorheic_fraction.csv"), endorheic_fraction[include_regions, :]; bom=true)
+            dfr.area_km2 = sum(sum(geotiles.area_km2[index_rgi]))
+        end
 
+        # dump table to console
+        colnames = names(regional_results)
 
-    # remove regions, trim dates
-    regions_out = deepcopy(regions);
+        dm_altim_index = findall(occursin.(Ref("altim"), colnames))
+        for i in dm_altim_index
+            rename!(regional_results, colnames[i] => replace(colnames[i], "altim" => "synthesis"))
+        end
 
-    date_range = DateTime(2000, 1, 1).. DateTime(2025, 1, 15)
+        if apply_exclude_regions
+            output_file = joinpath(paths[:project_dir], "Gardner2025_regional_results.csv")
+        else
+            output_file = joinpath(paths[:project_dir], "Gardner2025_regional_results_all_regions.csv")
+        end
 
-    # ensure dimensions conform
-    var0 = "dm"
-    drgi = dims(regions_out[var0], :rgi)
-    ddate = dims(regions_out[var0][date=date_range], :date)
-    decyear = GGA.decimalyear.(val(ddate))
-    derror = dims(regions_out[var0], :error)
+        CSV.write(output_file, regional_results; bom=true)
 
-    for k in keys(regions_out)
-        #k = first(keys(regions_out))
+        endorheic_fraction = DataFrame() 
+        endorheic_fraction[!, :rgi] = val(dims(endorheic_scale_correction, :rgi))
+        endorheic_fraction[!, :region_name] = GGA.rginum2label.(endorheic_fraction[!, :rgi])
+        endorheic_fraction[!, :dm_endorheic_fraction] = GGA.rginum2label.(endorheic_fraction[!, :rgi])
+        for varname in dims(endorheic_scale_correction, :varname)
+            col_name = "$(varname)_endorheic_fraction"
+            endorheic_fraction[!, col_name] = 1 .- endorheic_scale_correction[varname = At(varname)]
+        end
 
-        var1 = regions_out[k][rgi=At(setdiff(drgi, exclude_regions)), date=date_range]
-        ddate1 = dims(var1, :date)
+        include_regions = .!in.(endorheic_fraction.rgi, Ref(exclude_regions))
 
-        if ddate != ddate1
-            var2 = fill(NaN, drgi, ddate, derror)
-            decyear2 = GGA.decimalyear.(val(dims(var1, :date)))
+        if apply_exclude_regions
+            output_file = joinpath(paths[:project_dir], "Gardner2025_endorheic_fraction.csv")
+        else
+            output_file = joinpath(paths[:project_dir], "Gardner2025_endorheic_fraction_all_regions.csv")
+        end
 
-            for rgi in drgi
+        CSV.write(output_file, endorheic_fraction[include_regions, :]; bom=true)
 
-                if !(rgi in val(dims(var1, :rgi)))
-                    continue
-                end
-                
-                for error in derror
-                    ts = var1[rgi = At(rgi), error = At(error)]
-                    ts_interp = DataInterpolations.LinearInterpolation(ts, decyear2;extrapolation = ExtrapolationType.Constant)
-                    var2[rgi = At(rgi), error = At(error)] = ts_interp(decyear)
+        # remove regions, trim dates
+        regions_out = deepcopy(regions);
+
+        date_range = DateTime(2000, 1, 1).. DateTime(2025, 1, 15)
+
+        # ensure dimensions conform
+        var0 = "dm"
+        drgi = dims(regions_out[var0], :rgi)
+        ddate = dims(regions_out[var0][date=date_range], :date)
+        decyear = GGA.decimalyear.(val(ddate))
+        derror = dims(regions_out[var0], :error)
+
+        for k in keys(regions_out)
+            #k = first(keys(regions_out))
+
+            var1 = regions_out[k][rgi=At(setdiff(drgi, exclude_regions)), date=date_range]
+            ddate1 = dims(var1, :date)
+
+            if ddate != ddate1
+                var2 = fill(NaN, drgi, ddate, derror)
+                decyear2 = GGA.decimalyear.(val(dims(var1, :date)))
+
+                for rgi in drgi
+
+                    if !(rgi in val(dims(var1, :rgi)))
+                        continue
+                    end
+                    
+                    for error in derror
+                        ts = var1[rgi = At(rgi), error = At(error)]
+                        ts_interp = DataInterpolations.LinearInterpolation(ts, decyear2;extrapolation = ExtrapolationType.Constant)
+                        var2[rgi = At(rgi), error = At(error)] = ts_interp(decyear)
+                    end
                 end
             end
+
+            # add units
+            if k == "fac" || occursin("dv", k)
+                unit = 1u"km^3"
+            else
+                unit = 1u"Gt"
+            end
+
+            var1 *= unit
+            regions_out[k] = var1[rgi = At(setdiff(drgi, exclude_regions))]
         end
 
-        # add units
-        if k == "fac" || occursin("dv", k)
-            unit = 1u"km^3"
-        else
-            unit = 1u"Gt"
-        end
+        # convert to DimStack
+        foo0 = [];
+        drgi2 = Dim{:rgi}(setdiff(val(drgi), exclude_regions))
+        for k in setdiff(keys(regions_out))
+            
+            foo = DimArray(fill(zero(eltype(regions_out[k]))*NaN, drgi2, ddate, derror); name=k)
+            
+            try
+                foo[DimSelectors(regions_out[k])] = regions_out[k]
+            catch
+                @warn "Interpolating $(k) in time to match other regional time series)"
+                for rgi in drgi2
 
-        var1 *= unit
-        regions_out[k] = var1[rgi = At(setdiff(drgi, exclude_regions))]
-    end
+                    for error0 in dims(regions_out[k],:error)
 
-    # convert to DimStack
-    foo0 = [];
-    drgi2 = Dim{:rgi}(setdiff(val(drgi), exclude_regions))
-    for k in setdiff(keys(regions_out))
-        
-        foo = DimArray(fill(zero(eltype(regions_out[k]))*NaN, drgi2, ddate, derror); name=k)
-        
-        try
-            foo[DimSelectors(regions_out[k])] = regions_out[k]
-        catch
-            @warn "Interpolating $(k) in time to match other regional time series)"
-            for rgi in drgi2
+                        # interpolate anomalies using weighted distance (Shepard(2))
+                        ts_interp = DataInterpolations.LinearInterpolation(regions_out[k][rgi = At(rgi), error = At(error0)], GGA.decimalyear.(val(dims(regions_out[k],:date))); extrapolation = ExtrapolationType.Linear)
 
-                for error0 in dims(regions_out[k],:error)
-
-                    # interpolate anomalies using weighted distance (Shepard(2))
-                    ts_interp = DataInterpolations.LinearInterpolation(regions_out[k][rgi = At(rgi), error = At(error0)], GGA.decimalyear.(val(dims(regions_out[k],:date))); extrapolation = ExtrapolationType.Linear)
-
-                    foo[rgi = At(rgi), error = At(error0)] = ts_interp(GGA.decimalyear.(val(ddate)))
+                        foo[rgi = At(rgi), error = At(error0)] = ts_interp(GGA.decimalyear.(val(ddate)))
+                    end
                 end
             end
+
+            push!(foo0, foo)
         end
 
-        push!(foo0, foo)
-    end
+        foo1 = [];
+        for i in eachindex(foo0)
 
-    foo1 = [];
-    for i in eachindex(foo0)
+            push!(foo1, dropdims(foo0[i][error = At(false)], dims = (:error,)))
+            push!(foo1, DimensionalData.rebuild(dropdims(foo0[i][error = At(true)], dims = (:error,)); name = DimensionalData.name(foo0[i]) * "_error"))
+        end
 
-        push!(foo1, dropdims(foo0[i][error = At(false)], dims = (:error,)))
-        push!(foo1, DimensionalData.rebuild(dropdims(foo0[i][error = At(true)], dims = (:error,)); name = DimensionalData.name(foo0[i]) * "_error"))
-    end
+        regions_out_stack = DimStack( foo1... ; metadata = Dict(
+            "title" => "regionalglacier mass and volume change time series",
+            "note" => "errors are only the formal errors at the 95% confidence interval, an additional minimum 20% fractional error should be applied to all component rates",
+            "version" => "final - " * Dates.format(now(), "yyyy-mm-dd"),))
 
-    regions_out_stack = DimStack( foo1... ; metadata = Dict(
-        "title" => "regionalglacier mass and volume change time series",
-        "note" => "errors are only the formal errors at the 95% confidence interval, an additional minimum 20% fractional error should be applied to all component rates",
-        "version" => "final - " * Dates.format(now(), "yyyy-mm-dd"),))
+        # snow is being scaled in GEMB runs to account for avalanching and wind redistibutions, rain is also being scaled by the same factor making it unrealistic.
+        #regions_out_stack = regions_out_stack[Not((:rain, :rain_error))]
 
-    # snow is being scaled in GEMB runs to account for avalanching and wind redistibutions, rain is also being scaled by the same factor making it unrealistic.
-    regions_out_stack = regions_out_stack[Not((:rain, :rain_error))]
+        # rename "_altim" to "_synthesis" for consistency with table and figure labels
+        new_layers = NamedTuple(
+            Symbol(replace(string(k), "_altim" => "_synthesis")) => v
+            for (k, v) in pairs(regions_out_stack)
+        )
+        
+        regions_out_stack = DimStack(new_layers; metadata=DimensionalData.metadata(regions_out_stack))
 
-    # rename "_altim" to "_synthesis" for consistency with table and figure labels
-    new_layers = NamedTuple(
-        Symbol(replace(string(k), "_altim" => "_synthesis")) => v
-        for (k, v) in pairs(regions_out_stack)
-    )
+        if apply_exclude_regions
+            filename0 = joinpath(paths[:project_dir], "Gardner2025_regional_timseries.nc")
+        else
+            filename0 = joinpath(paths[:project_dir], "Gardner2025_regional_timseries_all_regions.nc")
+        end
     
-    regions_out_stack = DimStack(new_layers; metadata=DimensionalData.metadata(regions_out_stack))
 
-    filename0 = joinpath(paths[:project_dir], "Gardner2025_regional_timseries.nc")
+        GGA.dimstack2netcdf(regions_out_stack, filename0)
 
-    GGA.dimstack2netcdf(regions_out_stack, filename0)
-
-    # copy data readme file to project directory
-    cp("/home/gardnera/Documents/GitHub/GlobalGlacierAnalysis.jl/src/Gardner2025_DataReadMe.txt", joinpath(paths[:project_dir], "Gardner2025_DataReadMe.txt"); force=true)
+        # copy data readme file to project directory
+        cp("/home/gardnera/Documents/GitHub/GlobalGlacierAnalysis.jl/src/Gardner2025_DataReadMe.txt", joinpath(paths[:project_dir], "Gardner2025_DataReadMe.txt"); force=true)
+    end
 end
 
 begin
@@ -474,7 +497,7 @@ begin
         println("despite our finding of about  $(round(Int,((a1 - -3.6)/-3.6)*100))% larger rates of accelerated loss ($(round(a1,digits=1)) ± $(round(a2,digits=1)) Gt yr-1")
 end
 
-#begin
+begin
     println("\n----------------------Glaciers contributions to rivers and oceans--------------------")
 
     v = "runoff";
