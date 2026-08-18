@@ -1,0 +1,144 @@
+"""
+Test helper functions and utilities for GlobalGlacierAnalysis.jl tests
+"""
+
+using Dates
+using Statistics
+using DataFrames
+using DimensionalData
+import DimensionalData as DD
+
+"""
+    synthetic_elevation_timeseries(; dates, trend=-0.5, amplitude=0.2, phase=0.0, noise_sigma=0.1)
+
+Generate synthetic elevation time series with known trend and seasonality.
+
+# Arguments
+- `dates`: Vector of DateTime objects
+- `trend`: Linear trend in m/yr (default: -0.5)
+- `amplitude`: Seasonal amplitude in m (default: 0.2)
+- `phase`: Phase offset for seasonal signal (default: 0.0)
+- `noise_sigma`: Standard deviation of Gaussian noise (default: 0.1)
+
+# Returns
+- Vector of elevation values with trend + seasonality + noise
+"""
+function synthetic_elevation_timeseries(;
+    dates,
+    trend=-0.5,
+    amplitude=0.2,
+    phase=0.0,
+    noise_sigma=0.1
+)
+    t = GGA.decimalyear.(dates) .- minimum(GGA.decimalyear.(dates))
+    signal = trend .* t .+ amplitude .* sin.(2π .* (t .+ phase))
+    noise = noise_sigma .* randn(length(t))
+    return signal .+ noise
+end
+
+"""
+    synthetic_geotile_id(lat_min, lat_max, lon_min, lon_max)
+
+Create synthetic geotile ID string for testing.
+
+# Arguments
+- `lat_min`, `lat_max`: Latitude bounds [-90, 90]
+- `lon_min`, `lon_max`: Longitude bounds [-180, 180]
+
+# Returns
+- Geotile ID string in format "lat[+YY+YY]lon[+XXX+XXX]"
+"""
+function synthetic_geotile_id(lat_min, lat_max, lon_min, lon_max)
+    lat_min_str = lpad(lat_min >= 0 ? "+$lat_min" : "$lat_min", 3, lat_min >= 0 ? '0' : '0')
+    lat_max_str = lpad(lat_max >= 0 ? "+$lat_max" : "$lat_max", 3, lat_max >= 0 ? '0' : '0')
+    lon_min_str = lpad(lon_min >= 0 ? "+$lon_min" : "$lon_min", 4, lon_min >= 0 ? '0' : '0')
+    lon_max_str = lpad(lon_max >= 0 ? "+$lon_max" : "$lon_max", 4, lon_max >= 0 ? '0' : '0')
+    return "lat$(lat_min_str)$(lat_max_str)lon$(lon_min_str)$(lon_max_str)"
+end
+
+"""
+    synthetic_river_network(n_nodes=5; topology=:linear)
+
+Generate synthetic river network for routing tests.
+
+# Arguments
+- `n_nodes`: Number of river nodes (default: 5)
+- `topology`: Network structure (:linear, :branching) (default: :linear)
+
+# Returns
+- DataFrame with columns: COMID, NextDownID, lengthkm, lon, lat
+"""
+function synthetic_river_network(n_nodes=5; topology=:linear)
+    ids = collect(1:n_nodes)
+
+    if topology == :linear
+        # Linear chain to ocean: 1 → 2 → 3 → 4 → 5 → 0
+        next_ids = [i < n_nodes ? i+1 : 0 for i in ids]
+        lons = range(-120, -110, length=n_nodes)
+        lats = fill(45.0, n_nodes)
+    elseif topology == :branching
+        # Branching: 1 → 3, 2 → 3 → 4 → 5 → 0
+        next_ids = [3, 3, 4, 5, 0]
+        lons = [-120, -119, -118, -116, -114]
+        lats = [45.5, 44.5, 45.0, 45.0, 45.0]
+    else
+        error("Unknown topology: $topology")
+    end
+
+    lengths_km = fill(10.0, n_nodes)
+
+    return DataFrame(
+        COMID=ids,
+        NextDownID=next_ids,
+        lengthkm=lengths_km,
+        lon=lons,
+        lat=lats
+    )
+end
+
+"""
+    mock_geotile_dimarray(n_geotiles=3, n_dates=12, n_heights=10)
+
+Create mock DimArray with geotile dimensions for testing.
+
+# Arguments
+- `n_geotiles`: Number of geotiles (default: 3)
+- `n_dates`: Number of time steps (default: 12)
+- `n_heights`: Number of elevation bins (default: 10)
+
+# Returns
+- DimArray with dimensions (geotile, date, height)
+"""
+function mock_geotile_dimarray(n_geotiles=3, n_dates=12, n_heights=10)
+    geotiles = [synthetic_geotile_id(45+2i, 47+2i, -123-2i, -121-2i) for i in 0:n_geotiles-1]
+    dates = range(DateTime(2018,1,1), step=Month(1), length=n_dates)
+    heights = range(1000, 3000, length=n_heights)
+
+    data = randn(n_geotiles, n_dates, n_heights)
+
+    return DimArray(
+        data,
+        (
+            DD.Dim{:geotile}(geotiles),
+            DD.Dim{:date}(dates),
+            DD.Dim{:height}(heights)
+        )
+    )
+end
+
+"""
+    approx_equal(a, b; rtol=1e-6, atol=1e-8)
+
+Check approximate equality with relative and absolute tolerance.
+
+# Arguments
+- `a`, `b`: Values to compare
+- `rtol`: Relative tolerance (default: 1e-6)
+- `atol`: Absolute tolerance (default: 1e-8)
+
+# Returns
+- Boolean indicating approximate equality
+"""
+function approx_equal(a, b; rtol=1e-6, atol=1e-8)
+    return isapprox(a, b; rtol=rtol, atol=atol)
+end
