@@ -103,6 +103,9 @@ begin
 
     reference_ensemble_file = GGA.reference_ensemble_file;
 
+    @warn "!!! ONLY Reference ensemble file being run !!!!"
+    path2runs_filled = [reference_ensemble_file]
+
     if false
         using Random
         N = 2;

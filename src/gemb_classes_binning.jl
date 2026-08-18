@@ -39,7 +39,7 @@ begin
     show_interp_extrap_stats = false;
     gemb_run_id = 5;
 
-    elevation_classes_method = :mscale #:mscale # [:none, :Δelevation, :mscale]
+    elevation_classes_method = :Δelevation; #:mscale #:mscale # [:none, :Δelevation, :mscale]
 
     # exclude derived variables of smb and runoff (these are calculated later to ensure mass conservation after interpolation)
     vars2extract = ["fac", "acc", "refreeze", "melt", "rain", "ec"]

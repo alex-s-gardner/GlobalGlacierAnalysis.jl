@@ -741,7 +741,7 @@ function gemb_calibration(
 
                 # having issues with pscale and mscale seeming somewhat random... I'm thinking that it's realated to something that is no Thread safe
                 dgeotile_test = Dim{:geotile}([geotiles_golden_test[1], "lat[+58+60]lon[-138-136]"])
-                pscale_range_test = DimStack(DimArray([1.8, 1.5], dgeotile_test; name="min"), DimArray([3.0, 2.5], dgeotile_test; name="max"))
+                pscale_range_test = DimStack(DimArray([1.8, 1.0], dgeotile_test; name="min"), DimArray([3.0, 2.5], dgeotile_test; name="max"))
 
                 for geotile_test in dgeotile_test
                     geotile_sanity_check = geotile_test
@@ -915,6 +915,12 @@ function read_gemb_files(gemb_files, gembinfo; vars2extract=["acc", "refreeze", 
     gemb = Vector{Any}(undef, length(gemb_files))
     pscale = gembinfo.precipitation_scale
     Δelevation = gembinfo.elevation_delta
+
+    # Pre-extract scalar values from DimVectors to avoid thread-unsafe Dict operations
+    # Convert DimVector to plain Dict for thread-safe access
+    pscale_dict = Dict(string(k) => pscale[At(k)] for k in DimensionalData.lookup(pscale, 1))
+    Δelevation_dict = Dict(string(k) => Δelevation[At(k)] for k in DimensionalData.lookup(Δelevation, 1))
+
     @showprogress desc = "Reading raw GEMB output into memory, this will take ~2 min [peak memory usage: 150GB]" Threads.@threads for i in eachindex(gemb_files)
         gemb_file = gemb_files[i]
         gemb0 = gemb_read2(gemb_file; vars=vars2extract, datebin_edges)
@@ -931,8 +937,8 @@ function read_gemb_files(gemb_files, gembinfo; vars2extract=["acc", "refreeze", 
             elev_delta_ind = gemb_file[ind2[end]:ind3[1]-1]
         end
 
-        gemb0["precipitation_scale"] = pscale[At(precip_scale_ind)]
-        gemb0["elevation_delta"] = Δelevation[At(elev_delta_ind)]
+        gemb0["precipitation_scale"] = pscale_dict[precip_scale_ind]
+        gemb0["elevation_delta"] = Δelevation_dict[elev_delta_ind]
 
         gemb[i] = gemb0
     end

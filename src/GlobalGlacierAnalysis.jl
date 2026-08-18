@@ -89,6 +89,7 @@ module GlobalGlacierAnalysis
 
    # add utilities
    include("utilities_project.jl")
+   include("utilities_surrogate.jl")
    include("utilities_build_archive.jl")
    include("utilities_hugonnet.jl")
    include("utilities_gemb.jl")

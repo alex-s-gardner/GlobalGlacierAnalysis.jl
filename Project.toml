@@ -22,6 +22,7 @@ DecisionTree = "7806a523-6efd-50cb-b5f6-3fa6f1930dbb"
 DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
 Distances = "b4f34e82-e78d-54a5-968a-f98e89d6e8f7"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+EvoTrees = "f6006082-12f8-11e9-0c9c-0d5d367ab1e5"
 Extents = "411431e0-e8b7-467b-b5e0-f676ba4f2910"
 FastGeoProjections = "981663e8-0c94-46dd-b2cf-efc8480900ec"
 FileIO = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
@@ -81,6 +82,7 @@ Colors = "0.12"
 DataFrames = "1.8"
 DecisionTree = "0.12.4"
 DimensionalData = "0.29"
+EvoTrees = "0.18.1"
 FastGeoProjections = "0.0.2"
 GeoArrays = "0.9"
 GeoInterface = "1.4"
@@ -105,3 +107,9 @@ Rasters = "0.14"
 Shapefile = "0.13"
 SortTileRecursiveTree = "0.1"
 julia = "1.12"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
