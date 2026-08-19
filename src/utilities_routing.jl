@@ -472,7 +472,14 @@ function linear_reservoir_impulse_response_monthly(Tb)
         c += dd
     end
 
-    Qfrac = Qfrac[1:findfirst(Qfrac .== 0)-1]
+    # Trim the zero tail. For a long enough residence time none of the ten monthly bins rounds to
+    # zero, and `findfirst` then returns `nothing` -- the old `findfirst(Qfrac .== 0) - 1` threw
+    # `MethodError: no method matching -(::Nothing, ::Int64)` for Tb >= ~60 days. Keep everything
+    # when there is no zero bin to trim at.
+    first_zero = findfirst(iszero, Qfrac)
+    if !isnothing(first_zero)
+        Qfrac = Qfrac[1:first_zero-1]
+    end
 
     return Qfrac
 end

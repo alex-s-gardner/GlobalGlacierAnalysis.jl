@@ -102,18 +102,29 @@ end
 
 Convert DateTime to decimal year representation.
 
+The fraction is elapsed time since midnight on January 1 divided by the length of that year, so
+`DateTime(2019, 1, 1)` is exactly `2019.0` and the result is the exact inverse of
+[`decimalyear2datetime`](@ref).
+
 # Arguments
 - `datetime`: DateTime object to convert
 
 # Returns
-- Float representing year with decimal fraction (e.g., 2018.813698630137 for 2018-10-24)
+- Float representing year with decimal fraction (e.g., 2018.8109589041096 for 2018-10-24)
+
+# Note
+
+This previously used `Dates.dayofyear`, which is 1-based, so `DateTime(2019, 1, 1)` returned
+`2019 + 1/365` rather than `2019.0` -- a systematic one-day offset against
+`decimalyear2datetime`, which has always treated `YYYY.0` as January 1. Time of day was also
+discarded, making round-trips lose up to a full day. Both are fixed here, which shifts every
+converted date roughly one day earlier relative to the old behaviour.
 """
 function decimalyear(datetime)
     year = Dates.year(datetime)
-    day_of_year = Dates.dayofyear(datetime)
-    days_in_year = Dates.daysinyear(year)
-    decyear = year + (day_of_year / days_in_year)
-    return decyear
+    year_start = DateTime(year)
+    year_length = Dates.value(DateTime(year + 1) - year_start)
+    return year + Dates.value(datetime - year_start) / year_length
 end
 
 """
@@ -154,8 +165,8 @@ function decimalyear2datetime(decyear)
     s = (m - m0) * 60
     s0 = floor(s)
 
-    # integer millisecond
-    ms = round((s - s0)*100)
+    # integer millisecond (1000 ms per second -- this was *100, losing a factor of ten)
+    ms = round((s - s0)*1000)
 
     # calculate datetime
     datetime = yr + Day(d0) + Hour(h0) + Minute(m0) + Second(s0) + Millisecond(ms)
@@ -781,12 +792,23 @@ Find the enclosing range of `true` elements along each dimension of a boolean ar
 - `v`: Multidimensional boolean array
 
 # Returns
-- Tuple of ranges, one per dimension, containing the first to last indices where `true` values exist
+- Tuple of ranges, one per dimension, containing the first to last indices where `true` values
+  exist. If `v` holds no `true` values at all, every returned range is empty (`1:0`).
+
+# Note
+
+The all-`false` case previously threw `MethodError: no method matching isless(::Nothing, ::Nothing)`
+because `findfirst`/`findlast` both returned `nothing`. Callers that destructure the result --
+e.g. `validrange(valid)` in `utilities_gemb.jl` -- would crash on a fully-masked input rather than
+seeing an empty selection.
 """
 function validrange(v)
-   nd = ndims(v);
-   d = collect(1:nd)
-   Tuple([findfirst(vec(any(v, dims=Tuple(x for x in d[d.!==n])))):findlast(vec(any(v, dims=Tuple(x for x in d[d.!==n])))) for n in 1:nd])
+    nd = ndims(v)
+    return ntuple(nd) do n
+        projected = vec(any(v, dims=Tuple(setdiff(1:nd, n))))
+        first_true = findfirst(projected)
+        isnothing(first_true) ? (1:0) : (first_true:findlast(projected))
+    end
 end
 
 

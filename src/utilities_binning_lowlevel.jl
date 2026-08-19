@@ -231,6 +231,12 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
         error("smooth_h2t_length_scale is < 1, should be in the range 2000 to 1, sypically 800")
     end
 
+    # `bincount_min` and `smooth_n` are per-mission in production (`binned_filling_parameters`
+    # supplies `Dict("icesat" => 9, ...)`) but the signature above advertises plain scalars. Indexing
+    # a scalar by mission name threw `MethodError: no method matching getindex(::Int64, ::String)`,
+    # so the documented defaults could never actually be used. Accept either form.
+    per_mission(x, mission) = x isa Union{AbstractDict,NamedTuple} ? x[mission] : x
+
     t = decimalyear.(dims(dh1[first(keys(dh1))], :date))
     t = repeat(t, 1, length(dims(dh1[first(keys(dh1))], :height)))
 
@@ -245,6 +251,10 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
     end
 
     for mission in missions2update
+
+        # resolve the per-mission knobs once, rather than at each use inside the threaded loop
+        bincount_min_m = per_mission(bincount_min, mission)
+        smooth_n_m = per_mission(smooth_n, mission)
 
         valid_all_mission = .!isnan.(dh1[mission])
         if !any(valid_all_mission)
@@ -267,7 +277,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
             df.nbins_raw = sum(nobs0 .> 0)
 
             ###################################### FILTER 1 ################################
-            valid1 = .!isnan.(dh0) .& (nobs0 .> bincount_min[mission]) .& (abs.(dh0) .< 200)
+            valid1 = .!isnan.(dh0) .& (nobs0 .> bincount_min_m) .& (abs.(dh0) .< 200)
             ################################################################################
 
             dh0[collect(.!valid1)] .= NaN
@@ -375,7 +385,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
 
             #### THIS CODE BLOCK TAKES THE MOST TIME ####
             # take the median of the x closest neighbors
-            if sum(valid0) < smooth_n[mission]
+            if sum(valid0) < smooth_n_m
                 anom_smooth = zeros(length(dh0))
             else
 
@@ -383,7 +393,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
                 pts = hcat(t0[valid0], h0[valid0] / smooth_h2t_length_scale)'
 
                 kdtree = KDTree(pts)
-                idxs, _ = knn(kdtree, pts, smooth_n[mission])
+                idxs, _ = knn(kdtree, pts, smooth_n_m)
 
                 anom0 = map(ind -> median(dh0_anom[ind]), idxs)
 
@@ -1078,6 +1088,12 @@ function geotile_bin2d(
     df = binstats(df, [getindex.(dims_edges, 1)...], [getindex.(dims_edges, 2)...],
         var2bin; col_function=[binfunction], missing_bins=true)
 
+    # binstats names the aggregated column "<var2bin>_<function name>" -- "dh_function" for an
+    # anonymous closure (what `binningfun_define` returns), but "dh_median" for a named `median`.
+    # This was hardcoded as "dh_function" below, which broke both a non-default `var2bin` and any
+    # named `binfunction`. Identify it as the one output column that is neither an axis nor `nrow`.
+    binned_col = only(setdiff(names(df), string.(first.(dims_edges)), ["nrow"]))
+
     gdf = DataFrames.groupby(df, dims_edges[1][1])
 
     dd1 = Dim{Symbol(dims_edges[1][1])}(sort((dims_edges[1][2][1:end-1] .+ dims_edges[1][2][2:end]) ./ 2))
@@ -1091,11 +1107,11 @@ function geotile_bin2d(
 
     for (i, df) in enumerate(gdf)
 
-        isval = .!ismissing.(df[p, "dh_function"])
+        isval = .!ismissing.(df[p, binned_col])
         var2 = @view var0[i, :]
         nobs2 = @view nobs0[i, :]
         if any(isval)
-            var2[isval] = df[p, "dh_function"][isval]
+            var2[isval] = df[p, binned_col][isval]
             nobs2[isval] = df.nrow[p][isval]
         end
     end

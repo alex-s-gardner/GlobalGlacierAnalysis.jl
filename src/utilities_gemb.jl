@@ -42,13 +42,23 @@ function gemb_read2(gemb_file; vars="all", datebin_edges=nothing, remove_rain_fr
         "rain" => "Rain"
     )
 
+    # MAT collapses a 1-element variable to a bare scalar, and `f[isnan.(f)] .= 0` throws
+    # `BoundsError: attempt to access Float64 at index [false]` on one of those. Handle both
+    # shapes so a single-valued field (e.g. FACtoDepth) does not abort the whole read.
+    function denan(f)
+        if f isa AbstractArray
+            f[isnan.(f)] .= 0
+            return f
+        else
+            return (f isa AbstractFloat && isnan(f)) ? zero(f) : f
+        end
+    end
+
     gemb = Dict()
     if vars == "all"
         foo = matread(gemb_file)
         for v in varmap
-            f = foo[v[2]]
-            f[isnan.(f)] .= 0 #set any random nan to zero
-            gemb[v[1]] = f
+            gemb[v[1]] = denan(foo[v[2]])
         end
     else
         if length(intersect(vars0, vars)) != length(vars)
@@ -58,9 +68,7 @@ function gemb_read2(gemb_file; vars="all", datebin_edges=nothing, remove_rain_fr
         gemb = matopen(gemb_file) do file
             foo = MAT.read.(Ref(file), [varmap[v] for v in vars])
             for (i, v) in enumerate(vars)
-                f = foo[i]
-                f[isnan.(f)] .= 0 #set any random nan to zero
-                gemb[v] = f
+                gemb[v] = denan(foo[i])
             end
             return gemb
         end
@@ -1085,8 +1093,11 @@ function gemb_ensemble_dv(; gemb_run_id=4)
     gembinfo = gemb_info(; gemb_run_id)
     gemb_geotile_filename_dv = replace(gembinfo.filename_gemb_combined, ".jld2" => "_geotile_dv.jld2")
     dv_gemb = FileIO.load(gemb_geotile_filename_dv, "gemb_dv")
-    
-    gemb_add_derived_vars!(dv_gemb)
+
+    # `gemb_add_derived_vars!` builds a new object via `merge` rather than mutating in place, so
+    # its return value has to be captured. Discarding it left :smb, :runoff and :dv absent, and
+    # the `dv_gemb[:smb]` usage shown in this function's own docstring would throw a KeyError.
+    dv_gemb = gemb_add_derived_vars!(dv_gemb)
 
     return dv_gemb
 
@@ -1095,19 +1106,24 @@ end
 """
     gemb_add_derived_vars!(dv_gemb)
 
-Add derived variables (smb, runoff, dv) to a GEMB volume-change dictionary in-place.
+Return a copy of `dv_gemb` with derived variables (smb, runoff, dv) added.
 
 Computes smb = acc - melt + refreeze - ec, runoff = melt - refreeze, dv = smb + fac.
 
 # Arguments
-- `dv_gemb`: Dictionary of GEMB variables (must contain acc, melt, refreeze, ec, fac)
+- `dv_gemb`: Symbol-keyed collection of GEMB variables supporting `merge` -- a NamedTuple or
+  DimStack, not a `Dict` -- and containing acc, melt, refreeze, ec, fac
 
 # Returns
-- The modified dictionary with :smb, :runoff, :dv added.
+- A new collection with :smb, :runoff and :dv added
+
+!!! warning
+    Despite the `!`, this does **not** mutate its argument: it is built on `merge`, which returns
+    a new object. Always assign the result -- `dv_gemb = gemb_add_derived_vars!(dv_gemb)`.
 
 # Examples
 ```julia
-julia> gemb_add_derived_vars!(dv_gemb)
+julia> dv_gemb = gemb_add_derived_vars!(dv_gemb)
 julia> dv = dv_gemb[:dv]
 ```
 """
