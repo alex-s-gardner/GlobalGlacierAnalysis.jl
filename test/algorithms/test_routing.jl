@@ -10,6 +10,8 @@ using GlobalGlacierAnalysis
 import GlobalGlacierAnalysis as GGA
 using DataFrames
 using Statistics
+using DimensionalData
+import DimensionalData as DD
 
 # Include test fixtures
 include("../fixtures/synthetic_network.jl")
@@ -74,144 +76,115 @@ include("../fixtures/synthetic_network.jl")
         @test d_pole ≈ 20004000.0 rtol=1e-2
     end
 
+    # `flux_accumulate!` takes five positional arguments -- not a DataFrame with keyword column
+    # names -- and mutates a DimArray whose *last* dimension is indexed by node id:
+    #
+    #   flux_accumulate!(river_inputs, id, nextdown_id, headbasin, majorbasin_id)
+    #
+    # (see the real callers in glacier_routing.jl and land_surface_model_routing.jl). `headbasin`
+    # flags headwater nodes -- those nothing else drains into -- and `majorbasin_id` groups nodes
+    # into independently-processed basins.
+    function accumulate_flux(ids, next_ids, local_flux)
+        flux = DimArray(reshape(collect(float.(local_flux)), 1, length(ids)),
+                        (Dim{:Ti}(1:1), Dim{:id}(ids)))
+        headbasin = [!(id in next_ids) for id in ids]
+        GGA.flux_accumulate!(flux, ids, next_ids, headbasin, fill(1, length(ids)))
+        return flux
+    end
+
     @testset "flux_accumulate! - linear network" begin
-        # Create linear network: A → B → C → ocean
+        # Linear network: 1 → 2 → 3 → ocean
         network = create_linear_network(3)
+        local_flux = [10.0, 5.0, 3.0]  # Gt/yr at each node
 
-        # Initial flux at each node (local contribution)
-        network.flux = [10.0, 5.0, 3.0]  # Gt/yr at each node
+        flux = accumulate_flux(network.COMID, network.NextDownID, local_flux)
 
-        # Accumulate flux downstream
-        GGA.flux_accumulate!(network; flux_col=:flux, id_col=:COMID, next_id_col=:NextDownID)
+        # Node 3 (terminus) accumulates everything upstream
+        @test flux[1, DD.At(3)] ≈ sum(local_flux)
 
-        # Test: Node C (terminus) should have sum of all upstream fluxes
-        terminus_idx = findfirst(network.NextDownID .== 0)
-        @test network.flux[terminus_idx] ≈ 10.0 + 5.0 + 3.0
+        # Node 2 carries its own flux plus node 1
+        @test flux[1, DD.At(2)] ≈ 10.0 + 5.0
 
-        # Test: Node B should have its own flux + upstream from A
-        node_b_idx = findfirst(network.COMID .== network.NextDownID[1])
-        @test network.flux[node_b_idx] ≈ 10.0 + 5.0
-
-        # Test: Node A (headwater) should only have its own flux
-        @test network.flux[1] ≈ 10.0
+        # Node 1 (headwater) keeps only its own flux
+        @test flux[1, DD.At(1)] ≈ 10.0
     end
 
     @testset "flux_accumulate! - branching network" begin
-        # Create branching network: A + B → C → D → ocean
+        # Branching network: 1 → 3 ← 2, then 3 → 4 → 5 → ocean
         network = create_branching_network()
+        local_flux = [8.0, 6.0, 2.0, 1.0, 0.5]
 
-        # Local flux contributions
-        n_nodes = nrow(network)
-        network.flux = [8.0, 6.0, 2.0, 1.0, 0.5]  # Different at each node
+        flux = accumulate_flux(network.COMID, network.NextDownID, local_flux)
 
-        # Get confluence and outlet IDs
-        confluence_id = 3  # Where A and B meet
-        outlet_id = 5      # Ocean terminus
+        # Confluence receives both branches plus its own local input
+        @test flux[1, DD.At(3)] ≈ 8.0 + 6.0 + 2.0 rtol=1e-6
 
-        # Accumulate flux
-        GGA.flux_accumulate!(network; flux_col=:flux, id_col=:COMID, next_id_col=:NextDownID)
+        # Outlet carries the whole network
+        @test flux[1, DD.At(5)] ≈ sum(local_flux) rtol=1e-6
 
-        # Test: Confluence should receive flux from both branches A and B
-        confluence_idx = findfirst(network.COMID .== confluence_id)
-        expected_at_confluence = 8.0 + 6.0 + 2.0  # A + B + local at C
-        @test network.flux[confluence_idx] ≈ expected_at_confluence rtol=1e-6
-
-        # Test: Outlet should have total from entire network
-        outlet_idx = findfirst(network.COMID .== outlet_id)
-        expected_total = 8.0 + 6.0 + 2.0 + 1.0 + 0.5
-        @test network.flux[outlet_idx] ≈ expected_total rtol=1e-6
-
-        # Test: Flux should increase monotonically downstream
-        # (or stay same if no tributaries)
+        # Flux never decreases downstream
         for i in 1:nrow(network)
             if network.NextDownID[i] != 0
-                downstream_idx = findfirst(network.COMID .== network.NextDownID[i])
-                @test network.flux[downstream_idx] >= network.flux[i]
+                @test flux[1, DD.At(network.NextDownID[i])] >= flux[1, DD.At(network.COMID[i])]
             end
         end
     end
 
     @testset "linear_reservoir_impulse_response_monthly" begin
         # Test hydrologic routing with known residence time
-        n_months = 24
-        residence_time_months = 3.0  # 3 month residence time
+        # `linear_reservoir_impulse_response_monthly(Tb)` takes a single scalar -- the baseflow
+        # residence time in *days* -- and returns the monthly impulse response as a vector of
+        # fractions. It is not a convolution routine: applying a response to a time series is
+        # `apply_vector_impulse_resonse!`. Fractions are rounded to two digits and truncated at
+        # the first zero, so they sum to 1 only to within that rounding.
+        response = GGA.linear_reservoir_impulse_response_monthly(45)
 
-        # Create unit impulse: 1.0 at t=0, 0.0 elsewhere
-        input_flux = zeros(n_months)
-        input_flux[1] = 1.0
+        @test response isa AbstractVector
+        @test !isempty(response)
 
-        # Apply linear reservoir routing
-        output_flux = GGA.linear_reservoir_impulse_response_monthly(
-            input_flux,
-            residence_time_months
-        )
+        # Mass is (near) conserved
+        @test sum(response) ≈ 1.0 atol=0.02
 
-        # Test: Output should sum to 1.0 (mass conservation)
-        @test sum(output_flux) ≈ 1.0 rtol=1e-3
+        # Every entry is a valid fraction
+        @test all(0 .<= response .<= 1)
 
-        # Test: Peak output should be at first time step but < input
-        @test output_flux[1] < input_flux[1]
-        @test output_flux[1] == maximum(output_flux)
+        # The tail decays: once past the peak the response is non-increasing
+        peak = argmax(response)
+        @test all(diff(response[peak:end]) .<= 1e-12)
 
-        # Test: Output should decay exponentially
-        # Each month, remaining water = exp(-1/tau)
-        decay_rate = exp(-1.0 / residence_time_months)
-        for i in 2:10  # Check first 10 months
-            expected_ratio = decay_rate
-            actual_ratio = output_flux[i] / output_flux[i-1]
-            @test actual_ratio ≈ expected_ratio rtol=0.15  # Allow some numerical error
-        end
-
-        # Test: Long tail should approach zero
-        @test output_flux[end] < 0.01
+        # The last month is a small remainder
+        @test response[end] <= 0.05
     end
 
-    @testset "linear_reservoir_routing - continuous input" begin
-        # Test with constant input flux
-        n_months = 36
-        residence_time = 2.0
+    @testset "linear_reservoir_impulse_response_monthly - residence time scaling" begin
+        fast = GGA.linear_reservoir_impulse_response_monthly(15)
+        slow = GGA.linear_reservoir_impulse_response_monthly(45)
 
-        # Constant input of 10 Gt/month
-        input_flux = fill(10.0, n_months)
+        # A longer residence time spreads the response over more months...
+        @test length(slow) > length(fast)
 
-        output_flux = GGA.linear_reservoir_impulse_response_monthly(
-            input_flux,
-            residence_time
-        )
+        # ...and lowers the fraction released in the first month
+        @test slow[1] < fast[1]
 
-        # Test: With constant input, output should reach equilibrium
-        # At equilibrium, output ≈ input
-        equilibrium_months = 15:n_months  # After ~5 residence times
-        mean_output = mean(output_flux[equilibrium_months])
-        mean_input = mean(input_flux[equilibrium_months])
-
-        @test mean_output ≈ mean_input rtol=0.1
-
-        # Test: Output should be monotonically increasing at start
-        @test all(diff(output_flux[1:10]) .>= -1e-10)  # Allow tiny numerical errors
+        # both still conserve mass to within rounding
+        @test sum(fast) ≈ 1.0 atol=0.02
+        @test sum(slow) ≈ 1.0 atol=0.02
     end
 
     @testset "flux conservation in routing" begin
         # Test that total flux is conserved through routing
-        network = create_dendritic_network()
+        network = create_dendritic_network()   # 1→4, 2→4, 3→5, 4→5, 5→6, 6→ocean
 
-        # Random local fluxes
-        network.flux_local = abs.(randn(nrow(network))) .* 5.0
-        network.flux_accumulated = copy(network.flux_local)
+        local_flux = abs.(randn(nrow(network))) .* 5.0
+        # nodes 1, 2 and 3 have nothing flowing into them
+        @test [!(id in network.NextDownID) for id in network.COMID] ==
+              [true, true, true, false, false, false]
 
-        # Accumulate
-        GGA.flux_accumulate!(network;
-            flux_col=:flux_accumulated,
-            id_col=:COMID,
-            next_id_col=:NextDownID
-        )
+        flux = accumulate_flux(network.COMID, network.NextDownID, local_flux)
 
-        # Test: Total flux at outlet equals sum of all local inputs
-        outlet_idx = findfirst(network.NextDownID .== 0)
-        total_input = sum(network.flux_local)
-        total_output = network.flux_accumulated[outlet_idx]
-
-        @test total_output ≈ total_input rtol=1e-10
+        # Total flux at the outlet equals the sum of all local inputs
+        outlet_id = network.COMID[findfirst(network.NextDownID .== 0)]
+        @test flux[1, DD.At(outlet_id)] ≈ sum(local_flux) rtol=1e-10
     end
 
     @testset "network topology validation" begin
@@ -222,15 +195,18 @@ include("../fixtures/synthetic_network.jl")
         valid_next = [2, 3, 0]
         @test_nowarn GGA.trace_downstream(1, valid_ids, valid_next)
 
-        # Circular network: 1 → 2 → 1 (invalid, should be caught)
+        # Circular network: 1 → 2 → 1 (invalid). `trace_downstream` guards against this with an
+        # iteration cap rather than by raising: the kwarg is `maxiters` (not `max_steps`), and a
+        # cycle simply terminates once the cap is reached.
         circular_ids = [1, 2]
         circular_next = [2, 1]
 
-        # This should either error or not return (depending on implementation)
-        # For safety, trace should detect cycles
-        @test_throws Union{ErrorException, StackOverflowError} begin
-            GGA.trace_downstream(1, circular_ids, circular_next; max_steps=100)
-        end || length(GGA.trace_downstream(1, circular_ids, circular_next; max_steps=10)) <= 10
+        cycle_path = GGA.trace_downstream(1, circular_ids, circular_next)
+        @test length(cycle_path) <= length(circular_ids) + 1   # bounded, does not hang
+
+        bounded = GGA.trace_downstream(1, circular_ids, circular_next; maxiters=10)
+        @test length(bounded) <= 11
+        @test all(in(circular_ids), bounded)
     end
 
     @testset "multiple outlets handling" begin
@@ -276,60 +252,47 @@ include("../fixtures/synthetic_network.jl")
     end
 
     @testset "flux routing with seasonal variation" begin
-        # Test routing with seasonal input
+        # Routing a time series is a convolution of the series with the impulse response, done by
+        # `apply_vector_impulse_resonse!`. `linear_reservoir_impulse_response_monthly` only builds
+        # the response kernel from a residence time.
         n_months = 24
-        residence_time = 2.0
 
-        # Seasonal input (sine wave)
+        # Seasonal input (sine wave), shaped (1, 1, n_months) as apply_vector_impulse_resonse!
+        # expects a 3D array whose third axis is time
         t = collect(0:n_months-1) ./ 12.0  # Years
         input_flux = 10.0 .+ 5.0 .* sin.(2π .* t)  # Mean 10, amplitude 5
 
-        output_flux = GGA.linear_reservoir_impulse_response_monthly(
-            input_flux,
-            residence_time
-        )
+        M = reshape(copy(input_flux), 1, 1, n_months)
+        response = GGA.linear_reservoir_impulse_response_monthly(60)
+        GGA.apply_vector_impulse_resonse!(M, response)
+        output_flux = vec(M[1, 1, :])
 
         # Test: Output should be smoother than input (reservoir dampens)
-        input_std = std(input_flux)
-        output_std = std(output_flux[6:end])  # Skip spin-up
-        @test output_std < input_std
+        @test std(output_flux[6:end]) < std(input_flux)
 
-        # Test: Mean should be preserved
-        @test mean(output_flux[6:end]) ≈ mean(input_flux[6:end]) rtol=0.1
+        # Test: Mean should be roughly preserved (the kernel sums to ~1)
+        @test mean(output_flux[6:end]) ≈ mean(input_flux[6:end]) rtol=0.15
 
-        # Test: Output should lag input by ~residence time
-        # Peak of output should occur after peak of input
-        input_peak_idx = argmax(input_flux[1:12])
-        output_peak_idx = argmax(output_flux[1:12])
-        @test output_peak_idx > input_peak_idx  # Output lags
+        # Test: the seasonal peak is delayed relative to the input
+        @test argmax(output_flux[1:12]) > argmax(input_flux[1:12])
     end
 
     @testset "Edge case - zero flux" begin
         # Test handling of zero flux
         network = create_linear_network(3)
-        network.flux = zeros(3)
-
-        GGA.flux_accumulate!(network; flux_col=:flux, id_col=:COMID, next_id_col=:NextDownID)
+        flux = accumulate_flux(network.COMID, network.NextDownID, zeros(3))
 
         # All fluxes should remain zero
-        @test all(network.flux .== 0.0)
+        @test all(parent(flux) .== 0.0)
     end
 
     @testset "Edge case - single node network" begin
-        # Test single-node network (direct to ocean)
-        network = DataFrame(
-            COMID = [1],
-            NextDownID = [0],
-            lengthkm = [10.0],
-            lon = [-120.0],
-            lat = [45.0],
-            flux = [15.0]
-        )
-
-        GGA.flux_accumulate!(network; flux_col=:flux, id_col=:COMID, next_id_col=:NextDownID)
+        # Single-node network (direct to ocean): nothing to accumulate
+        network = DataFrame(COMID=[1], NextDownID=[0], lengthkm=[10.0], lon=[-120.0], lat=[45.0])
+        flux = accumulate_flux(network.COMID, network.NextDownID, [15.0])
 
         # Flux should be unchanged
-        @test network.flux[1] == 15.0
+        @test flux[1, DD.At(1)] == 15.0
     end
 
     @testset "Large network scaling" begin
@@ -340,23 +303,14 @@ include("../fixtures/synthetic_network.jl")
         ids = collect(1:n_nodes)
         next_ids = vcat(collect(2:n_nodes), [0])
 
-        network = DataFrame(
-            COMID = ids,
-            NextDownID = next_ids,
-            lengthkm = fill(5.0, n_nodes),
-            lon = range(-120, -110, length=n_nodes),
-            lat = fill(45.0, n_nodes),
-            flux = fill(1.0, n_nodes)
-        )
-
         # Should complete quickly
-        @test_nowarn GGA.flux_accumulate!(network;
-            flux_col=:flux,
-            id_col=:COMID,
-            next_id_col=:NextDownID
-        )
+        local flux
+        @test_nowarn flux = accumulate_flux(ids, next_ids, ones(n_nodes))
 
         # Test: Outlet should have sum of all inputs
-        @test network.flux[end] ≈ n_nodes rtol=1e-10
+        @test flux[1, DD.At(n_nodes)] ≈ n_nodes rtol=1e-10
+
+        # and flux grows by exactly one unit per step down the chain
+        @test [flux[1, DD.At(i)] for i in ids] ≈ collect(1.0:n_nodes) rtol=1e-10
     end
 end

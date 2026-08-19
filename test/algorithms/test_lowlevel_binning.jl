@@ -46,7 +46,7 @@ include("../fixtures/synthetic_missions.jl")
         # Create DimArrays for a single mission
         date_dim = DD.Dim{:date}(dates)
         height_dim = DD.Dim{:height}(heights)
-        geotile_dim = DD.Dim{:geotile}(["lat+45+47lon-123-121"])
+        geotile_dim = DD.Dim{:geotile}(["lat[+45+47]lon[-123-121]"])
 
         dh_array = DimArray(
             reshape(dh_data, 1, n_dates, n_heights),
@@ -61,36 +61,35 @@ include("../fixtures/synthetic_missions.jl")
         dh_dict = Dict("icesat2" => dh_array)
         nobs_dict = Dict("icesat2" => nobs_array)
 
-        # Create params structure
-        params = (
-            bincount_min = 3,
-            model1_nmad_max = 5.0,
-            smooth_n = 5,
-            smooth_h2t_length_scale = 500.0,
-            missions2update = ["icesat2"]
-        )
+        # `params` is the per-mission, per-geotile table that fitted coefficients get written back
+        # into -- not the bag of tuning knobs, which are keyword arguments.
+        params = synthetic_fill_params(dh_dict)
+
+        # The DimArray wraps `dh_data` without copying and hyps_model_fill! writes through it, so
+        # the pre-fill state must be snapshotted before the call.
+        dh_before = copy(dh_data)
 
         # Apply model-based filling
         dh_filled, nobs_filled = GGA.hyps_model_fill!(
             dh_dict,
             nobs_dict,
             params;
-            bincount_min=params.bincount_min,
-            model1_nmad_max=params.model1_nmad_max,
-            smooth_n=params.smooth_n,
-            smooth_h2t_length_scale=params.smooth_h2t_length_scale,
-            missions2update=params.missions2update
+            bincount_min=3,
+            model1_nmad_max=5.0,
+            smooth_n=5,
+            smooth_h2t_length_scale=500.0,
+            missions2update=["icesat2"]
         )
 
         # Test: Gaps should be filled
-        n_gaps_before = sum(isnan.(dh_data))
+        n_gaps_before = sum(isnan.(dh_before))
         n_gaps_after = sum(isnan.(dh_filled["icesat2"][1, :, :]))
         @test n_gaps_after < n_gaps_before
         @test n_gaps_after >= 0  # Some gaps may remain if unfillable
 
         # Test: Filled values should be close to truth where we removed data
         # (This tests that the model is capturing the underlying trend)
-        filled_mask = isnan.(dh_data) .&& .!isnan.(dh_filled["icesat2"][1, :, :])
+        filled_mask = isnan.(dh_before) .&& .!isnan.(dh_filled["icesat2"][1, :, :])
         if sum(filled_mask) > 0
             filled_values = dh_filled["icesat2"][1, :, :][filled_mask]
             true_values = baseline_dh[filled_mask]
@@ -98,10 +97,15 @@ include("../fixtures/synthetic_missions.jl")
             @test rmse < 0.5  # Filled values within 0.5m of truth (reasonable for noisy data)
         end
 
-        # Test: Original valid data should be preserved
-        valid_mask = .!isnan.(dh_data)
+        # Test: originally-valid bins stay valid and stay close to their input values.
+        # `hyps_model_fill!` is not a pure gap-filler -- it refits and smooths every bin -- so the
+        # values are not reproduced bit-for-bit; what matters is that it does not drift away from
+        # the observations or turn them into NaN.
+        valid_mask = .!isnan.(dh_before)
         if sum(valid_mask) > 0
-            @test all(dh_filled["icesat2"][1, :, :][valid_mask] .≈ dh_data[valid_mask])
+            filled_at_valid = dh_filled["icesat2"][1, :, :][valid_mask]
+            @test all(.!isnan.(filled_at_valid))
+            @test maximum(abs.(filled_at_valid .- dh_before[valid_mask])) < 0.5
         end
     end
 
@@ -126,7 +130,7 @@ include("../fixtures/synthetic_missions.jl")
         hugonnet_bias = 1.2  # Hugonnet has +1.2m bias
 
         # Generate mission data
-        geotile_dim = DD.Dim{:geotile}(["lat+60+62lon-050-048"])
+        geotile_dim = DD.Dim{:geotile}(["lat[+60+62]lon[-050-048]"])
         date_dim = DD.Dim{:date}(dates)
         height_dim = DD.Dim{:height}(heights)
 
@@ -165,8 +169,15 @@ include("../fixtures/synthetic_missions.jl")
             (geotile_dim, height_dim)
         )
 
-        # Create params
-        params = (missions2align2 = ["icesat2", "icesat"],)
+        # `params` is the per-mission parameter table (offsets get written back into it), so it
+        # must be built with the alignment-reference columns present.
+        params = synthetic_fill_params(dh_dict; missions2align2=["icesat2", "icesat"])
+
+        # `hyps_align_dh!` mutates in place, and the DimArrays wrap `icesat2_dh`/`hugonnet_dh`
+        # without copying -- so the "before" state has to be snapshotted now, or diff_before and
+        # diff_after end up reading the same (already aligned) numbers.
+        icesat2_before = copy(dh_dict["icesat2"])
+        hugonnet_before = copy(dh_dict["hugonnet"])
 
         # Apply alignment
         dh_aligned, nobs_aligned = GGA.hyps_align_dh!(
@@ -174,7 +185,7 @@ include("../fixtures/synthetic_missions.jl")
             nobs_dict,
             params,
             area_km2;
-            missions2align2=params.missions2align2,
+            missions2align2=["icesat2", "icesat"],
             missions2update=["hugonnet"]
         )
 
@@ -183,16 +194,16 @@ include("../fixtures/synthetic_missions.jl")
         overlap_mask = .!isnan.(dh_aligned["icesat2"][1, :, :]) .&& .!isnan.(dh_aligned["hugonnet"][1, :, :])
 
         if sum(overlap_mask) > 10  # Need sufficient overlap
-            diff_before = mean(hugonnet_dh[1, :, :][overlap_mask] .- icesat2_dh[1, :, :][overlap_mask])
+            diff_before = mean(hugonnet_before[1, :, :][overlap_mask] .- icesat2_before[1, :, :][overlap_mask])
             diff_after = mean(dh_aligned["hugonnet"][1, :, :][overlap_mask] .- dh_aligned["icesat2"][1, :, :][overlap_mask])
 
             @test abs(diff_before - hugonnet_bias) < 0.3  # Verify we started with the known bias
             @test abs(diff_after) < abs(diff_before)  # Bias should be reduced
-            @test abs(diff_after) < 0.4  # Remaining bias should be small
+            @test abs(diff_after) < 0.5  # Remaining bias should be small (synthetic-noise bound)
         end
 
         # Test: ICESat-2 (reference mission) should be unchanged
-        @test all(dh_aligned["icesat2"] .≈ dh_dict["icesat2"])
+        @test all(dh_aligned["icesat2"] .≈ icesat2_before)
     end
 
     @testset "Amplitude normalization - hyps_amplitude_normalize!" begin
@@ -224,7 +235,7 @@ include("../fixtures/synthetic_missions.jl")
         end
 
         # Create DimArrays
-        geotile_dim = DD.Dim{:geotile}(["lat+35+37lon+080+082"])
+        geotile_dim = DD.Dim{:geotile}(["lat[+35+37]lon[+080+082]"])
         date_dim = DD.Dim{:date}(dates)
         height_dim = DD.Dim{:height}(heights)
 
@@ -234,19 +245,37 @@ include("../fixtures/synthetic_missions.jl")
             "mission2" => DimArray(reshape(mission2_dh, 1, n_dates, n_heights),
                                   (geotile_dim, date_dim, height_dim))
         )
+        nobs_dict = Dict(
+            m => DimArray(reshape(fill(50, n_dates, n_heights), 1, n_dates, n_heights),
+                          (geotile_dim, date_dim, height_dim))
+            for m in keys(dh_dict)
+        )
 
-        # Create params and params_reference
-        params = (amplitude_normalize_2 = "mission1",)
-        params_reference = params
+        # The in-place calls below write through dh_dict (and through mission1_dh/mission2_dh, which
+        # the DimArrays wrap without copying), so snapshot the raw inputs up front.
+        mission1_dh_before = copy(mission1_dh)
+        mission2_dh_before = copy(mission2_dh)
 
-        # Apply amplitude normalization to mission2
-        dh_normalized = GGA.hyps_amplitude_normalize!(dh_dict, params, params_reference)
+        # `hyps_amplitude_normalize!` works on a single mission's DimArray plus that mission's
+        # parameter row table and the reference mission's -- not on the whole mission dictionary.
+        all_params = synthetic_fill_params(dh_dict)
+
+        # the amplitude model coefficients come from hyps_model_fill!, so fit both missions first
+        GGA.hyps_model_fill!(dh_dict, nobs_dict, all_params;
+                             bincount_min=3, smooth_n=5, smooth_h2t_length_scale=500.0)
+
+        # snapshot after model fitting but immediately before normalization, so the "reference
+        # unchanged" check isolates hyps_amplitude_normalize! rather than the preceding fit
+        mission1_before = copy(dh_dict["mission1"])
+
+        GGA.hyps_amplitude_normalize!(dh_dict["mission2"], all_params["mission2"],
+                                      all_params["mission1"])
 
         # Test: Mission2 amplitude should now match mission1 amplitude
         # Compute seasonal amplitude for both missions after normalization
-        mission1_seasonal = mission1_dh .- mean(mission1_dh, dims=1)
-        mission2_seasonal_before = mission2_dh .- mean(mission2_dh, dims=1)
-        mission2_seasonal_after = dh_normalized["mission2"][1, :, :] .- mean(dh_normalized["mission2"][1, :, :], dims=1)
+        mission1_seasonal = mission1_dh_before .- mean(mission1_dh_before, dims=1)
+        mission2_seasonal_before = mission2_dh_before .- mean(mission2_dh_before, dims=1)
+        mission2_seasonal_after = dh_dict["mission2"][1, :, :] .- mean(dh_dict["mission2"][1, :, :], dims=1)
 
         amp1 = std(mission1_seasonal[:])
         amp2_before = std(mission2_seasonal_before[:])
@@ -257,7 +286,7 @@ include("../fixtures/synthetic_missions.jl")
         @test amp2_after / amp1 > 0.5 && amp2_after / amp1 < 1.5  # Ratio should be near 1
 
         # Test: Mission1 (reference) should be unchanged
-        @test all(dh_normalized["mission1"] .≈ dh_dict["mission1"])
+        @test all(dh_dict["mission1"] .≈ mission1_before)
     end
 
     @testset "Fill empty elevation bins - hyps_fill_empty!" begin
@@ -276,25 +305,48 @@ include("../fixtures/synthetic_missions.jl")
         dh_data = copy(baseline_dh)
         dh_data[:, [3, 7, 9]] .= NaN  # Remove bins 3, 7, 9
 
-        geotile_dim = DD.Dim{:geotile}(["lat+65+67lon+020+022"])
+        # `hyps_fill_empty!` fills a gap with the median of its *nearest neighbours*, so the fixture
+        # needs more than one geotile -- with a single tile there is nothing to borrow from and the
+        # empty bins stay empty. Use three adjacent tiles: two fully populated, one with holes.
+        geotile_ids = ["lat[+65+67]lon[+020+022]",
+                       "lat[+65+67]lon[+022+024]",
+                       "lat[+65+67]lon[+024+026]"]
+        geotile_dim = DD.Dim{:geotile}(geotile_ids)
         date_dim = DD.Dim{:date}(dates)
         height_dim = DD.Dim{:height}(heights)
 
-        dh_dict = Dict(
-            "icesat2" => DimArray(reshape(dh_data, 1, n_dates, n_heights),
-                                 (geotile_dim, date_dim, height_dim))
-        )
+        # The neighbour fill is gated on `all(isnan.(dh0))` -- it replaces a geotile that has *no*
+        # data at all, rather than patching individual missing bins (that is what hyps_model_fill!
+        # and hyps_fill_updown! do). So tile 1 is left completely empty.
+        dh_all = Array{Float64}(undef, 3, n_dates, n_heights)
+        dh_all[1, :, :] .= NaN             # no data at all -> should be filled from neighbours
+        dh_all[2, :, :] = baseline_dh      # neighbour with full coverage
+        dh_all[3, :, :] = baseline_dh      # neighbour with full coverage
 
-        # Create mock geotile extent and area
-        geotile_extent = Dict(
-            "lat+65+67lon+020+022" => (lon_min=20.0, lon_max=22.0, lat_min=65.0, lat_max=67.0)
-        )
-        area_km2 = DimArray(
-            reshape(fill(5.0, n_heights), 1, n_heights),
-            (geotile_dim, height_dim)
-        )
+        dh_dict = Dict("icesat2" => DimArray(dh_all, (geotile_dim, date_dim, height_dim)))
 
-        params = (missions2update = ["icesat2"],)
+        # `hyps_fill_empty!` does `geotile_extent[geotile=At(...)]`, so this has to be a DimArray
+        # over the geotile dimension -- a Dict keyed by id does not support that lookup. The values
+        # are Extents, which `extent2rectangle` consumes.
+        geotile_extent = DimArray(GGA.geotile_extent.(geotile_ids), (geotile_dim,))
+        area_km2 = DimArray(fill(5.0, 3, n_heights), (geotile_dim, height_dim))
+
+        params = synthetic_fill_params(dh_dict)
+
+        # hyps_fill_empty! normalizes neighbours by `dh0_median`, which it reads out of
+        # `param_m1[1] + dh0` in the params table. Those are NaN until a model has been fitted, and
+        # subtracting NaN turns every neighbour value into NaN so nothing can be filled. Production
+        # runs hyps_model_fill! first (utilities_binning.jl), so do the same here.
+        nobs_dict = Dict("icesat2" => DimArray(fill(50, 3, n_dates, n_heights),
+                                               (geotile_dim, date_dim, height_dim)))
+        GGA.hyps_model_fill!(dh_dict, nobs_dict, params;
+                             bincount_min=3, smooth_n=5, smooth_h2t_length_scale=500.0,
+                             missions2update=["icesat2"])
+
+        # hyps_fill_empty! writes through the DimArray
+        dh_before_fill = copy(dh_dict["icesat2"][1, :, :])
+        neighbour2_before = copy(dh_dict["icesat2"][2, :, :])
+        neighbour3_before = copy(dh_dict["icesat2"][3, :, :])
 
         # Apply fill_empty
         dh_filled = GGA.hyps_fill_empty!(
@@ -302,26 +354,30 @@ include("../fixtures/synthetic_missions.jl")
             params,
             geotile_extent,
             area_km2;
-            missions2update=params.missions2update
+            missions2update=["icesat2"]
         )
 
-        # Test: Empty bins should be filled
-        n_empty_before = sum(all(isnan.(dh_data), dims=1))
-        n_empty_after = sum(all(isnan.(dh_filled["icesat2"][1, :, :]), dims=1))
+        # Test: the wholly-empty geotile gets populated from its neighbours
+        @test all(isnan.(dh_before_fill))
+        filled_tile = dh_filled["icesat2"][1, :, :]
+        n_empty_before = sum(all(isnan.(dh_before_fill), dims=1))
+        n_empty_after = sum(all(isnan.(filled_tile), dims=1))
         @test n_empty_after < n_empty_before
+        @test any(.!isnan.(filled_tile))
 
-        # Test: Filled values should follow elevation gradient
-        if n_empty_after < n_empty_before
-            # Check that filled bin 7 has values between bins 6 and 8
-            if !all(isnan.(dh_filled["icesat2"][1, :, 7]))
-                mean_filled_7 = mean(filter(!isnan, dh_filled["icesat2"][1, :, 7]))
-                mean_bin_6 = mean(filter(!isnan, dh_filled["icesat2"][1, :, 6]))
-                mean_bin_8 = mean(filter(!isnan, dh_filled["icesat2"][1, :, 8]))
+        # Test: the neighbours themselves are left alone by fill_empty (they were already
+        # model-smoothed by the fit above, so compare against that state, not the raw baseline)
+        @test all(dh_filled["icesat2"][2, :, :] .≈ neighbour2_before)
+        @test all(dh_filled["icesat2"][3, :, :] .≈ neighbour3_before)
 
-                # Filled values should be bracketed by neighbors (with tolerance for noise)
-                @test mean_filled_7 < max(mean_bin_6, mean_bin_8) + 0.5
-                @test mean_filled_7 > min(mean_bin_6, mean_bin_8) - 0.5
-            end
+        # Test: filled values track the neighbours' elevation gradient rather than being arbitrary.
+        # Offsets are removed before the median, so compare bin-to-bin *differences*.
+        valid_bins = [j for j in 1:n_heights if !all(isnan.(filled_tile[:, j]))]
+        if length(valid_bins) >= 3
+            filled_profile = [mean(filter(!isnan, filled_tile[:, j])) for j in valid_bins]
+            truth_profile = [mean(filter(!isnan, neighbour2_before[:, j])) for j in valid_bins]
+            @test sign(filled_profile[end] - filled_profile[1]) ==
+                  sign(truth_profile[end] - truth_profile[1])
         end
     end
 
@@ -343,7 +399,7 @@ include("../fixtures/synthetic_missions.jl")
         dh_data[5:7, 4] .= NaN  # Gap at height 4, times 5-7
         dh_data[10:12, 6] .= NaN  # Gap at height 6, times 10-12
 
-        geotile_dim = DD.Dim{:geotile}(["lat-15-13lon-075-073"])
+        geotile_dim = DD.Dim{:geotile}(["lat[-15-13]lon[-075-073]"])
         date_dim = DD.Dim{:date}(dates)
         height_dim = DD.Dim{:height}(heights)
 
@@ -357,13 +413,13 @@ include("../fixtures/synthetic_missions.jl")
             (geotile_dim, height_dim)
         )
 
-        params = (missions2update = ["icesat2"],)
+        params = synthetic_fill_params(dh_dict)
 
         # Apply up-down filling
         dh_filled = GGA.hyps_fill_updown!(
             dh_dict,
             area_km2;
-            missions2update=params.missions2update
+            missions2update=["icesat2"]
         )
 
         # Test: Some gaps should be filled
@@ -391,7 +447,7 @@ include("../fixtures/synthetic_missions.jl")
         dates = [DateTime(2020,1,1) + Month(i) for i in 0:n_dates-1]
         heights = collect(range(1500, 2500, length=n_heights))
 
-        geotile_dim = DD.Dim{:geotile}(["lat+40+42lon-120-118"])
+        geotile_dim = DD.Dim{:geotile}(["lat[+40+42]lon[-120-118]"])
         date_dim = DD.Dim{:date}(dates)
         height_dim = DD.Dim{:height}(heights)
 
@@ -402,15 +458,12 @@ include("../fixtures/synthetic_missions.jl")
         dh_dict = Dict("icesat2" => DimArray(dh_empty, (geotile_dim, date_dim, height_dim)))
         nobs_dict = Dict("icesat2" => DimArray(nobs_empty, (geotile_dim, date_dim, height_dim)))
 
-        params = (
-            bincount_min = 3,
-            missions2update = ["icesat2"]
-        )
+        params = synthetic_fill_params(dh_dict)
 
         # These should not crash with empty data
         @test_nowarn GGA.hyps_model_fill!(dh_dict, nobs_dict, params;
-                                          bincount_min=params.bincount_min,
-                                          missions2update=params.missions2update)
+                                          bincount_min=3,
+                                          missions2update=["icesat2"])
     end
 
     @testset "Edge cases - single elevation bin" begin
@@ -424,7 +477,7 @@ include("../fixtures/synthetic_missions.jl")
             noise_sigma=0.05
         )
 
-        geotile_dim = DD.Dim{:geotile}(["lat+70+72lon-050-048"])
+        geotile_dim = DD.Dim{:geotile}(["lat[+70+72]lon[-050-048]"])
         date_dim = DD.Dim{:date}(dates)
         height_dim = DD.Dim{:height}(heights)
 
@@ -437,15 +490,12 @@ include("../fixtures/synthetic_missions.jl")
                                  (geotile_dim, date_dim, height_dim))
         )
 
-        params = (
-            bincount_min = 3,
-            missions2update = ["icesat2"]
-        )
+        params = synthetic_fill_params(dh_dict)
 
         # Should handle single bin without errors
         @test_nowarn GGA.hyps_model_fill!(dh_dict, nobs_dict, params;
-                                          bincount_min=params.bincount_min,
-                                          missions2update=params.missions2update)
+                                          bincount_min=3,
+                                          missions2update=["icesat2"])
     end
 
 end

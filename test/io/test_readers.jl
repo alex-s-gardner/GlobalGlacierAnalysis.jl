@@ -10,6 +10,7 @@ using GlobalGlacierAnalysis
 import GlobalGlacierAnalysis as GGA
 using CSV
 using DataFrames
+using Statistics
 using MAT
 using Dates
 
@@ -24,9 +25,11 @@ include("../fixtures/mock_data_files.jl")
             discharge_file = joinpath(temp_dir, "discharge_nh.csv")
             create_mock_discharge_csv(discharge_file; n_glaciers=8)
 
-            # Read the CSV manually to test format
-            # Skip header lines (14 lines of metadata, data starts line 16)
-            df = CSV.read(discharge_file, DataFrame; header=14, skipto=16)
+            # Read the CSV manually to test format.
+            # The fixture writes 14 metadata lines, so the column header is line 15 and data starts
+            # on line 16. (`header=14` pointed at the last "#" comment, so every column name came
+            # back wrong and the row count was off.)
+            df = CSV.read(discharge_file, DataFrame; header=15, skipto=16)
 
             # Test: Should have required columns
             @test hasproperty(df, :RGIId)
@@ -79,8 +82,10 @@ include("../fixtures/mock_data_files.jl")
             @test size(grace["mass_change_Gt"]) == (n_regions, n_times)
             @test size(grace["uncertainty_Gt"]) == (n_regions, n_times)
 
-            # Test: Region codes should be strings
-            @test all(grace["region_codes"] .isa String for _ in grace["region_codes"])
+            # Test: Region codes should be strings.
+            # NOTE: this previously read `grace["region_codes"] .isa String for _ in ...`, which is
+            # not valid Julia -- the whole file failed to parse, so none of its tests ever ran.
+            @test all(code isa String for code in grace["region_codes"])
 
             # Test: Time should be decimal years
             @test all(grace["time"] .>= 2003.0)
@@ -202,7 +207,7 @@ include("../fixtures/mock_data_files.jl")
             @test filesize(paths[:glambie_2024]) > 100
 
             # Test: Files should be parseable
-            @test_nowarn CSV.read(paths[:discharge_nh], DataFrame; header=14, skipto=16)
+            @test_nowarn CSV.read(paths[:discharge_nh], DataFrame; header=15, skipto=16)
             @test_nowarn matread(paths[:grace_rgi])
             @test_nowarn CSV.read(paths[:glambie_2024], DataFrame)
         end
@@ -272,7 +277,7 @@ include("../fixtures/mock_data_files.jl")
             discharge_file = joinpath(temp_dir, "discharge_format_test.csv")
             create_mock_discharge_csv(discharge_file; n_glaciers=5)
 
-            df = CSV.read(discharge_file, DataFrame; header=14, skipto=16)
+            df = CSV.read(discharge_file, DataFrame; header=15, skipto=16)
 
             # Test: RGI IDs should match pattern RGI60-XX.XXXXX
             for rgi_id in df.RGIId
@@ -295,7 +300,7 @@ include("../fixtures/mock_data_files.jl")
             # Discharge uncertainties
             discharge_file = joinpath(temp_dir, "discharge_uncert.csv")
             create_mock_discharge_csv(discharge_file; n_glaciers=3)
-            df_discharge = CSV.read(discharge_file, DataFrame; header=14, skipto=16)
+            df_discharge = CSV.read(discharge_file, DataFrame; header=15, skipto=16)
 
             # Test: Relative uncertainty should be reasonable (5-30%)
             rel_uncertainty = df_discharge.Uncertainty_Gt_yr ./ df_discharge.Discharge_Gt_yr

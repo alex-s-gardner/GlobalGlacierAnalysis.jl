@@ -16,44 +16,61 @@ using Statistics
 include("../fixtures/mock_gemb_files.jl")
 
 @testset "GEMB Operations" begin
+    # `gemb_rate_physical_constraints!` is keyed by *String* and requires "rain" alongside
+    # acc/melt/refreeze/ec. It mutates the vectors in place and also writes "runoff" and "smb".
     @testset "gemb_rate_physical_constraints!" begin
-        # Create test dictionary with violations
         gemb = Dict(
-            :acc => [-1.0, 2.0],  # Negative accumulation (invalid)
-            :melt => [3.0, 4.0],
-            :refreeze => [5.0, 2.0],  # Refreeze > melt at index 1 (invalid)
-            :ec => [0.5, -0.1]  # Negative ec at index 2 (invalid)
+            "acc" => [-1.0, 2.0],       # Negative accumulation (invalid)
+            "rain" => [0.2, -0.3],      # Negative rain (invalid)
+            "melt" => [3.0, 4.0],
+            "refreeze" => [5.0, 2.0],   # Refreeze > melt at index 1 (invalid)
+            "ec" => [0.5, -0.1],
         )
 
         GGA.gemb_rate_physical_constraints!(gemb)
 
         # Check corrections
-        @test all(gemb[:acc] .>= 0)  # No negative accumulation
-        @test all(gemb[:melt] .>= 0)  # No negative melt
-        @test all(gemb[:refreeze] .>= 0)  # No negative refreeze
-        @test all(gemb[:ec] .>= 0)  # No negative ec
-        @test all(gemb[:refreeze] .<= gemb[:melt])  # Refreeze cannot exceed melt
+        @test all(gemb["acc"] .>= 0)                        # No negative accumulation
+        @test all(gemb["rain"] .>= 0)                       # No negative rain
+        @test all(gemb["melt"] .>= 0)                       # No negative melt
+        @test all(gemb["refreeze"] .>= 0)                   # No negative refreeze
+        @test all(gemb["refreeze"] .<= gemb["melt"])        # Refreeze cannot exceed melt
+
+        # Derived quantities are written back, and exclude rain by design
+        @test gemb["runoff"] == gemb["melt"] .- gemb["refreeze"]
+        @test gemb["smb"] == gemb["acc"] .- gemb["runoff"] .- gemb["ec"]
+
+        # spot-check the clamped first element: acc 0, refreeze clamped to melt -> runoff 0
+        @test gemb["acc"][1] == 0.0
+        @test gemb["refreeze"][1] == 3.0
+        @test gemb["runoff"][1] == 0.0
     end
 
+    # `gemb_add_derived_vars!` is Symbol-keyed and built on `merge`, so it needs a NamedTuple
+    # (not a Dict) and -- despite the `!` -- returns a new object rather than mutating.
     @testset "gemb_add_derived_vars!" begin
-        dv_gemb = Dict(
-            :acc => 10.0,
-            :melt => 8.0,
-            :refreeze => 3.0,
-            :ec => 1.0,
-            :fac => 50.0
-        )
+        dv_gemb = (; acc=10.0, melt=8.0, refreeze=3.0, ec=1.0, fac=50.0)
 
-        GGA.gemb_add_derived_vars!(dv_gemb)
+        result = GGA.gemb_add_derived_vars!(dv_gemb)
 
-        # Check derived variables
         # smb = acc - melt + refreeze - ec
-        expected_smb = 10.0 - 8.0 + 3.0 - 1.0
-        @test dv_gemb[:smb] ≈ expected_smb rtol=1e-6
+        @test result[:smb] ≈ 10.0 - 8.0 + 3.0 - 1.0 rtol=1e-6
 
         # runoff = melt - refreeze
-        expected_runoff = 8.0 - 3.0
-        @test dv_gemb[:runoff] ≈ expected_runoff rtol=1e-6
+        @test result[:runoff] ≈ 8.0 - 3.0 rtol=1e-6
+
+        # dv = smb + fac
+        @test result[:dv] ≈ result[:smb] + 50.0 rtol=1e-6
+
+        # the input is left untouched -- the function is not actually in-place
+        @test !haskey(dv_gemb, :smb)
+
+        # works elementwise on vectors too
+        vec_gemb = (; acc=[10.0, 4.0], melt=[8.0, 1.0], refreeze=[3.0, 0.5],
+                      ec=[1.0, 0.25], fac=[50.0, 20.0])
+        vres = GGA.gemb_add_derived_vars!(vec_gemb)
+        @test vres[:runoff] ≈ [5.0, 0.5]
+        @test vres[:smb] ≈ [4.0, 3.25]
     end
 
     @testset "GEMB file reading - gemb_read2" begin
@@ -124,62 +141,75 @@ include("../fixtures/mock_gemb_files.jl")
 
             # With higher pscale, more snow accumulates, so SMB becomes less negative
             @test smb_means[end] > smb_means[1]  # pscale=1.2 > pscale=0.8
+            @test issorted(smb_means)            # and it scales monotonically
 
-            # Test: Runoff should also scale with pscale
+            # Accumulation is what pscale actually scales
+            acc_means = [mean(g["acc"]) for g in gemb_ensemble]
+            @test issorted(acc_means)
+            @test acc_means[end] > acc_means[1]
+
+            # Runoff, by contrast, is melt-driven: melt is energy-limited rather than
+            # precipitation-limited, so scaling precipitation leaves runoff essentially unchanged.
             runoff_means = [mean(g["runoff"]) for g in gemb_ensemble]
-            @test runoff_means[end] > runoff_means[1]  # More precip → more runoff
+            @test runoff_means[end] ≈ runoff_means[1] rtol=0.05
         end
     end
 
     @testset "GEMB physical constraints enforcement" begin
-        # Test extreme cases that violate physics
+        # String-keyed, and "rain" is required alongside the rest
         gemb_extreme = Dict(
-            :acc => [5.0, -10.0, 3.0],  # Large negative accumulation
-            :melt => [2.0, 1.0, 4.0],
-            :refreeze => [3.0, 5.0, 2.0],  # Refreeze > melt in multiple places
-            :ec => [1.0, -5.0, 0.5]  # Large negative elevation change
+            "acc" => [5.0, -10.0, 3.0],      # Large negative accumulation
+            "rain" => [0.0, -1.0, 0.5],
+            "melt" => [2.0, 1.0, 4.0],
+            "refreeze" => [3.0, 5.0, 2.0],   # Refreeze > melt in multiple places
+            "ec" => [1.0, -5.0, 0.5],        # Large negative elevation change
         )
 
         # Apply constraints
         GGA.gemb_rate_physical_constraints!(gemb_extreme)
 
-        # Test: All values should be physically reasonable
-        @test all(gemb_extreme[:acc] .>= 0)
-        @test all(gemb_extreme[:melt] .>= 0)
-        @test all(gemb_extreme[:refreeze] .>= 0)
-        @test all(gemb_extreme[:ec] .>= 0)
+        # Test: All values should be physically reasonable. Note `ec` is deliberately *not*
+        # clamped -- sublimation/condensation is signed, and it enters smb as a subtraction.
+        @test all(gemb_extreme["acc"] .>= 0)
+        @test all(gemb_extreme["rain"] .>= 0)
+        @test all(gemb_extreme["melt"] .>= 0)
+        @test all(gemb_extreme["refreeze"] .>= 0)
 
         # Test: Mass balance constraints
         # Refreeze cannot exceed melt (can't refreeze more than what melted)
-        for i in 1:length(gemb_extreme[:melt])
-            @test gemb_extreme[:refreeze][i] <= gemb_extreme[:melt][i]
+        for i in eachindex(gemb_extreme["melt"])
+            @test gemb_extreme["refreeze"][i] <= gemb_extreme["melt"][i]
         end
+
+        # Runoff is non-negative once refreeze is capped at melt
+        @test all(gemb_extreme["runoff"] .>= 0)
     end
 
     @testset "GEMB derived variable calculations" begin
-        # Create a balanced glacier scenario
-        dv = Dict(
-            :acc => 2.0,      # 2 m/yr accumulation
-            :melt => 1.5,     # 1.5 m/yr melt
-            :refreeze => 0.3, # 0.3 m/yr refreezes
-            :ec => 0.1,       # 0.1 m/yr elevation change
-            :fac => 10.0      # 10 m firn air content
+        # Symbol-keyed NamedTuple, and the result must be captured (merge, not mutation)
+        dv = (;
+            acc=2.0,       # 2 m/yr accumulation
+            melt=1.5,      # 1.5 m/yr melt
+            refreeze=0.3,  # 0.3 m/yr refreezes
+            ec=0.1,        # 0.1 m/yr elevation change
+            fac=10.0,      # 10 m firn air content
         )
 
-        GGA.gemb_add_derived_vars!(dv)
+        dv = GGA.gemb_add_derived_vars!(dv)
 
         # Test: SMB calculation
         # SMB = accumulation - melt + refreeze - elevation_change
-        expected_smb = 2.0 - 1.5 + 0.3 - 0.1
-        @test dv[:smb] ≈ expected_smb rtol=1e-10
+        @test dv[:smb] ≈ 2.0 - 1.5 + 0.3 - 0.1 rtol=1e-10
 
         # Test: Runoff calculation
         # Runoff = melt - refreeze (water that leaves the system)
-        expected_runoff = 1.5 - 0.3
-        @test dv[:runoff] ≈ expected_runoff rtol=1e-10
+        @test dv[:runoff] ≈ 1.5 - 0.3 rtol=1e-10
 
         # Test: Runoff should always be >= 0 (after refreeze is capped)
         @test dv[:runoff] >= 0
+
+        # dv = smb + fac
+        @test dv[:dv] ≈ dv[:smb] + 10.0 rtol=1e-10
     end
 
     @testset "GEMB with extreme precipitation scaling" begin
@@ -203,10 +233,11 @@ include("../fixtures/mock_gemb_files.jl")
             smb_high = mean(gemb_high["smb"])
             @test smb_high > smb_low
 
-            # Test: Runoff should also increase with pscale
+            # Runoff is melt-driven and melt is energy-limited, so scaling precipitation leaves
+            # runoff essentially unchanged rather than increasing it.
             runoff_low = mean(gemb_low["runoff"])
             runoff_high = mean(gemb_high["runoff"])
-            @test runoff_high > runoff_low
+            @test runoff_high ≈ runoff_low rtol=0.05
         end
     end
 
@@ -295,43 +326,43 @@ include("../fixtures/mock_gemb_files.jl")
 
     @testset "Edge case - zero melt (cold glacier)" begin
         # Test GEMB behavior for a very cold glacier with no melt
-        gemb_cold = Dict(
-            :acc => [2.0, 2.5, 1.8],
-            :melt => [0.0, 0.0, 0.0],  # No melt
-            :refreeze => [0.0, 0.0, 0.0],  # No refreeze possible
-            :ec => [0.1, 0.05, 0.08],
-            :fac => [5.0, 5.2, 4.8]
+        gemb_cold = (;
+            acc=[2.0, 2.5, 1.8],
+            melt=[0.0, 0.0, 0.0],       # No melt
+            refreeze=[0.0, 0.0, 0.0],   # No refreeze possible
+            ec=[0.1, 0.05, 0.08],
+            fac=[5.0, 5.2, 4.8],
         )
 
-        GGA.gemb_add_derived_vars!(gemb_cold)
+        gemb_cold = GGA.gemb_add_derived_vars!(gemb_cold)
 
         # Test: SMB should equal accumulation - ec (no melt/refreeze)
-        @test gemb_cold[:smb] ≈ gemb_cold[:acc] - gemb_cold[:ec] rtol=1e-10
+        @test gemb_cold[:smb] ≈ gemb_cold[:acc] .- gemb_cold[:ec] rtol=1e-10
 
-        # Test: Runoff should be zero (no melt)
-        @test gemb_cold[:runoff] == 0.0
+        # Test: Runoff should be zero everywhere (no melt)
+        @test all(gemb_cold[:runoff] .== 0.0)
     end
 
     @testset "Edge case - complete melt (warm glacier)" begin
         # Test GEMB for a glacier where all accumulation melts
-        gemb_warm = Dict(
-            :acc => [1.0, 1.2, 0.9],
-            :melt => [1.5, 1.8, 1.4],  # More melt than accumulation
-            :refreeze => [0.1, 0.15, 0.08],
-            :ec => [-0.3, -0.4, -0.35],  # Surface lowering
-            :fac => [2.0, 1.8, 1.9]
+        gemb_warm = (;
+            acc=[1.0, 1.2, 0.9],
+            melt=[1.5, 1.8, 1.4],        # More melt than accumulation
+            refreeze=[0.1, 0.15, 0.08],
+            ec=[-0.3, -0.4, -0.35],      # Surface lowering
+            fac=[2.0, 1.8, 1.9],
         )
 
-        GGA.gemb_add_derived_vars!(gemb_warm)
+        gemb_warm = GGA.gemb_add_derived_vars!(gemb_warm)
 
-        # Test: SMB should be negative (losing mass)
-        @test gemb_warm[:smb] < 0
+        # Test: SMB should be negative everywhere (losing mass)
+        @test all(gemb_warm[:smb] .< 0)
 
         # Test: Runoff should be substantial
-        @test gemb_warm[:runoff] > 1.0  # Most meltwater runs off
+        @test all(gemb_warm[:runoff] .> 1.0)  # Most meltwater runs off
 
-        # Test: Mass balance: acc - melt + refreeze should be very negative
-        expected_smb = gemb_warm[:acc] - gemb_warm[:melt] + gemb_warm[:refreeze] - gemb_warm[:ec]
+        # Test: Mass balance: acc - melt + refreeze - ec
+        expected_smb = gemb_warm[:acc] .- gemb_warm[:melt] .+ gemb_warm[:refreeze] .- gemb_warm[:ec]
         @test gemb_warm[:smb] ≈ expected_smb rtol=1e-10
     end
 end

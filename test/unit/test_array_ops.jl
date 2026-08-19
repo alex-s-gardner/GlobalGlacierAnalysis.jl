@@ -3,35 +3,27 @@ using GlobalGlacierAnalysis
 import GlobalGlacierAnalysis as GGA
 
 @testset "Array Operations" begin
+    # `validrange` returns one range per dimension, as a Tuple -- so a 1D input yields a 1-tuple
+    # whose only element is the range, not a (first, last) pair.
     @testset "validrange 1D" begin
         # Standard case with valid range
         v = [false, true, true, false, true, false]
         range_result = GGA.validrange(v)
-        @test range_result[1] == 2  # First true at index 2
-        @test range_result[2] == 5  # Last true at index 5
+        @test length(range_result) == 1
+        @test range_result[1] == 2:5  # first true at 2, last at 5
 
-        # All false
-        all_false = falses(10)
-        range_empty = GGA.validrange(all_false)
-        @test isempty(range_empty[1]:range_empty[2]) || range_empty[1] > range_empty[2]
+        # All false -> empty range, not an error
+        range_empty = GGA.validrange(falses(10))
+        @test isempty(range_empty[1])
 
         # All true
-        all_true = trues(10)
-        range_all = GGA.validrange(all_true)
-        @test range_all[1] == 1
-        @test range_all[2] == 10
+        @test GGA.validrange(trues(10))[1] == 1:10
 
         # Single true at start
-        single_start = [true, false, false]
-        range_single = GGA.validrange(single_start)
-        @test range_single[1] == 1
-        @test range_single[2] == 1
+        @test GGA.validrange([true, false, false])[1] == 1:1
 
         # Single true at end
-        single_end = [false, false, true]
-        range_end = GGA.validrange(single_end)
-        @test range_end[1] == 3
-        @test range_end[2] == 3
+        @test GGA.validrange([false, false, true])[1] == 3:3
     end
 
     @testset "validrange 2D" begin
@@ -40,41 +32,46 @@ import GlobalGlacierAnalysis as GGA
         mat[3:7, 4:8] .= true
 
         range_2d = GGA.validrange(mat)
-        @test range_2d[1][1] == 3  # Y min
-        @test range_2d[1][2] == 7  # Y max
-        @test range_2d[2][1] == 4  # X min
-        @test range_2d[2][2] == 8  # X max
+        @test length(range_2d) == 2
+        @test range_2d[1] == 3:7  # rows
+        @test range_2d[2] == 4:8  # columns
+
+        # the returned ranges select exactly the true block back out
+        @test all(mat[range_2d...])
+        @test sum(mat[range_2d...]) == sum(mat)
+
+        # all false in 2D
+        empty_2d = GGA.validrange(falses(4, 4))
+        @test isempty(empty_2d[1]) && isempty(empty_2d[2])
     end
 
+    # `validgaps` returns a same-length mask, true only at invalid points *between* the first and
+    # last valid point. Leading/trailing invalid runs are boundary, not gaps -- so the mask comes
+    # back all-false rather than empty.
     @testset "validgaps" begin
         # Gap in middle
-        valid = BitVector([true, false, false, true, true])
-        gaps = GGA.validgaps(valid)
-        # Should identify gap at indices 2-3
-        @test length(gaps) > 0
+        gaps = GGA.validgaps(BitVector([true, false, false, true, true]))
+        @test gaps == BitVector([false, true, true, false, false])
+        @test count(gaps) == 2
 
         # No gaps (all true)
-        no_gaps = BitVector([true, true, true, true])
-        gaps_none = GGA.validgaps(no_gaps)
-        @test isempty(gaps_none)
+        gaps_none = GGA.validgaps(BitVector([true, true, true, true]))
+        @test length(gaps_none) == 4
+        @test !any(gaps_none)
 
-        # Leading false values (not a gap, just boundary)
-        leading = BitVector([false, false, true, true, true])
-        gaps_leading = GGA.validgaps(leading)
-        # Should not identify leading false as gap
-        @test isempty(gaps_leading)
+        # Leading false values are boundary, not a gap
+        @test !any(GGA.validgaps(BitVector([false, false, true, true, true])))
 
-        # Trailing false values
-        trailing = BitVector([true, true, true, false, false])
-        gaps_trailing = GGA.validgaps(trailing)
-        # Should not identify trailing false as gap
-        @test isempty(gaps_trailing)
+        # Trailing false values are boundary, not a gap
+        @test !any(GGA.validgaps(BitVector([true, true, true, false, false])))
 
         # Multiple gaps
-        multi_gap = BitVector([true, false, true, false, false, true])
-        gaps_multi = GGA.validgaps(multi_gap)
-        # Should identify two gaps
-        @test length(gaps_multi) >= 1
+        gaps_multi = GGA.validgaps(BitVector([true, false, true, false, false, true]))
+        @test gaps_multi == BitVector([false, true, false, true, true, false])
+        @test count(gaps_multi) == 3
+
+        # No valid points at all -> nothing is a gap
+        @test !any(GGA.validgaps(falses(5)))
     end
 
     @testset "true_block_size" begin
@@ -110,11 +107,17 @@ import GlobalGlacierAnalysis as GGA
         # Should dilate to 3×3 region
         @test sum(dilated) >= 9  # At least the 3×3 neighborhood
 
-        # Test negative radius (erosion)
-        large_mask = trues(5, 5)
-        eroded = GGA.dilate(large_mask, -1)
-        # Erosion should reduce the mask
-        @test sum(eroded) < sum(large_mask)
+        # Test negative radius (erosion). Neighborhoods are clamped to the array bounds rather
+        # than zero-padded, so a fully-true array has no zero neighbour anywhere and correctly
+        # does not erode -- erosion has to be checked against a block with a real edge inside.
+        @test sum(GGA.dilate(trues(5, 5), -1)) == 25
+
+        block = falses(5, 5)
+        block[2:4, 2:4] .= true
+        eroded = GGA.dilate(block, -1)
+        @test sum(eroded) < sum(block)
+        @test sum(eroded) == 1        # only the centre survives
+        @test eroded[3, 3]
 
         # Test edge handling (boundary behavior)
         edge_mask = falses(5, 5)

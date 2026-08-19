@@ -26,17 +26,22 @@ Create a mock GEMB output file in MATLAB .mat format.
 GEMB .mat files contain these variables:
 - lat, lon: Coordinates [n_points]
 - time: Decimal years [n_times]
-- SMB: Surface mass balance (cumulative) [n_points × n_times]
-- FAC: Firn air content [n_points × n_times]
-- EC: Elevation change (cumulative) [n_points × n_times]
-- Accumulation: Snow accumulation (cumulative) [n_points × n_times]
-- Runoff: Meltwater runoff (cumulative) [n_points × n_times]
-- Melt: Surface melt (cumulative) [n_points × n_times]
-- Refreeze: Refreezing (cumulative) [n_points × n_times]
-- Rain: Rainfall (cumulative) [n_points × n_times]
+- SMB, EC, Accumulation, Runoff, Melt, Refreeze, Rain: **per-interval increments in mm**
+  [n_points × n_times]
+- FAC: Firn air content, in metres and not accumulated [n_points × n_times]
 - FACtoDepth: FAC to depth conversion factor [scalar]
 - H: Surface height [n_points × n_times]
 - Ta: Air temperature [n_points × n_times]
+
+!!! note "Flux variables are increments, not running totals"
+    `gemb_read2` applies `cumsum(x ./ 1000, dims=2)` to SMB, EC, Accumulation, Runoff, Melt,
+    Refreeze and Rain, i.e. it expects each entry to be that interval's increment in **mm** and
+    produces cumulative **metres**. This fixture previously wrote already-accumulated metres, so
+    reading it integrated twice and produced non-monotonic, sign-scrambled series.
+
+    The flux increments here are also mutually consistent -- `Runoff = Melt - Refreeze` and
+    `SMB = Accumulation - Runoff - EC` -- and only precipitation-driven terms scale with `pscale`,
+    so raising `pscale` raises SMB (makes it less negative) as it should physically.
 """
 function create_mock_gemb_mat(filepath; n_points=10, n_times=36, pscale=1.0)
     # Create spatial coordinates (scattered over a small region)
@@ -53,77 +58,47 @@ function create_mock_gemb_mat(filepath; n_points=10, n_times=36, pscale=1.0)
     data["lon"] = lons
     data["time"] = times
 
-    # Generate synthetic cumulative variables
-    # SMB: -0.5 m/yr * pscale (cumulative, so linearly increasing in magnitude)
-    smb_rate = -0.5 * pscale  # m/yr
-    smb_cumulative = zeros(n_points, n_times)
-    for i in 1:n_points
-        for j in 1:n_times
-            t_years = (j - 1) / 12.0
-            smb_cumulative[i, j] = smb_rate * t_years + 0.1 * randn()
-        end
-    end
-    data["SMB"] = smb_cumulative
+    # Flux variables are per-interval increments in mm; gemb_read2 turns them into cumulative
+    # metres. One monthly step of a rate r m/yr is r/12 m = r/12*1000 mm.
+    mm_per_step(rate_m_per_yr) = rate_m_per_yr / 12.0 * 1000.0
 
-    # Accumulation: ~2.0 m/yr * pscale (snow input)
-    acc_rate = 2.0 * pscale
-    acc_cumulative = zeros(n_points, n_times)
-    for i in 1:n_points
-        for j in 1:n_times
-            t_years = (j - 1) / 12.0
-            acc_cumulative[i, j] = acc_rate * t_years + 0.2 * randn()
-        end
-    end
-    data["Accumulation"] = acc_cumulative
+    # Only precipitation-driven terms scale with pscale; melt and refreeze do not.
+    acc_step = mm_per_step(2.0 * pscale)        # snow input
+    rain_step = mm_per_step(0.2 * pscale)
+    melt_step = mm_per_step(2.8)                # surface melt
+    refreeze_step = mm_per_step(0.3)            # refreezing of meltwater
+    ec_step = mm_per_step(0.1)                  # sublimation / condensation
 
-    # Runoff: ~2.5 m/yr * pscale (output)
-    runoff_rate = 2.5 * pscale
-    runoff_cumulative = zeros(n_points, n_times)
-    for i in 1:n_points
-        for j in 1:n_times
-            t_years = (j - 1) / 12.0
-            runoff_cumulative[i, j] = runoff_rate * t_years + 0.3 * randn()
-        end
-    end
-    data["Runoff"] = runoff_cumulative
+    # Small positive jitter, kept well below the mean so increments stay non-negative and the
+    # cumulative series stay monotonic.
+    jitter(scale) = scale .* abs.(randn(n_points, n_times))
 
-    # Melt: ~2.8 m/yr * pscale
-    melt_rate = 2.8 * pscale
-    melt_cumulative = zeros(n_points, n_times)
-    for i in 1:n_points
-        for j in 1:n_times
-            t_years = (j - 1) / 12.0
-            melt_cumulative[i, j] = melt_rate * t_years + 0.3 * randn()
-        end
-    end
-    data["Melt"] = melt_cumulative
+    acc_inc = fill(acc_step, n_points, n_times) .+ jitter(0.02 * acc_step)
+    rain_inc = fill(rain_step, n_points, n_times) .+ jitter(0.02 * rain_step)
+    melt_inc = fill(melt_step, n_points, n_times) .+ jitter(0.02 * melt_step)
 
-    # Refreeze: ~0.3 m/yr * pscale (refreezing of meltwater)
-    refreeze_rate = 0.3 * pscale
-    refreeze_cumulative = zeros(n_points, n_times)
-    for i in 1:n_points
-        for j in 1:n_times
-            t_years = (j - 1) / 12.0
-            refreeze_cumulative[i, j] = refreeze_rate * t_years + 0.05 * randn()
-        end
-    end
-    data["Refreeze"] = refreeze_cumulative
+    # refreeze must never exceed melt
+    refreeze_inc = min.(fill(refreeze_step, n_points, n_times) .+ jitter(0.02 * refreeze_step),
+                        melt_inc)
 
-    # Rain: ~0.2 m/yr * pscale
-    rain_rate = 0.2 * pscale
-    rain_cumulative = zeros(n_points, n_times)
-    for i in 1:n_points
-        for j in 1:n_times
-            t_years = (j - 1) / 12.0
-            rain_cumulative[i, j] = rain_rate * t_years + 0.05 * randn()
-        end
-    end
-    data["Rain"] = rain_cumulative
+    ec_inc = fill(ec_step, n_points, n_times) .+ jitter(0.02 * ec_step)
 
-    # EC: Elevation change (cumulative, related to SMB)
-    # EC ≈ SMB / (ice_density / water_density) for solid ice
-    ec_cumulative = smb_cumulative ./ 0.91  # Simplified conversion
-    data["EC"] = ec_cumulative
+    # Keep the identities exact so tests can assert them:
+    #   runoff = melt - refreeze          (rain excluded by design)
+    #   smb    = accumulation - runoff - ec
+    runoff_inc = melt_inc .- refreeze_inc
+    smb_inc = acc_inc .- runoff_inc .- ec_inc
+
+    data["Accumulation"] = acc_inc
+    data["Rain"] = rain_inc
+    data["Melt"] = melt_inc
+    data["Refreeze"] = refreeze_inc
+    data["Runoff"] = runoff_inc
+    data["EC"] = ec_inc
+    data["SMB"] = smb_inc
+
+    # cumulative metres, used below for surface height
+    ec_cumulative = cumsum(ec_inc ./ 1000, dims=2)
 
     # FAC: Firn air content (non-cumulative, slowly evolving)
     fac = zeros(n_points, n_times)

@@ -25,16 +25,21 @@ using Dates
                                        metadata=Dict("units" => "mm"))
             ))
 
-            # Write
-            GGA.dimstack2netcdf(ds, filepath; global_attributes=Dict("source" => "test"))
+            # Write. `dimstack2netcdf` forwards its kwargs straight to NCDatasets.defVar, so only
+            # defVar options (deflatelevel, chunksizes, ...) belong here -- global attributes are
+            # taken from the DimStack's own metadata instead.
+            GGA.dimstack2netcdf(ds, filepath)
 
             # Read
             ds_loaded = GGA.netcdf2dimstack(filepath)
 
-            # Verify dimensions
-            @test haskey(dims(ds_loaded), :Ti) || haskey(dims(ds_loaded), :date)
-            @test haskey(dims(ds_loaded), :X)
-            @test haskey(dims(ds_loaded), :Y)
+            # Verify dimensions. Query by name, not by dimension type: the round trip rebuilds
+            # dimensions generically from their NetCDF names, so a `Ti` written out comes back as
+            # a `Dim{:Ti}` and `hasdim(ds_loaded, Ti)` would be false.
+            @test DD.name.(dims(ds_loaded)) == (:Ti, :X, :Y)
+            @test DD.hasdim(ds_loaded, :Ti) || DD.hasdim(ds_loaded, :date)
+            @test DD.hasdim(ds_loaded, :X)
+            @test DD.hasdim(ds_loaded, :Y)
 
             # Verify variables exist
             @test haskey(ds_loaded, :temperature) || haskey(ds_loaded, :Temperature)
@@ -59,11 +64,11 @@ using Dates
                 metadata=Dict("units" => "m", "long_name" => "Test Variable")
             )
 
-            ds = DimStack((testvar=da,))
-
-            # Write with global attributes
-            global_attrs = Dict("title" => "Test Dataset", "institution" => "Test Lab")
-            GGA.dimstack2netcdf(ds, filepath; global_attributes=global_attrs)
+            # Global attributes travel as DimStack metadata, which dimstack2netcdf writes to
+            # nc.attrib in its final step.
+            ds = DimStack((testvar=da,);
+                metadata=Dict("title" => "Test Dataset", "institution" => "Test Lab"))
+            GGA.dimstack2netcdf(ds, filepath)
 
             # Verify file was created
             @test isfile(filepath)

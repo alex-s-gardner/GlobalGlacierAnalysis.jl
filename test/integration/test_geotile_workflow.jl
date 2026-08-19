@@ -344,14 +344,21 @@ using Random
         # Test: Best member should have smallest error
         @test rmse_values[best_idx] == minimum(rmse_values)
 
-        # Test: Calibrated GEMB should be closer than ensemble mean
+        # Test: the selected member beats a typical member. Note it is *not* generally better than
+        # the ensemble mean -- averaging cancels the independent per-member noise, so the mean often
+        # beats even the best single member. Asserting rmse_best <= rmse_mean is therefore wrong in
+        # principle, not merely marginal.
         ensemble_mean = mean(gemb_predictions; dims=1)[1, :]
         rmse_best = rmse_values[best_idx]
         rmse_mean = sqrt(mean((ensemble_mean .- dh_obs).^2))
-        @test rmse_best <= rmse_mean
+        @test rmse_best <= mean(rmse_values)
+        @test rmse_mean < maximum(rmse_values)
 
-        # Test: Best-fit pscale should be identifiable
+        # Test: calibration recovers the pscale that reproduces the observed trend.
+        # Members follow EC = -0.3 - 0.2*pscale and the observations trend at -0.5 m/yr,
+        # so -0.3 - 0.2*pscale = -0.5 gives pscale = 1.0.
         @test best_pscale in pscale_values
+        @test best_pscale ≈ 1.0
     end
 
     @testset "Regional aggregation workflow" begin

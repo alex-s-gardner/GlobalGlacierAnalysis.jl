@@ -2,35 +2,45 @@ using Test
 using GlobalGlacierAnalysis
 import GlobalGlacierAnalysis as GGA
 using Dates
+using Random
 
+# `decimalyear` measures elapsed time since midnight on January 1 as a fraction of the year, so
+# January 1 00:00 is exactly YYYY.0 and the day offsets below are 0-based (July 1 is 181 elapsed
+# days into a non-leap year, not 182).
 @testset "Time Conversions" begin
     @testset "decimalyear basic conversion" begin
         # Test year boundary
         dt_jan1 = DateTime(2019, 1, 1, 0, 0, 0)
         @test GGA.decimalyear(dt_jan1) == 2019.0
 
-        # Test mid-year (non-leap year)
-        # July 1 is day 182 of 365
+        # Test mid-year (non-leap year): 181 elapsed days of 365
         dt_july1 = DateTime(2019, 7, 1)
-        expected = 2019.0 + (182 / 365)
+        expected = 2019.0 + (181 / 365)
         @test GGA.decimalyear(dt_july1) ≈ expected rtol=1e-6
 
         # Test end of year
         dt_dec31 = DateTime(2019, 12, 31, 23, 59, 59)
         @test GGA.decimalyear(dt_dec31) ≈ 2020.0 rtol=1e-4
+
+        # Time of day is carried, not discarded
+        @test GGA.decimalyear(DateTime(2019, 1, 1, 12)) ≈ 2019.0 + 0.5 / 365 rtol=1e-9
+        @test GGA.decimalyear(DateTime(2019, 1, 2)) > GGA.decimalyear(DateTime(2019, 1, 1, 12))
     end
 
     @testset "decimalyear leap year" begin
-        # Leap year has 366 days
+        # Leap year has 366 days; July 1 is 182 elapsed days in
         dt_july1_leap = DateTime(2020, 7, 1)
-        # July 1 is day 183 of 366 in a leap year
-        expected = 2020.0 + (183 / 366)
+        expected = 2020.0 + (182 / 366)
         @test GGA.decimalyear(dt_july1_leap) ≈ expected rtol=1e-6
 
-        # End of leap year
+        # End of leap year: Dec 31 00:00 is 365 elapsed days of 366
         dt_dec31_leap = DateTime(2020, 12, 31)
-        expected_end = 2020.0 + (366 / 366)
+        expected_end = 2020.0 + (365 / 366)
         @test GGA.decimalyear(dt_dec31_leap) ≈ expected_end rtol=1e-4
+
+        # the divisor is the true year length: 366 days spans exactly one leap year, 365 a common one
+        @test GGA.decimalyear(DateTime(2020, 1, 1) + Day(366)) == 2021.0
+        @test GGA.decimalyear(DateTime(2019, 1, 1) + Day(365)) == 2020.0
     end
 
     @testset "decimalyear2datetime basic conversion" begin

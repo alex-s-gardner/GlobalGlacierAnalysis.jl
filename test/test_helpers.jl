@@ -49,11 +49,15 @@ Create synthetic geotile ID string for testing.
 - Geotile ID string in format "lat[+YY+YY]lon[+XXX+XXX]"
 """
 function synthetic_geotile_id(lat_min, lat_max, lon_min, lon_max)
-    lat_min_str = lpad(lat_min >= 0 ? "+$lat_min" : "$lat_min", 3, lat_min >= 0 ? '0' : '0')
-    lat_max_str = lpad(lat_max >= 0 ? "+$lat_max" : "$lat_max", 3, lat_max >= 0 ? '0' : '0')
-    lon_min_str = lpad(lon_min >= 0 ? "+$lon_min" : "$lon_min", 4, lon_min >= 0 ? '0' : '0')
-    lon_max_str = lpad(lon_max >= 0 ? "+$lon_max" : "$lon_max", 4, lon_max >= 0 ? '0' : '0')
-    return "lat$(lat_min_str)$(lat_max_str)lon$(lon_min_str)$(lon_max_str)"
+    # Sign first, then zero-padded magnitude: latitudes get 2 digits, longitudes 3, and the whole
+    # thing is bracketed -- e.g. "lat[+00+02]lon[+028+030]". This has to match the real IDs
+    # exactly, because `geotile_extent` slices fixed character positions out of the string.
+    # (`lpad("+5", 3, '0')` would give "0+5", padding ahead of the sign, so pad the magnitude.)
+    signed(v, width) = (v < 0 ? "-" : "+") * lpad(abs(v), width, '0')
+    return string(
+        "lat[", signed(lat_min, 2), signed(lat_max, 2), "]",
+        "lon[", signed(lon_min, 3), signed(lon_max, 3), "]",
+    )
 end
 
 """

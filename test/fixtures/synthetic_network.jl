@@ -12,9 +12,15 @@ Create a simple linear river network: 1 → 2 → 3 → ... → n → 0 (ocean)
 function create_linear_network(n_nodes=5)
     ids = collect(1:n_nodes)
     next_ids = [i < n_nodes ? i+1 : 0 for i in ids]
-    lengths_km = fill(10.0, n_nodes)
-    lons = range(-120, -110, length=n_nodes)
+    segment_km = 10.0
+    lengths_km = fill(segment_km, n_nodes)
     lats = fill(45.0, n_nodes)
+    # Space the nodes to actually match `lengthkm`. Previously the longitudes spanned -120 to -110
+    # regardless of n_nodes, putting consecutive nodes ~196 km apart while lengthkm claimed 10, so
+    # any check of haversine distance against lengthkm disagreed by a factor of ~20.
+    # One degree of longitude at 45 degrees latitude is about 111.32*cos(45) km.
+    deg_per_segment = segment_km / (111.32 * cosd(45.0))
+    lons = -120.0 .+ deg_per_segment .* (0:n_nodes-1)
 
     return DataFrame(
         COMID=ids,

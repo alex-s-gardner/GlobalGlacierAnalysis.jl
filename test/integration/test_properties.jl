@@ -204,14 +204,20 @@ import DimensionalData as DD
 
             # Generate data with known trend
             t = collect(0:n-1) ./ 12.0  # Monthly to years
-            data = true_intercept .+ true_trend .* t .+ 0.1 .* randn(n)
+            noise_sigma = 0.1
+            data = true_intercept .+ true_trend .* t .+ noise_sigma .* randn(n)
 
             # Fit trend
             A = hcat(ones(n), t)
             coeffs = A \ data
 
-            # Property: Fitted trend should be close to true trend
-            @test coeffs[2] ≈ true_trend rtol=0.3  # Allow noise
+            # Property: the fitted trend agrees with the truth to within its own uncertainty.
+            # A relative tolerance is the wrong test here -- `true_trend` is drawn from
+            # randn()*0.5, so it is sometimes ~0, and no percentage of ~0 is achievable when the
+            # slope's standard error is finite. Compare against the analytic OLS standard error
+            # instead: SE = sigma / sqrt(sum((t - mean(t))^2)).
+            slope_se = noise_sigma / sqrt(sum((t .- mean(t)) .^ 2))
+            @test abs(coeffs[2] - true_trend) < 5 * slope_se
 
             # Property: Residuals should have zero mean
             fitted = A * coeffs
@@ -271,9 +277,12 @@ import DimensionalData as DD
             # Random local fluxes (positive)
             local_flux = abs.(randn(n_nodes)) .* 10.0
 
-            # Accumulate flux
+            # Accumulate flux. Node 1 is the headwater and node n_nodes the outlet, so the sweep
+            # has to ascend. Descending (n_nodes:-1:1) pushes a node's running total downstream
+            # *before* its own upstream contribution has arrived, leaving the outlet with only the
+            # last couple of local fluxes.
             accumulated_flux = copy(local_flux)
-            for i in n_nodes:-1:1  # Work upstream to downstream
+            for i in 1:n_nodes  # upstream -> downstream
                 if next_ids[i] != 0
                     downstream_idx = next_ids[i]
                     accumulated_flux[downstream_idx] += accumulated_flux[i]

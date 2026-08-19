@@ -7,6 +7,7 @@ validation of multi-mission synthesis and alignment algorithms.
 """
 
 using Dates
+using DataFrames
 using DimensionalData
 import DimensionalData as DD
 
@@ -52,7 +53,10 @@ function generate_hypsometric_synthetic(;
     t = [(Dates.value(date - start_date)) / (365.25 * 24 * 60 * 60 * 1000) for date in dates]
 
     # Generate elevation bins
-    heights = range(height_range[1], height_range[2], length=n_heights)
+    # `range(a, b, length=1)` errors with "endpoints differ", so a single bin is special-cased to
+    # the midpoint of the requested range.
+    heights = n_heights == 1 ? [(height_range[1] + height_range[2]) / 2] :
+              collect(range(height_range[1], height_range[2], length=n_heights))
 
     # Create signal matrix
     dh = zeros(n_dates, n_heights)
@@ -413,4 +417,49 @@ function generate_multimission_synthetic(;
     end
 
     return data
+end
+
+"""
+    synthetic_fill_params(dh; missions2align2=String[], n_model_params=9)
+
+Build the per-mission `params_fill` table that the `hyps_*` gap-filling routines expect.
+
+`dh` is the mission-keyed dictionary of `(geotile, date, height)` DimArrays. For each mission this
+returns a DataFrame with one row per geotile, matching the structure built in
+`geotile_binning`/`utilities_binning.jl`: bookkeeping counters, a per-geotile model-parameter
+vector, reference offsets, and one offset column per alignment-reference mission.
+
+# Why this exists
+
+`hyps_model_fill!`, `hyps_align_dh!` and friends take this table as their **positional** `params`
+argument -- it is where fitted coefficients are written back. It is *not* the bag of tuning knobs
+(`bincount_min`, `smooth_n`, ...), which are keyword arguments. Passing a NamedTuple of knobs as
+`params` fails with `MethodError: no method matching getindex(::@NamedTuple{...}, ::String)`.
+"""
+function synthetic_fill_params(dh; missions2align2=String[], n_model_params=9)
+    params = Dict()
+    for mission in keys(dh)
+        geotiles = collect(dims(dh[mission], :geotile))
+        n = length(geotiles)
+
+        params[mission] = DataFrame(
+            geotile=geotiles,
+            nobs_raw=zeros(n), nbins_raw=zeros(n),
+            nobs_final=zeros(n), nbins_filt1=zeros(n),
+            param_m1=[fill(NaN, n_model_params) for _ in 1:n],
+            h0=fill(NaN, n),
+            t0=fill(NaN, n),
+            dh0=fill(NaN, n),
+            bin_std=fill(NaN, n),
+            bin_anom_std=fill(NaN, n),
+        )
+
+        for mission_ref in missions2align2
+            params[mission][!, "offset"] = zeros(n)
+            params[mission][!, "offset_$mission_ref"] = fill(NaN, n)
+            params[mission][!, "offset_nmad_$mission_ref"] = fill(NaN, n)
+            params[mission][!, "offset_nobs_$mission_ref"] = zeros(Int64, n)
+        end
+    end
+    return params
 end

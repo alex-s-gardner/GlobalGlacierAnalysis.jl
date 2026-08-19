@@ -36,32 +36,48 @@ function create_mock_discharge_csv(filepath; n_glaciers=5)
     years = 2000:2020
     n_years = length(years)
 
+    # Discharge is kept comfortably away from zero, and the uncertainty is generated as a
+    # *fraction* of it (~10%, bounded to 2-40%). Drawing the two independently -- as this used to --
+    # let a near-zero discharge produce a relative uncertainty above 100%, so any test bounding
+    # `uncertainty / discharge` failed intermittently depending on the RNG.
+    n = n_glaciers * n_years
+    discharge = max.(1.0, 5.0 .+ 2.0 .* randn(n))
+    rel_uncertainty = clamp.(0.10 .+ 0.03 .* randn(n), 0.02, 0.40)
+
     # Create DataFrame
     df = DataFrame(
         RGIId = repeat(rgi_ids, inner=n_years),
         Year = repeat(years, outer=n_glaciers),
-        Discharge_Gt_yr = abs.(5.0 .+ 2.0 .* randn(n_glaciers * n_years)),
-        Uncertainty_Gt_yr = abs.(0.5 .+ 0.2 .* randn(n_glaciers * n_years))
+        Discharge_Gt_yr = discharge,
+        Uncertainty_Gt_yr = discharge .* rel_uncertainty
     )
 
-    # Write with header lines (Kochtitzky format has metadata)
+    # Write with header lines (Kochtitzky format has metadata).
+    #
+    # The CSV body is rendered to a String first and then written. Handing the open `io` straight to
+    # `CSV.write` discarded the metadata lines already written to that stream, so the file ended up
+    # with the column header on line 1 -- and every reader that skipped the documented 14 metadata
+    # lines silently parsed data rows as column names.
+    metadata = """
+    # Glacier discharge data
+    # Source: Mock data for testing
+    # Citation: Test et al. (2024)
+    #
+    # Column descriptions:
+    # RGIId: RGI glacier identifier
+    # Year: Observation year
+    # Discharge_Gt_yr: Ice discharge (Gt/yr)
+    # Uncertainty_Gt_yr: Uncertainty (Gt/yr)
+    #
+    # Data start
+    # ------------
+    #
+    #
+    """
+
     open(filepath, "w") do io
-        write(io, "# Glacier discharge data\n")
-        write(io, "# Source: Mock data for testing\n")
-        write(io, "# Citation: Test et al. (2024)\n")
-        write(io, "# \n")
-        write(io, "# Column descriptions:\n")
-        write(io, "# RGIId: RGI glacier identifier\n")
-        write(io, "# Year: Observation year\n")
-        write(io, "# Discharge_Gt_yr: Ice discharge (Gt/yr)\n")
-        write(io, "# Uncertainty_Gt_yr: Uncertainty (Gt/yr)\n")
-        write(io, "# \n")
-        write(io, "# Data start\n")
-        write(io, "# ------------\n")
-        write(io, "#\n")
-        write(io, "#\n")  # Line 14
-        # Line 15 is blank, header starts line 16
-        CSV.write(io, df)
+        write(io, metadata)          # 14 metadata lines
+        write(io, sprint(CSV.write, df))  # header on line 15, data from line 16
     end
 
     return nothing

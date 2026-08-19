@@ -4,6 +4,7 @@ import GlobalGlacierAnalysis as GGA
 using DimensionalData
 import DimensionalData as DD
 using Dates
+using Statistics
 
 @testset "DimArray Operations" begin
     @testset "DimArray creation and indexing" begin
@@ -12,8 +13,9 @@ using Dates
         da = DimArray(data, (Ti=1:10, X=1:20))
 
         @test size(da) == (10, 20)
-        @test dims(da, Ti) isa DD.Dim{:Ti}
-        @test dims(da, X) isa DD.Dim{:X}
+        # Ti and X are their own dimension types, not Dim{:Ti} / Dim{:X}
+        @test dims(da, Ti) isa Ti
+        @test dims(da, X) isa X
 
         # Index with At()
         val = da[Ti=DD.At(5), X=DD.At(10)]
@@ -23,9 +25,10 @@ using Dates
         sub = da[Ti=1:5]
         @test size(sub) == (5, 20)
 
-        # Check dimension labels preserved
-        @test haskey(dims(sub), :Ti)
-        @test haskey(dims(sub), :X)
+        # Check dimension labels preserved. `dims` returns a Tuple, so hasdim is the right query
+        # here -- haskey has no method for it.
+        @test DD.hasdim(sub, Ti)
+        @test DD.hasdim(sub, X)
     end
 
     @testset "DimArray with DateTime" begin
@@ -60,10 +63,12 @@ using Dates
         # Check dimensions
         @test size(stack) == (10, 10)
 
-        # Convert to Dict
-        dict_stack = Dict(stack)
-        @test haskey(dict_stack, :temperature)
-        @test haskey(dict_stack, :pressure)
+        # Layer names. `Dict(stack)` keys by data *values*, not layer names, so query the stack
+        # directly.
+        @test keys(stack) == (:temperature, :pressure)
+        @test haskey(stack, :temperature)
+        @test haskey(stack, :pressure)
+        @test !haskey(stack, :humidity)
     end
 
     @testset "Concatenation along new dimension" begin

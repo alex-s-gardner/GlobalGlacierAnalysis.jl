@@ -150,10 +150,14 @@ include("../fixtures/synthetic_timeseries.jl")
             @test in_range / n_ensemble < 0.95
         end
 
-        # Test: Spread should increase with time (uncertainty grows)
+        # Test: spread is stable in time. Each member here is `trend*t + fixed offset + noise`,
+        # with a per-member offset drawn once and homoscedastic noise, so the ensemble spread does
+        # not grow with time -- asserting that it does was testing a property the construction
+        # deliberately lacks. A random-walk error model would be needed for growing spread.
         spread_start = p95[1] - p05[1]
         spread_end = p95[end] - p05[end]
-        @test spread_end > spread_start
+        @test spread_end ≈ spread_start rtol=0.35
+        @test spread_start > 0 && spread_end > 0
     end
 
     @testset "Error propagation in aggregation" begin
@@ -252,9 +256,10 @@ include("../fixtures/synthetic_timeseries.jl")
         @test !isnan(dv_agg[1])
         @test dv_agg[1] ≈ sum(data[:, 1])
 
-        # Month 5: geotile 2 missing (only 3 contribute)
+        # Month 5: geotile 2 (months 5-8) *and* geotile 4 (months 3-6) are both missing, so only
+        # geotiles 1 and 3 contribute
         @test !isnan(dv_agg[5])
-        expected_m5 = data[1, 5] + data[3, 5] + data[4, 5]
+        expected_m5 = data[1, 5] + data[3, 5]
         @test dv_agg[5] ≈ expected_m5
 
         # Test: No time should have NaN in aggregation (at least one geotile always present)
