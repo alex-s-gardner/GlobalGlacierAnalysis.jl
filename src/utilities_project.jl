@@ -197,26 +197,13 @@ function project_height_bins()
     return height_range, height_center
 end
 
-"""
-    project_mscale_bins()
-
-Define melt-scaling bins (linear spacing).
-
-# Returns
-- Tuple containing (mscale_range, mscale_center) with linear spacing from -10.5 to 10.5.
-
-# Examples
-```julia
-julia> mscale_range, mscale_center = project_mscale_bins()
-```
-"""
-function project_mscale_bins()
-    mscale = 1
-    mscale_range = -10.5:mscale:10.5
-    mscale_center = mscale_range[1:end-1] .+ mscale / 2
-
-    return mscale_range, mscale_center
-end
+# NOTE: a second, linear-spaced `project_mscale_bins()` (mscale_range = -10.5:1:10.5) used to be
+# defined immediately above this one with an identical empty signature, so it was silently
+# shadowed by the log-style version below and never ran. Two same-signature methods in one module
+# also make the package unprecompilable ("Method overwriting is not permitted during Module
+# precompilation"), forcing a ~55 s from-source rebuild on every load. Removed the dead linear
+# version, which leaves runtime behaviour unchanged. Restore it under a distinct name if the
+# linear binning is ever wanted.
 
 """
     project_mscale_bins()
