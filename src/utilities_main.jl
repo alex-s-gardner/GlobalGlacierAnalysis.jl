@@ -1,6 +1,7 @@
 """
-    geotile_build_archive(; force_remake=false, project_id=:v01, geotile_width=2, 
-                         domain=:glacier, missions=(:icesat2,), single_geotile_test=nothing)
+    geotile_build_archive(; force_remake=false, project_id=:v01, geotile_width=2,
+                         domain=:glacier, missions=(:icesat2,), single_geotile_test=nothing,
+                         stages=(:search, :download, :build), partition=nothing)
 
 Build satellite altimetry archives organized into geotiles for glacier analysis.
 
@@ -16,15 +17,33 @@ by location and includes special handling for polar regions.
 - `domain`: Processing domain, either :glacier or :landice (default: :glacier)
 - `missions`: Tuple of altimetry missions to process (default: (:icesat2,))
 - `single_geotile_test`: Single geotile ID for testing (default: nothing)
+- `stages`: Which stages to run, any of `:search`, `:download`, `:build` (default: all three)
+- `partition`: `(index, nparts)` passed to [`geotile_build`](@ref) to build a disjoint share of
+  the geotiles, so the build can be spread over concurrent processes
 
 # Returns
 Nothing. Processed altimetry data is organized into geotiles and saved locally.
 
 # Notes
-- Downloads can fail with multiple download streams; wrapped in retry loop
+- Downloads are retried with exponential backoff and give up after 5 attempts
 - Polar regions (< -65° latitude) are processed last as they require more time
 - Granules are sorted by longitude for improved processing speed
 - When `single_geotile_test` is specified, only processes that specific geotile for testing
+
+# Running the build in parallel
+
+`:build` is serial within a process because HDF5.jl serializes all libhdf5 calls on a global lock,
+so parallelism has to come from separate processes. Run the shared stages once, then fan the build
+out over N shells:
+
+```julia
+geotile_build_archive(; missions=(:icesat2,), stages=(:search, :download))
+# then, in each of N shells, i = 1:N
+geotile_build_archive(; missions=(:icesat2,), stages=(:build,), partition=(i, N))
+```
+
+Do not partition `:download` -- granules are pooled and deduplicated across all geotiles in one
+transfer, and splitting that up reintroduces the duplicate requests the pooling exists to avoid.
 """
 function geotile_build_archive(;
     force_remake = false,
@@ -33,7 +52,12 @@ function geotile_build_archive(;
     domain = :glacier, # :glacier -or- :landice
     missions = (:icesat2,), # (:icesat2, :icesat, :gedi, :hugonnet)
     single_geotile_test = nothing,
+    stages = (:search, :download, :build),
+    partition = nothing,
     )
+
+    unknown_stages = setdiff(stages, (:search, :download, :build))
+    isempty(unknown_stages) || error("unrecognized stage(s): $unknown_stages")
 
     rebuild_geotiles_dataframe = force_remake
 
@@ -71,28 +95,31 @@ function geotile_build_archive(;
 
         ## 'find' can run in parallel.. therfore run first [GLAH06 = 30 min from scratch]
         # do not use kward `after` as it will cuase downstream issues as earlier data will be excluded
-        geotile_search_granules(geotiles, product.mission, product.name, product.version, paths[product.mission].granules_remote; rebuild_dataframe=rebuild_geotiles_dataframe)
-
-        # load remote granule list
-        geotile_granules = granules_load(paths[product.mission].granules_remote, product.mission; geotiles = geotiles)
+        if :search in stages
+            geotile_search_granules(geotiles, product.mission, product.name, product.version, paths[product.mission].granules_remote; rebuild_dataframe=rebuild_geotiles_dataframe)
+        end
 
         # download granules from list [ATL06 17 min, no data]
+        if :download in stages
+            # load remote granule list
+            geotile_granules = granules_load(paths[product.mission].granules_remote, product.mission; geotiles = geotiles)
 
-        # download can sometimes be unhappy when run with more than one downloadstream
-        # NOTE: I'm not sure why download keeps failing ... wrapping in a while loop as a bandaid
-        foo = true
-        while foo
-            try
-                geotile_download_granules!(geotile_granules, product.mission, paths[product.mission].raw_data, 
-                    paths[product.mission].granules_local; threads = false, aria2c = true, 
-                    rebuild_dataframe = rebuild_geotiles_dataframe, downloadstreams = 8)
-
-                foo = false;
-            catch e
-                println(e)
+            # Bounded retry with exponential backoff. This was previously an unbounded `while` loop
+            # that swallowed the exception and re-entered the download at geotile 1 on every
+            # failure. If the failure was deterministic -- e.g. Arrow.write choking on the nested
+            # `granules` column -- the loop spun forever, and each pass left a `tempname` stub in
+            # the geotile directory. That is the origin of the 633,838 orphaned 8-byte `jl_*` files
+            # found in icesat2/ATL06/006/geotile/2deg, and why that archive was never built.
+            with_retry("$(product.mission) download") do
+                geotile_download_granules!(geotile_granules, product.mission, paths[product.mission].raw_data,
+                    paths[product.mission].granules_local; threads=false, aria2c=true,
+                    rebuild_dataframe=rebuild_geotiles_dataframe, downloadstreams=8)
             end
         end
 
+        if !(:build in stages)
+            continue
+        end
 
         # load local granule list [most load time used adding back granule_type]
         geotile_granules = granules_load(paths[product.mission].granules_local, product.mission; geotiles = geotiles)
@@ -113,7 +140,7 @@ function geotile_build_archive(;
         ind = (geotile_granules[:, :latitude] .> -91) .& (geotile_granules[:, :latitude] .< -84.9)
         geotile_granules = vcat(geotile_granules[ind, :], geotile_granules[.!ind, :])
 
-        geotile_build(geotile_granules, paths[product.mission].geotile; warnings=false)
+        geotile_build(geotile_granules, paths[product.mission].geotile; warnings=false, partition)
     end
 end
 

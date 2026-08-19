@@ -1,4 +1,132 @@
 """
+    atomic_write(write!, target; suffix="")
+
+Write `target` atomically: call `write!(scratch_path)`, then move the result into place.
+
+`write!` receives a path inside a `tmp` subfolder next to `target` and may use any writer
+(`Arrow.write`, `FileIO.save`, ...). On success the scratch file is `mv`-ed over `target`; on failure
+it is deleted. The scratch folder shares a filesystem with `target`, so the `mv` stays atomic.
+`suffix` is appended to the scratch name for writers that dispatch on file extension.
+
+# Why this exists
+
+Writing `tempname(dirname(target))` straight into the output folder and then `mv`-ing meant every
+interrupted write left a stub among the real outputs, indistinguishable from data -- that is how
+633,838 orphaned 8-byte `jl_*` files accumulated in `icesat2/ATL06/006/geotile/2deg`. Moving the
+scratch file into a subfolder is not sufficient on its own: nothing deletes the stubs, and recursive
+scans (`allfiles(...; subfolders=true)`, which `hstack_catalogue` uses) still descend into it.
+Cleaning up in a `finally` makes "no orphans" an invariant of this helper rather than a convention
+each of the eight call sites has to remember.
+"""
+function atomic_write(write!, target; suffix="")
+    scratch_dir = mkpath(joinpath(dirname(target), "tmp"))
+    scratch = tempname(scratch_dir) * suffix
+    try
+        write!(scratch)
+        mv(scratch, target; force=true)
+    finally
+        isfile(scratch) && rm(scratch; force=true)
+    end
+    return target
+end
+
+"""
+    partition_rows(nrows, partition) -> AbstractVector{Int}
+
+Return the row indices this process should handle, given `partition = (index, nparts)`.
+
+`nothing` selects everything. Otherwise rows are taken with a stride, so partition `index` gets
+rows `index, index+nparts, index+2*nparts, ...`. A stride rather than a contiguous block matters
+because `geotile_granules` is sorted by longitude before the build: contiguous blocks would hand
+one process every slow high-latitude tile, while a stride spreads them evenly.
+
+Across `index = 1:nparts` the partitions cover `1:nrows` exactly once, with no gaps or overlap.
+"""
+function partition_rows(nrows, partition)
+    isnothing(partition) && return 1:nrows
+    index, nparts = partition
+    nparts >= 1 || error("partition nparts must be >= 1, got $nparts")
+    (1 <= index <= nparts) || error("partition index $index outside 1:$nparts")
+    return index:nparts:nrows
+end
+
+"""
+    pool_granules(granule_lists, on_disk) -> (granules, n_total)
+
+Flatten per-geotile granule lists into the unique set that still needs downloading.
+
+`granule_lists` is an iterable of granule vectors (one per geotile) and `on_disk` is a set of
+filenames already present. Returns the deduplicated granules to fetch plus the total number of
+granule references seen, which is only used for reporting.
+
+Deduplication is the point: adjacent geotiles share granules, so a per-geotile download loop
+requests the same URL several times. Keying on `granule.id` collapses those to one request.
+"""
+function pool_granules(granule_lists, on_disk)
+    # Insertion order is already deterministic (geotiles are visited in order, granules within a
+    # geotile in order), so tracking seen ids in a Set and appending is enough -- no key sort and no
+    # second lookup pass. On a full ATL06 pool (~350k references) that is ~2.5x faster and ~a third
+    # less memory than routing everything through a Dict.
+    seen = Set{String}()
+    granules = Any[]
+    n_total = 0
+    for gs in granule_lists
+        n_total += length(gs)
+        for g in gs
+            if !(g.id in on_disk) && !(g.id in seen)
+                push!(seen, g.id)
+                push!(granules, g)
+            end
+        end
+    end
+    return identity.(granules), n_total
+end
+
+"""
+    with_retry(f, label; max_attempts=5, backoff=1)
+
+Call `f()`, retrying with exponential backoff, and return its value.
+
+Transient NSIDC/CMR failures are common enough that a single attempt is not reliable, but an
+unbounded retry is worse: work that fails deterministically (a withdrawn granule, a bad URL, a
+serialization error) spins forever. Rethrows the final exception once `max_attempts` is exhausted so
+the caller can decide whether to skip or abort. `label` names the unit of work in log messages.
+
+`backoff` scales the sleep between attempts -- attempt `n` waits `backoff * 10 * 2^(n-1)` seconds --
+and can be set to 0 to make the policy testable without real delays.
+"""
+function with_retry(f, label; max_attempts=5, backoff=1)
+    for attempt in 1:max_attempts
+        try
+            return f()
+        catch e
+            if attempt == max_attempts
+                printstyled("    -> $label failed after $max_attempts attempts\n"; color=:red)
+                rethrow(e)
+            end
+            wait_time = backoff * 10 * 2^(attempt - 1)
+            printstyled("    -> $label issue [attempt $attempt/$max_attempts], retrying in $wait_time s\n"; color=:yellow)
+            sleep(wait_time)
+        end
+    end
+end
+
+"""
+    download_with_retry!(granule, savedir; max_attempts=5, downloader=download!, backoff=1)
+
+Download `granule` into `savedir` via [`with_retry`](@ref).
+
+`downloader` is the function actually invoked as `downloader(granule, savedir)`; it exists so the
+retry policy can be exercised without network access.
+"""
+function download_with_retry!(granule, savedir; max_attempts=5, downloader=download!, backoff=1)
+    with_retry(granule.id; max_attempts, backoff) do
+        downloader(granule, savedir)
+    end
+    return granule
+end
+
+"""
     geotile_search_granules(geotiles, mission, product, version, outgranulefile; rebuild_dataframe=false, after=nothing, page_size=2000)
 
 Find all granules that intersect with specified geotiles and save results as an Arrow table.
@@ -77,9 +205,9 @@ function geotile_search_granules(
         geotile_granules = leftmerge(geotile_granules, granules_load(outgranulefile, mission), :id)
     end
 
-    tmp = tempname(dirname(outgranulefile))
-    Arrow.write(tmp, geotile_granules::DataFrame)
-    mv(tmp, outgranulefile; force=true)
+    atomic_write(outgranulefile) do tmp
+        Arrow.write(tmp, geotile_granules::DataFrame)
+    end
     return outgranulefile
 end
 
@@ -91,11 +219,21 @@ end
         outgranulefile;
         threads=true,
         rebuild_dataframe=false,
-        aria2c=false,
-        downloadstreams=16,
+        aria2c=true,
+        downloadstreams=8,
+        concurrent_downloads=16,
+        segments=8,
+        chunk_size=5000,
     )
 
-Downloads satellite data granules for each geotile and updates their URLs to local paths.
+Downloads satellite data granules for all geotiles and updates their URLs to local paths.
+
+Granules are pooled across every geotile and deduplicated by id before a **single** transfer is
+issued. This matters for two reasons. Adjacent geotiles share granules, so the per-geotile loop
+this replaced requested the same URL several times; and its on-disk check was built from one
+`readdir` taken before the loop, so anything fetched during the run was invisible to later
+geotiles and downloaded again. Pooling removes both problems by construction and cuts ~1400
+`aria2c` process spawns to one.
 
 # Arguments
 - `geotile_granules`: DataFrame containing geotiles and their associated granules
@@ -104,10 +242,13 @@ Downloads satellite data granules for each geotile and updates their URLs to loc
 - `outgranulefile`: Path to save the updated granule information
 
 # Keywords
-- `threads=true`: Whether to use multithreading for downloads
+- `threads=true`: Use asynchronous downloads when `aria2c=false`
 - `rebuild_dataframe=false`: Whether to rebuild the dataframe from scratch
-- `aria2c=false`: Whether to use aria2c for downloading
-- `downloadstreams=16`: Number of download streams when using aria2c
+- `aria2c=true`: Use aria2c (via `Aria2_jll`) rather than per-granule `download!`
+- `downloadstreams=8`: aria2c `-x`, max connections per server
+- `concurrent_downloads=16`: aria2c `-j`, files transferred simultaneously
+- `segments=8`: aria2c `-s`, segments per file
+- `chunk_size=5000`: granules per aria2c invocation, bounding aria2's in-memory URL list
 
 # Returns
 - Path to the saved granule file
@@ -119,106 +260,81 @@ function geotile_download_granules!(
     outgranulefile;
     threads=true,
     rebuild_dataframe=false,
-    aria2c=false,
-    downloadstreams=16,
+    aria2c=true,
+    downloadstreams=8,
+    concurrent_downloads=16,
+    segments=8,
+    chunk_size=5000,
 )
 
-    printstyled("downloading granules for each geotile\n"; color=:blue, bold=true)
+    printstyled("downloading granules\n"; color=:blue, bold=true)
 
-    # ensure SpaceLiDAR capitilization ot mission 
+    # ensure SpaceLiDAR capitilization ot mission
     mission = mission2spacelidar(mission)
 
     # remove empty granules
     geotile_granules = geotile_granules[.!isempty.(geotile_granules.granules), :]
 
-    filesOnDisk = readdir(savedir)
+    # `on_disk` is a Set so the membership test inside `pool_granules` stays O(1) against
+    # directories holding >350k files.
+    on_disk = Set(readdir(savedir))
+    granules, n_total = pool_granules(geotile_granules.granules, on_disk)
 
-    n = size(geotile_granules, 1)
-    for (i, row) in enumerate(eachrow(geotile_granules))
+    n_unique = length(granules)
+    printstyled("    -> $n_total granule references across $(nrow(geotile_granules)) geotiles; $n_unique unique files to download\n"; color=:light_black)
+
+    if n_unique == 0
+        printstyled("    -> nothing to download\n"; color=:light_green)
+    else
         t1 = time()
-        printstyled("    -> downloading granules $i of $n ... "; color=:light_black)
 
-        # download seems to get killed when it makes too many requests... try just requesting files that actually need downloading. 
-        files2download = [g.id for g in row.granules]
-        ia, _ = intersectindices(files2download, filesOnDisk; bool=true)
-        ia = .!ia
-
-        # download seems to get killed when it makes too many requests... try just requesting files that actually need downloading. 
-        if any(ia)
-            granules = row.granules[ia]
-        else
-            print("no new files to download, skipping\n")
-            # update granule urls to local paths
-            for g in row.granules
-                g.url = joinpath(savedir, g.id)
-            end
-            continue
-        end
-
-        # using async is ~4x faster than without
-        #TODO: Replace this with Aria2_jll
         if aria2c
-            urls = [g.url for g in granules]
-            #urls = vcat(urls...)
+            # Transfers are issued in chunks rather than as one giant input file: aria2 holds its
+            # entire URL list in memory, and a full ATL06 rebuild is >350k URLs. Chunking bounds
+            # that, reports progress, and lets an interrupted run resume at a chunk boundary --
+            # while still replacing ~1400 process spawns with ~72.
+            #
+            # The previous command line passed `-j 1` (one file at a time) and included a stray
+            # `-i` that consumed the following `--max-connection-per-server` as its input-file
+            # argument, leaving `15` to be parsed as a URI, so every batch carried a bogus entry.
+            chunks = collect(Iterators.partition(granules, chunk_size))
+            for (ci, chunk) in enumerate(chunks)
+                url_list = write_urls!(tempname(), String[g.url for g in chunk])
 
-            fn = tempname()
-            url_list = write_urls!(fn, urls)
+                cmd = `$(Aria2_jll.aria2c()) --max-tries=10 --retry-wait=1 --auto-file-renaming=false --console-log-level=warn --summary-interval=60 -c -k 1M -j $concurrent_downloads -x $downloadstreams -s $segments -d $savedir -i $url_list`
 
-            cmd = `aria2c --max-tries=10 --retry-wait=1 -x $downloadstreams -k 1M -j 1 -i --max-connection-per-server 15 -c -d $savedir -i $url_list`
-
-            println(cmd)
-            run(cmd)
-
-            # update granule urls to local paths
-            for g in row.granules
-                g.url = joinpath(savedir, g.id)
+                printstyled("    -> chunk $ci of $(length(chunks)) [$(length(chunk)) files]\n"; color=:light_black)
+                run(cmd)
             end
         else
             if threads
-                asyncmap(granules; ntasks=10) do g
-                    flag = 0
-                    while flag == 0
-                        try
-                            download!(g, savedir)
-                            flag = 1
-                        catch e
-                            println(e)
-                            wait_time = 10
-                            printstyled("download hand an issue... will try again in $wait_time s\n"; color=:yellow)
-                            sleep(wait_time)
-                        end
-                    end
-                end
+                asyncmap(g -> download_with_retry!(g, savedir), granules; ntasks=10)
             else
                 for g in granules
-                    flag = 0
-                    while flag == 0
-                        try
-                            download!(g, savedir)
-                            flag = 1
-                        catch e
-                            println(e)
-                            wait_time = 10
-                            printstyled("download hand an issue... will try again in $wait_time s\n"; color=:yellow)
-                            sleep(wait_time)
-                        end
-                    end
+                    download_with_retry!(g, savedir)
                 end
             end
         end
-        print("done [$(round((time()-t1)/60, digits=1)) min]\n")
+        printstyled("    -> download complete [$(round((time()-t1)/60, digits=1)) min]\n"; color=:light_black)
     end
 
-    # check if file already exists 
+    # point every granule at its local copy, including those already present before this call
+    for row in eachrow(geotile_granules)
+        for g in row.granules
+            g.url = joinpath(savedir, g.id)
+        end
+    end
+
+    # check if file already exists
     if isfile(outgranulefile) && !rebuild_dataframe
         geotile_granules0 = copy(granules_load(outgranulefile, mission))
         geotile_granules = leftmerge(geotile_granules, geotile_granules0, :id)
     end
 
     # save granules with local paths
-    tmp = tempname(dirname(outgranulefile))
-    Arrow.write(tmp, geotile_granules::DataFrame)
-    mv(tmp, outgranulefile; force=true)
+    atomic_write(outgranulefile) do tmp
+        Arrow.write(tmp, geotile_granules::DataFrame)
+    end
     return outgranulefile
 end
 
@@ -1001,9 +1117,9 @@ function geotile_extract_dem(
                 end
             end
 
-            tmp = tempname(dirname(outfile))
-            Arrow.write(tmp, df::DataFrame)
-            mv(tmp, outfile; force=true)
+            atomic_write(outfile) do tmp
+                Arrow.write(tmp, df::DataFrame)
+            end
 
             total_time = round((time() - t1) / 60, digits=2)
             printstyled("\n    ->$job_id $geotile_id $dem extracted: $(total_time) min \n"; color=:light_black)
@@ -1697,9 +1813,9 @@ function geotile_extract_mask(
             end
         end
 
-        tmp = tempname(dirname(outfile))
-        Arrow.write(tmp, mask0::DataFrame)
-        mv(tmp, outfile; force=true)
+        atomic_write(outfile) do tmp
+            Arrow.write(tmp, mask0::DataFrame)
+        end
 
         total_time = round((time() - t1) / 60, digits=2)
         printstyled("\n    ->$job_id $geotile_id masks extracted: $(total_time) min \n"; color=:light_black)
@@ -1882,10 +1998,10 @@ function geotile_pointextract(
                 printstyled("\n    ->$(geotile.id) no valid $var_name, skipping\n"; color=:light_red)
             else
                 start = Int(1)
-                for (i, outifle) = enumerate(path2outfile)
-                    tmp = tempname(dirname(outifle))
-                    Arrow.write(tmp, df[start:stop[i], :]::DataFrame)
-                    mv(tmp, outifle; force=true)
+                for (i, outfile) = enumerate(path2outfile)
+                    atomic_write(outfile) do tmp
+                        Arrow.write(tmp, df[start:stop[i], :]::DataFrame)
+                    end
                     start = stop[i] + 1
                 end
             end
@@ -1982,7 +2098,7 @@ function leftmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
 end
 
 """
-    geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow, replace_corrupt_h5=true)
+    geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow, replace_corrupt_h5=true, partition=nothing)
 
 Build geotiles from satellite data granules.
 
@@ -1994,21 +2110,45 @@ Build geotiles from satellite data granules.
 - `warnings=true`: Whether to display warning messages
 - `fmt=:arrow`: Output file format (`:arrow` or other supported format)
 - `replace_corrupt_h5=true`: Whether to attempt recovery of corrupt HDF5 files
+- `partition=nothing`: `(index, nparts)` to process only every `nparts`-th geotile starting at
+  `index`. Used to spread the build across concurrent processes -- see the note below.
 
 # Returns
 Nothing, but creates geotile files in the specified directory
+
+# Parallelism
+
+This loop is deliberately serial within a process. HDF5.jl (0.17) routes **every** libhdf5 call
+through one global `ReentrantLock`, so threading the reads buys nothing -- they serialize on that
+lock regardless of how many threads are available. That is almost certainly why the `asyncmap`
+this replaced was left commented out.
+
+Real parallelism therefore requires separate processes, each with its own libhdf5 state. Because
+every geotile is independent and each output is written to a scratch file and then `mv`-ed into
+place atomically, concurrent processes are safe as long as they cover disjoint geotiles. Launch N
+shells with `partition=(i, N)` for `i in 1:N`:
+
+```julia
+# in shell i of 8, after search and download have completed once
+geotile_build_archive(; missions=(:icesat2,), stages=(:build,), partition=(i, 8))
+```
 """
-function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow, replace_corrupt_h5=true)
+function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow, replace_corrupt_h5=true, partition=nothing)
     printstyled("building geotiles\n"; color=:blue, bold=true)
 
     # remove empty granules
     geotile_granules = geotile_granules[.!isempty.(geotile_granules.granules), :]
 
+    # select this process's share (see `partition_rows`)
+    if !isnothing(partition)
+        geotile_granules = geotile_granules[partition_rows(nrow(geotile_granules), partition), :]
+        printstyled("    -> partition $(partition[1]) of $(partition[2]): $(nrow(geotile_granules)) geotiles\n"; color=:light_black)
+    end
+
     if !warnings
         Logging.disable_logging(Logging.Warn) # or e.g. Logging.Info
     end
 
-    #asyncmap(eachrow(geotile_granules); ntasks = 10) do row
     @showprogress dt = 1 desc = "Building geotiles for $(geotile_dir)..." for row in eachrow(geotile_granules)
 
         # tiles
@@ -2080,14 +2220,13 @@ function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow,
 
                 # start write timer
                 t1 = time()
-                tmp = tempname(dirname(outfile)) * ".$fmt"
-                if fmt == :arrow
-                    Arrow.write(tmp, df::DataFrame)
-                else
-                    save(tmp, Dict("df" => df::DataFrame))
+                atomic_write(outfile; suffix=".$fmt") do tmp
+                    if fmt == :arrow
+                        Arrow.write(tmp, df::DataFrame)
+                    else
+                        save(tmp, Dict("df" => df::DataFrame))
+                    end
                 end
-
-                mv(tmp, outfile; force=true)
                 write_time = round((time() - t1) / 60, digits=1)
                 printstyled("\n    -> $(row[:id]): generation complete [read: $read_time min, write: $write_time min]\n"; color=:light_black)
             else

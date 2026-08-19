@@ -75,7 +75,11 @@ if download_lsm_files
     for file_urls in gldas_file_urls
     #file_urls = last(gldas_file_urls)
 
-        cmd = `aria2c --max-tries=10 --retry-wait=1 -x $downloadstreams -k 1M -j 1 -i --max-connection-per-server 15 -c -d $gldas_folder -i $file_urls`
+        # NOTE: this used to read `... -j 1 -i --max-connection-per-server 15 -c ...`. The first
+        # `-i` takes a filename argument, so it swallowed `--max-connection-per-server` and left
+        # `15` to be parsed as a URI -- every batch carried a bogus entry and, with `-j 1`, ran one
+        # file at a time. Same defect as the one fixed in `geotile_download_granules!`.
+        cmd = `aria2c --max-tries=10 --retry-wait=1 -c -k 1M -j 16 -x $downloadstreams -s $downloadstreams -d $gldas_folder -i $file_urls`
 
         println(cmd)
         run(cmd)

@@ -79,9 +79,9 @@ function hstack_catalogue(hstack_parent_dir; force_remake = false)
             dfr.GeoExtent = Extent(X = (minimum([x[2] for x in a]), maximum([x[2] for x in a])), Y = (minimum([x[1] for x in a]), maximum([x[1] for x in a])))
         end
 
-        tmp = tempname(dirname(outfile))
-        Arrow.write(tmp, hstacks::DataFrame)
-        mv(tmp, outfile; force = true)
+        atomic_write(outfile) do tmp
+            Arrow.write(tmp, hstacks::DataFrame)
+        end
     end
 
     hstacks = DataFrame(Arrow.Table(outfile))
@@ -216,9 +216,10 @@ function geotile_build_hugonnet(geotile, geotile_dir, hstacks; force_remake=fals
         gt = hstacks2geotile(geotile, hstacks)
         t2 = time()
         if !isnothing(gt) && !isempty(gt)
-            tmp = tempname(dirname(outfile))
-            Arrow.write(tmp, gt::DataFrame) # do not use compression... greatly slows read time
-            mv(tmp, outfile; force=true)
+            atomic_write(outfile) do tmp
+                # do not use compression... greatly slows read time
+                Arrow.write(tmp, gt::DataFrame)
+            end
 
             total_time = round((time()-t1)/60, digits = 2);
             save_time = round((time() - t2) / (time() - t1) * 100, digits=0)

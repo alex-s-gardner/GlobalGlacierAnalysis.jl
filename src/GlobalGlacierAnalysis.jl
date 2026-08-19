@@ -11,7 +11,11 @@ module GlobalGlacierAnalysis
    # import geographic packages
    using Proj
    using GeoArrays
-   #using SpaceLiDAR
+   # SpaceLiDAR was renamed SpaceAltimetry. Adding it is blocked upstream: SpaceAltimetry 0.5.0
+   # declares its Makie extension as `SpaceAltimetryMakieExt` in Project.toml while the file is
+   # still `ext/SpaceLiDARMakieExt.jl`, so precompiling any package that loads both it and Makie
+   # (this one loads CairoMakie) fails. See the Phase 1c notes in the plan.
+   #using SpaceAltimetry
    using Geodesy
    using FastGeoProjections
    using Rasters
@@ -27,6 +31,7 @@ module GlobalGlacierAnalysis
    using CSV
    using NCDatasets
    using JLD2
+   using Aria2_jll
    
 
    # standard packages
