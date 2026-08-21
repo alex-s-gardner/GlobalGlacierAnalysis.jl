@@ -1,7 +1,7 @@
 """
     geotile_build_archive(; force_remake=false, project_id=:v01, geotile_width=2,
                          domain=:glacier, missions=(:icesat2,), single_geotile_test=nothing,
-                         stages=(:search, :download, :build), partition=nothing)
+                         stages=(:search, :download, :build), partition=nothing, source=:nsidc)
 
 Build satellite altimetry archives organized into geotiles for glacier analysis.
 
@@ -20,6 +20,10 @@ by location and includes special handling for polar regions.
 - `stages`: Which stages to run, any of `:search`, `:download`, `:build` (default: all three)
 - `partition`: `(index, nparts)` passed to [`geotile_build`](@ref) to build a disjoint share of
   the geotiles, so the build can be spread over concurrent processes
+- `source`: where point data comes from, `:nsidc` (default) to download granules and read them
+  locally, or `:sliderule` to have SlideRule subset them server-side (ICESat-2 only). `:sliderule`
+  needs no local granules, so it skips `:download` and ignores `partition`; see
+  [`geotile_build_sliderule`](@ref)
 
 # Returns
 Nothing. Processed altimetry data is organized into geotiles and saved locally.
@@ -54,10 +58,12 @@ function geotile_build_archive(;
     single_geotile_test = nothing,
     stages = (:search, :download, :build),
     partition = nothing,
+    source = :nsidc, # :nsidc -or- :sliderule
     )
 
     unknown_stages = setdiff(stages, (:search, :download, :build))
     isempty(unknown_stages) || error("unrecognized stage(s): $unknown_stages")
+    source in (:nsidc, :sliderule) || error("unrecognized source: $source (expected :nsidc or :sliderule)")
 
     rebuild_geotiles_dataframe = force_remake
 
@@ -100,7 +106,8 @@ function geotile_build_archive(;
         end
 
         # download granules from list [ATL06 17 min, no data]
-        if :download in stages
+        # SlideRule reads the granules itself, in its own region, so there is nothing to fetch locally.
+        if :download in stages && source == :nsidc
             # load remote granule list
             geotile_granules = granules_load(paths[product.mission].granules_remote, product.mission; geotiles = geotiles)
 
@@ -118,6 +125,18 @@ function geotile_build_archive(;
         end
 
         if !(:build in stages)
+            continue
+        end
+
+        if source == :sliderule
+            haskey(SLIDERULE_QUERIES, product.mission) ||
+                error("source=:sliderule is not implemented for $(product.mission) " *
+                      "(have $(join(sort(collect(keys(SLIDERULE_QUERIES))), ", ")))")
+            # The remote list, not the local one: nothing was downloaded, and its granule ids are
+            # what pin each request to a known set of resources.
+            geotile_granules = granules_load(paths[product.mission].granules_remote, product.mission; geotiles=geotiles)
+            geotile_build_sliderule(geotile_granules, paths[product.mission].geotile;
+                mission=product.mission, warnings=false)
             continue
         end
 
