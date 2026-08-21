@@ -28,7 +28,13 @@ julia> icesat2_cfg = product.icesat2
 function project_products(; project_id = :v01)
     if project_id == :v01
         product = (
-            icesat2=(mission=:icesat2, name=:ATL06, version=6, id="I206", error_sigma=0.1, halfwidth=11 / 4, kernel=:gaussian, apply_quality_filter=false, coregister=true, latitude_limits=[-88, 88], longitude_limits=[-180, 180]),
+            # ATL06 v7. NSIDC retired v006 from CMR when v007 was released, so a v6 archive can no
+            # longer be searched or downloaded -- `search(:ICESat2, :ATL06; version=6)` returns
+            # nothing from either NSIDC_CPRD or the (now decommissioned) NSIDC_ECS provider. The
+            # version is part of the data path, so v7 builds into `icesat2/ATL06/007/` and leaves
+            # the existing v6 raw granules in `006/raw` untouched. That directory is now the only
+            # copy of the v6 data used for the published analysis: do not delete it.
+            icesat2=(mission=:icesat2, name=:ATL06, version=7, id="I206", error_sigma=0.1, halfwidth=11 / 4, kernel=:gaussian, apply_quality_filter=false, coregister=true, latitude_limits=[-88, 88], longitude_limits=[-180, 180]),
 
             icesat=(mission=:icesat, name=:GLAH06, version=34, id="I106", error_sigma=0.1, halfwidth=35 / 4, kernel=:gaussian, apply_quality_filter=false, coregister=true, latitude_limits=[-86, 86], longitude_limits=[-180, 180]),
 
