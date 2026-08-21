@@ -105,6 +105,43 @@ end
         @test_throws ErrorException GGA.partition_rows(10, (1, 0))
     end
 
+    @testset "completed_on_disk" begin
+        @testset "treats a file with an .aria2 sibling as incomplete" begin
+            # aria2 creates the destination file when the transfer starts and removes the control
+            # file only on success, so a truncated download has a finished-looking name. Counting it
+            # as present hides it from every later sweep -- it is filtered out before aria2 runs, so
+            # `-c` never resumes it. A real ATL06 v7 run left 15 corrupt granules this way.
+            mktempdir() do dir
+                write(joinpath(dir, "done.h5"), "complete")
+                write(joinpath(dir, "partial.h5"), "trunc")
+                write(joinpath(dir, "partial.h5.aria2"), "control")
+
+                got = GGA.completed_on_disk(dir)
+
+                @test got == Set(["done.h5"])
+                @test !("partial.h5" in got)          # must be re-fetched
+            end
+        end
+
+        @testset "never returns control files as granules" begin
+            mktempdir() do dir
+                write(joinpath(dir, "a.h5"), "x")
+                write(joinpath(dir, "orphan.h5.aria2"), "control")   # control file, no payload yet
+
+                got = GGA.completed_on_disk(dir)
+
+                @test got == Set(["a.h5"])
+                @test !any(endswith(f, ".aria2") for f in got)
+            end
+        end
+
+        @testset "handles an empty directory" begin
+            mktempdir() do dir
+                @test GGA.completed_on_disk(dir) == Set{String}()
+            end
+        end
+    end
+
     @testset "pool_granules" begin
         g(name) = MockGranule(name, "https://example.org/$name")
 
@@ -201,6 +238,137 @@ end
             GGA.download_with_retry!(granule, "/data/raw"; downloader=capture, backoff=0)
             @test seen[] == "/data/raw"
         end
+
+        @testset "does not retry failures a retry cannot fix" begin
+            # An empty granule list and a Ctrl-C are both terminal. Retrying them wasted 150 s of
+            # backoff before surfacing the real problem.
+            calls = Ref(0)
+            unfixable = (g, dir) -> (calls[] += 1; throw(GGA.NonRetryable("granule list is a stub")))
+            @test_throws GGA.NonRetryable GGA.download_with_retry!(
+                granule, "/tmp"; downloader=unfixable, backoff=0
+            )
+            @test calls[] == 1
+
+            calls[] = 0
+            interrupted = (g, dir) -> (calls[] += 1; throw(InterruptException()))
+            @test_throws InterruptException GGA.download_with_retry!(
+                granule, "/tmp"; downloader=interrupted, backoff=0
+            )
+            @test calls[] == 1
+        end
+    end
+
+    @testset "geotile_download_granules! rejects an empty granule list" begin
+        # The ATL06 `granules.remote` written 2025-07-31 held 904 geotiles and zero granules. That
+        # left an untyped `Vector{Union{}}` column, and `Arrow.write` failed on it with
+        # `arrowname(::Type{Union{}}) is ambiguous` -- five times over, once per retry. Fail with a
+        # message naming the fix instead, and leave the local granule list untouched.
+        mktempdir() do temp_dir
+            geotiles = DataFrame(
+                id=["lat[+46+48]lon[+008+010]", "lat[+44+46]lon[+006+008]"],
+                granules=[MockGranule[], MockGranule[]],
+            )
+            outfile = joinpath(temp_dir, "granules.local")
+
+            @test_throws GGA.NonRetryable GGA.geotile_download_granules!(
+                geotiles, :icesat2, temp_dir, outfile
+            )
+            @test !isfile(outfile)
+        end
+    end
+
+    @testset "download_sweeps" begin
+        # Regression: the first ATL06 v7 download died here. aria2c exits nonzero when any single
+        # transfer in a chunk fails, the caller treated that as "the download failed" and restarted
+        # the whole stage, and five attempts later it aborted having never got past chunk 1 of 38 --
+        # 34,301 files of 186,244. A chunk failure must not stop the other chunks.
+        granules(n) = [MockGranule("g$(i).h5", "https://example.org/g$(i).h5") for i in 1:n]
+        land!(chunk, dir) = for g in chunk
+            touch(joinpath(dir, g.id))
+        end
+
+        @testset "a failing chunk does not stop the others" begin
+            mktempdir() do dir
+                seen = Int[]
+                function fetcher(chunk, savedir)
+                    push!(seen, length(chunk))
+                    land!(chunk, savedir)
+                    length(seen) == 1 && error("aria2c exited 3 on one bad granule")
+                    return nothing
+                end
+
+                left = GGA.download_sweeps(granules(25), dir; chunk_size=10, fetcher)
+                @test length(seen) == 3            # all three chunks attempted
+                @test isempty(left)                # everything landed anyway
+                @test length(readdir(dir)) == 25
+            end
+        end
+
+        @testset "still-missing files are swept again" begin
+            mktempdir() do dir
+                calls = Ref(0)
+                function flaky(chunk, savedir)
+                    calls[] += 1
+                    # first pass drops the tail of each chunk, second pass gets everything
+                    keep = calls[] <= 2 ? chunk[1:max(1, length(chunk) ÷ 2)] : chunk
+                    land!(keep, savedir)
+                    return nothing
+                end
+
+                left = GGA.download_sweeps(granules(20), dir; chunk_size=10, fetcher=flaky)
+                @test isempty(left)
+                @test length(readdir(dir)) == 20
+                @test calls[] > 2                  # needed a second sweep
+            end
+        end
+
+        @testset "a sweep that lands nothing is a real failure" begin
+            mktempdir() do dir
+                # expired credentials, wrong host, every URL bad: retrying cannot help, so fail with a
+                # message that names the likely cause instead of spinning
+                nothing_lands(chunk, savedir) = error("403 forbidden")
+                @test_throws GGA.NonRetryable GGA.download_sweeps(
+                    granules(5), dir; chunk_size=10, fetcher=nothing_lands)
+            end
+        end
+
+        @testset "gives up after max_sweeps and reports what is missing" begin
+            mktempdir() do dir
+                # one granule is permanently unavailable; the rest must still be downloaded and the
+                # build must not be blocked by it
+                function all_but_one(chunk, savedir)
+                    land!(filter(g -> g.id != "g3.h5", chunk), savedir)
+                    return nothing
+                end
+
+                left = GGA.download_sweeps(granules(5), dir; chunk_size=10, max_sweeps=2, fetcher=all_but_one)
+                @test [g.id for g in left] == ["g3.h5"]
+                @test length(readdir(dir)) == 4
+            end
+        end
+    end
+
+    @testset "placeholder rows carry their granule id" begin
+        # A granule that returns no points inside a geotile is recorded as one all-NaN row carrying its
+        # id, which is how the incremental rule knows not to ask for it again. The id used to be written
+        # as `er[end]`, correct only while `id` is the last column; a placeholder left holding
+        # `emptyrow`'s "0" is invisible to that check and the granule is re-requested on every pass,
+        # forever. So the column is addressed by name, and this pins it for a table where it is not last.
+        df = DataFrame(longitude=[1.0], latitude=[2.0], id=["ATL06_real.h5"], quality=[true])
+        @test names(df)[end] != "id"
+
+        er = GGA.emptyrow(df)
+        er[columnindex(df, :id)] = "ATL06_empty.h5"
+        push!(df, er)
+
+        @test df.id == ["ATL06_real.h5", "ATL06_empty.h5"]
+        @test isnan(df.longitude[2])
+        @test !("0" in df.id)
+
+        # emptyrow itself still fills each column by type: "0" for strings, NaN for floats
+        blank = GGA.emptyrow(df)
+        @test blank[columnindex(df, :id)] == "0"
+        @test isnan(blank[columnindex(df, :latitude)])
     end
 
     @testset "geotile_build_archive stage validation" begin

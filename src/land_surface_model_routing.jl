@@ -79,26 +79,13 @@ if download_lsm_files
         # `-i` takes a filename argument, so it swallowed `--max-connection-per-server` and left
         # `15` to be parsed as a URI -- every batch carried a bogus entry and, with `-j 1`, ran one
         # file at a time. Same defect as the one fixed in `geotile_download_granules!`.
-        cmd = `aria2c --max-tries=10 --retry-wait=1 -c -k 1M -j 16 -x $downloadstreams -s $downloadstreams -d $gldas_folder -i $file_urls`
+        # Uses the Aria2_jll binary rather than whatever `aria2c` is on PATH. The note that "jll
+        # doesn't seem to work" that used to sit here was the OpenSSL `legacy` provider failure that
+        # `GGA.aria2c_cmd` explains and works around.
+        cmd = GGA.aria2c_cmd(`--max-tries=10 --retry-wait=1 -c -k 1M -j 16 -x $downloadstreams -s $downloadstreams -d $gldas_folder -i $file_urls`)
 
         println(cmd)
         run(cmd)
-
-        # jll doesn't seem to work    
-        #=    
-        cmd = `$(aria2_jll.aria2c()) -i $f -c -d $gldas_folder`
-        local io
-        try
-            io = run(pipeline(cmd, stdout = stdout, stderr = stderr), wait = false)
-            while process_running(io)
-                sleep(1)
-            end
-        catch e
-            kill(io)
-            println()
-            throw(e)
-        end
-        =#
     end
 end
 

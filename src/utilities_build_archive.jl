@@ -51,6 +51,32 @@ function partition_rows(nrows, partition)
 end
 
 """
+    completed_on_disk(savedir) -> Set{String}
+
+Filenames in `savedir` that are complete downloads.
+
+A bare `readdir` is not good enough for the "already have it" test. aria2 creates the destination
+file as soon as a transfer starts and writes a sibling `<name>.aria2` control file that it removes
+only on success, so an interrupted transfer leaves a truncated file whose *name* looks finished.
+Treating that as present makes the granule invisible to every later sweep -- it is filtered out
+before aria2 is invoked, so `-c` never gets the chance to resume it, and the run reports success
+with corrupt files on disk. Requiring the absence of the control file uses aria2's own
+incompleteness marker as the signal.
+
+The `.aria2` entries are dropped from the returned set as well; they are bookkeeping, never granules.
+"""
+function completed_on_disk(savedir)
+    entries = readdir(savedir)
+    # One pass to collect the control-file markers, then one filtering pass -- both O(1) lookups
+    # against a directory that holds >350k files for a full ATL06 pool.
+    partial = Set{String}()
+    for f in entries
+        endswith(f, ".aria2") && push!(partial, chop(f; tail=length(".aria2")))
+    end
+    return Set(f for f in entries if !endswith(f, ".aria2") && !(f in partial))
+end
+
+"""
     pool_granules(granule_lists, on_disk) -> (granules, n_total)
 
 Flatten per-geotile granule lists into the unique set that still needs downloading.
@@ -83,6 +109,37 @@ function pool_granules(granule_lists, on_disk)
 end
 
 """
+    aria2c_cmd(args) -> Cmd
+
+Build an `aria2c` command from `args` that can actually reach an HTTPS host.
+
+`Aria2_jll.aria2c()` sets `LD_LIBRARY_PATH` to Julia's private library directory, so aria2 resolves
+`libcrypto` to the one Julia ships rather than the one in its own artifact. That library's
+`ossl-modules` directory has no `legacy.so`, and aria2's `OSSL_PROVIDER_load(NULL, "legacy")` then
+fails at startup:
+
+    Exception: [Platform.cc:125] errorCode=1 OSSL_PROVIDER_load 'legacy' failed.
+
+Every transfer aborts before a byte moves. Dropping `LD_LIBRARY_PATH` lets the binary find its own
+dependencies through its RPATH, which is what it was linked for.
+"""
+aria2c_cmd(args::Cmd) = addenv(`$(Aria2_jll.aria2c()) $args`, "LD_LIBRARY_PATH" => nothing)
+
+"""
+    NonRetryable(msg)
+
+Wrap a failure that retrying cannot fix, so [`with_retry`](@ref) gives up immediately.
+
+Use it for state the caller has to correct -- a missing or empty granule list, a path that does not
+exist -- rather than for anything network- or filesystem-transient.
+"""
+struct NonRetryable <: Exception
+    msg::String
+end
+
+Base.showerror(io::IO, e::NonRetryable) = print(io, e.msg)
+
+"""
     with_retry(f, label; max_attempts=5, backoff=1)
 
 Call `f()`, retrying with exponential backoff, and return its value.
@@ -92,6 +149,9 @@ unbounded retry is worse: work that fails deterministically (a withdrawn granule
 serialization error) spins forever. Rethrows the final exception once `max_attempts` is exhausted so
 the caller can decide whether to skip or abort. `label` names the unit of work in log messages.
 
+[`NonRetryable`](@ref) and `InterruptException` are rethrown on the first attempt: the former cannot
+succeed on a retry, and retrying the latter would ignore five consecutive Ctrl-C presses.
+
 `backoff` scales the sleep between attempts -- attempt `n` waits `backoff * 10 * 2^(n-1)` seconds --
 and can be set to 0 to make the policy testable without real delays.
 """
@@ -100,6 +160,9 @@ function with_retry(f, label; max_attempts=5, backoff=1)
         try
             return f()
         catch e
+            if e isa NonRetryable || e isa InterruptException
+                rethrow(e)
+            end
             if attempt == max_attempts
                 printstyled("    -> $label failed after $max_attempts attempts\n"; color=:red)
                 rethrow(e)
@@ -178,35 +241,39 @@ function geotile_search_granules(
     end
 
 
-    # this returns a non descript "Something went wrong: ["An Internal Error has occurred."]"
-    # ------------------- IF YOU GET THIS ERROR, REMOVE THREADS.@THREADS -------------------
+    # CMR intermittently answers a valid query with "Something went wrong, but we don't know what"
+    # (an internal error on their side). Unretried, one such response kills the whole search: a GEDI
+    # run over 899 geotiles died at 85%, throwing away 45 minutes of work for a fault that succeeds on
+    # the next attempt. Retrying the single geotile is what makes a search of this size finish, and it
+    # keeps the threading -- the old advice to remove `Threads.@threads` treated a transient service
+    # error as a concurrency bug and made the search ~16x slower for no benefit.
     @showprogress dt = 1 desc = "Finding granules $(mission) $(product)..." Threads.@threads for i in 1:n
-        granules[i] = search(mission, product; bbox=geotiles[i, :extent], version=version, after=after)
-
-        #printstyled("    -> finding granules in geotile $i of $n\n"; color=:light_black)
-        #foo = true
-        #while foo
-        #    try
-        #        foo = true
-        #    catch e
-        #        throw(e)
-        #        println("error returned from search... wait 1 second and try again")
-        #        sleep(1)
-        #    end
-        #end
+        # `extent`, not `bbox`: SpaceAltimetry 0.5 dropped the `bbox` alias that SpaceLiDAR 0.4 had.
+        granules[i] = with_retry("$(mission) $(product) search for $(geotiles[i, :id])") do
+            search(mission, product; extent=geotiles[i, :extent], version=version, after=after)
+        end
     end
 
     # save remote granules before download in case there is a crash
-    geotile_granules = hcat(geotiles, DataFrame(granules=granules))
+    #
+    # Only the three columns this file exists for. `granules_load` reads `id`, `extent` and
+    # `granules` and nothing else, so the geometry and per-RGI-region columns of `geotiles` are dead
+    # weight here -- and worse than dead: carrying `geometry` through a merge with a list written
+    # before those columns existed leaves it `missing` for the older rows, which ArrowTypes cannot
+    # serialise (`UndefVarError: T not defined`, from the geometry NamedTuple's
+    # `Union{Missing,Nothing}` fields). Callers that need geotile metadata already hold the
+    # `geotiles_w_mask` frame it came from.
+    geotile_granules = hcat(geotiles[:, [:id, :extent]], DataFrame(granules=granules))
 
-    # check if file already exists 
+    # check if file already exists
     if isfile(outgranulefile) && !rebuild_dataframe
         #if file exists read it in and only overwrite updated granules
-        geotile_granules = leftmerge(geotile_granules, granules_load(outgranulefile, mission), :id)
+        existing = granules_load(outgranulefile, mission)
+        geotile_granules = leftmerge(geotile_granules, existing[:, [:id, :extent, :granules]], :id)
     end
 
     atomic_write(outgranulefile) do tmp
-        Arrow.write(tmp, geotile_granules::DataFrame)
+        Arrow.write(tmp, granules2nt(geotile_granules)::DataFrame)
     end
     return outgranulefile
 end
@@ -275,9 +342,19 @@ function geotile_download_granules!(
     # remove empty granules
     geotile_granules = geotile_granules[.!isempty.(geotile_granules.granules), :]
 
-    # `on_disk` is a Set so the membership test inside `pool_granules` stays O(1) against
-    # directories holding >350k files.
-    on_disk = Set(readdir(savedir))
+    # Stop here rather than write an empty table. A granule list in which no geotile has any
+    # granule is a stub from a search that never ran (that is what the ATL06 `granules.remote`
+    # written 2025-07-31 was), and Arrow cannot serialize the resulting `Vector{Union{}}` column --
+    # it fails with an unrelated-looking `arrowname(::Type{Union{}}) is ambiguous`. Overwriting the
+    # local list with the stub would also lose whatever good granule paths it already held.
+    if isempty(geotile_granules)
+        throw(NonRetryable("no granules for any requested geotile -- the remote granule list is " *
+                           "empty or a stub; rerun with stages=(:search,) to rebuild it"))
+    end
+
+    # A Set so the membership test inside `pool_granules` stays O(1) against directories holding
+    # >350k files. Partial transfers are excluded so they get retried rather than skipped.
+    on_disk = completed_on_disk(savedir)
     granules, n_total = pool_granules(geotile_granules.granules, on_disk)
 
     n_unique = length(granules)
@@ -289,23 +366,8 @@ function geotile_download_granules!(
         t1 = time()
 
         if aria2c
-            # Transfers are issued in chunks rather than as one giant input file: aria2 holds its
-            # entire URL list in memory, and a full ATL06 rebuild is >350k URLs. Chunking bounds
-            # that, reports progress, and lets an interrupted run resume at a chunk boundary --
-            # while still replacing ~1400 process spawns with ~72.
-            #
-            # The previous command line passed `-j 1` (one file at a time) and included a stray
-            # `-i` that consumed the following `--max-connection-per-server` as its input-file
-            # argument, leaving `15` to be parsed as a URI, so every batch carried a bogus entry.
-            chunks = collect(Iterators.partition(granules, chunk_size))
-            for (ci, chunk) in enumerate(chunks)
-                url_list = write_urls!(tempname(), String[g.url for g in chunk])
-
-                cmd = `$(Aria2_jll.aria2c()) --max-tries=10 --retry-wait=1 --auto-file-renaming=false --console-log-level=warn --summary-interval=60 -c -k 1M -j $concurrent_downloads -x $downloadstreams -s $segments -d $savedir -i $url_list`
-
-                printstyled("    -> chunk $ci of $(length(chunks)) [$(length(chunk)) files]\n"; color=:light_black)
-                run(cmd)
-            end
+            download_sweeps(granules, savedir; chunk_size, concurrent_downloads,
+                downloadstreams, segments)
         else
             if threads
                 asyncmap(g -> download_with_retry!(g, savedir), granules; ntasks=10)
@@ -333,9 +395,128 @@ function geotile_download_granules!(
 
     # save granules with local paths
     atomic_write(outgranulefile) do tmp
-        Arrow.write(tmp, geotile_granules::DataFrame)
+        Arrow.write(tmp, granules2nt(geotile_granules)::DataFrame)
     end
     return outgranulefile
+end
+
+"""
+    granules2nt(geotile_granules) -> DataFrame
+
+Copy of `geotile_granules` with its `granules` column reduced to plain NamedTuples.
+
+Arrow cannot serialize a granule object: `SpaceAltimetry.Granule` declares `info::NamedTuple`, an
+abstract field type, so Arrow writes the field's values in their Arrow representation (`Symbol` as
+`String`, `DateTime` as `Arrow.Timestamp`) and then cannot rebuild the concrete NamedTuple from them:
+
+    MethodError: Cannot `convert` an object of type String to an object of type Symbol
+
+Reducing each granule to `(; id, url, info, polygons)` gives the `info` field a concrete type and
+writes the same layout the archive already holds -- older `granules.local` files were written when
+Arrow silently degraded the struct to a NamedTuple, which is why [`granules_load`](@ref) rebuilds the
+granule type on read and notes that "type is stripped on df save". Idempotent, so it is safe to apply
+to a table that has already been through it.
+"""
+function granules2nt(geotile_granules::DataFrame)
+    out = copy(geotile_granules)
+    out[!, :granules] = [[(; id=g.id, url=g.url, info=g.info, polygons=g.polygons) for g in grans]
+                         for grans in out[!, :granules]]
+    return out
+end
+
+"""
+    download_sweeps(granules, savedir; chunk_size=5000, concurrent_downloads=16, downloadstreams=8, segments=8, max_sweeps=3)
+
+Fetch `granules` into `savedir` with aria2c, sweeping until nothing new lands.
+
+Transfers are issued in chunks rather than as one giant URL list: aria2 holds its entire list in
+memory, and a full ATL06 build is >180k URLs. Chunking bounds that, reports progress, and lets an
+interrupted run resume at a chunk boundary, while still replacing ~1400 process spawns with ~38.
+
+# Why sweeps rather than retries
+
+aria2c exits nonzero when *any* transfer in a chunk fails, which says nothing about the other 4,999.
+Treating that as "the download failed" and starting over is how the first v7 attempt died: each pass
+completed chunk 1, aria2 exited nonzero on one bad granule, the caller's retry restarted the whole
+stage, and after five attempts it aborted having never reached chunk 2 of 38 -- 34,301 files of
+186,244. So a chunk failure is logged and the next chunk runs regardless; afterwards, whatever is
+still missing on disk is swept again. Only a sweep that lands *nothing* is a real failure (expired
+credentials, network down, every URL wrong) and raises [`NonRetryable`](@ref); granules that stay
+missing after `max_sweeps` are reported and left, since a handful of withdrawn or corrupt granules
+should not block an archive.
+
+Note that `--max-tries=10` already makes aria2 retry each individual file, so the sweeps here are the
+second line of defence, not the first. `fetcher` is the function actually invoked per chunk, as
+`fetcher(chunk, savedir)`; it exists so the sweep policy can be exercised without network access.
+"""
+function download_sweeps(granules, savedir; chunk_size=5000, concurrent_downloads=16,
+    downloadstreams=8, segments=8, max_sweeps=3, fetcher=nothing)
+
+    fetch! = isnothing(fetcher) ?
+             (chunk, dir) -> aria2c_fetch(chunk, dir; concurrent_downloads, downloadstreams, segments) :
+             fetcher
+    remaining = collect(granules)
+    total_landed = 0
+
+    for sweep in 1:max_sweeps
+        chunks = collect(Iterators.partition(remaining, chunk_size))
+        failed = 0
+        for (ci, chunk) in enumerate(chunks)
+            printstyled("    -> sweep $sweep, chunk $ci of $(length(chunks)) [$(length(chunk)) files]\n"; color=:light_black)
+            try
+                fetch!(chunk, savedir)
+            catch e
+                e isa InterruptException && rethrow(e)
+                failed += 1
+                printstyled("    -> sweep $sweep, chunk $ci reported a failed transfer; continuing\n"; color=:yellow)
+            end
+        end
+
+        on_disk = completed_on_disk(savedir)
+        still = filter(g -> !(g.id in on_disk), remaining)
+        landed = length(remaining) - length(still)
+        printstyled("    -> sweep $sweep: $landed of $(length(remaining)) landed" *
+                    (isempty(still) ? "\n" : ", $(length(still)) still missing\n");
+            color=isempty(still) ? :light_green : :light_black)
+
+        total_landed += landed
+        isempty(still) && return still
+
+        if landed == 0
+            # Nothing has ever landed: this is not a few bad granules, it is the whole transfer being
+            # broken -- bad credentials, wrong host, no connectivity.
+            if total_landed == 0
+                throw(NonRetryable("download made no progress: $(length(still)) files still missing after " *
+                                   "sweep $sweep with $failed of $(length(chunks)) chunks reporting failures. " *
+                                   "Check credentials in ~/.netrc and connectivity to the data host."))
+            end
+            # Otherwise these specific granules are unavailable (withdrawn, corrupt server-side).
+            # Sweeping again would just repeat the same failures.
+            printstyled("    -> no progress in sweep $sweep; $(length(still)) files appear unavailable, leaving them\n"; color=:yellow)
+            return still
+        end
+        remaining = still
+    end
+
+    printstyled("    -> $(length(remaining)) files still missing after $max_sweeps sweeps; leaving them\n"; color=:yellow)
+    return remaining
+end
+
+"""
+    aria2c_fetch(chunk, savedir; concurrent_downloads=16, downloadstreams=8, segments=8)
+
+Download one chunk of granules into `savedir` with aria2c. Throws if aria2 exits nonzero, which it
+does when any single transfer in the chunk failed -- [`download_sweeps`](@ref) decides what that means.
+"""
+function aria2c_fetch(chunk, savedir; concurrent_downloads=16, downloadstreams=8, segments=8)
+    url_list = write_urls!(tempname(), String[g.url for g in chunk])
+
+    # The previous command line passed `-j 1` (one file at a time) and included a stray `-i` that
+    # consumed the following `--max-connection-per-server` as its input-file argument, leaving `15` to
+    # be parsed as a URI, so every batch carried a bogus entry.
+    cmd = aria2c_cmd(`--max-tries=10 --retry-wait=1 --auto-file-renaming=false --console-log-level=warn --summary-interval=60 -c -k 1M -j $concurrent_downloads -x $downloadstreams -s $segments -d $savedir -i $url_list`)
+    run(cmd)
+    return nothing
 end
 
 """
@@ -2088,11 +2269,21 @@ and adding only new rows from df_right.
 
 # Returns
 - DataFrame with merged data where all df_left rows are preserved
+
+# Differing columns
+
+The two frames need not share a schema. A granule list written by an older version of this code
+carries only `id`, `extent` and `granules`, while one built from `geotiles_w_mask` today also carries
+the geometry and per-RGI-region columns; a plain `vcat` of the two throws, which is how a 45-minute
+GEDI search over 899 geotiles was lost after it had already succeeded. Columns absent from one side
+are filled with `missing` rather than reconciled, because the rows being carried over are wanted only
+for their granule lists -- `granules_load` reads `id`, `extent` and `granules` and nothing else -- and
+inventing values for the rest would be worse than admitting they are unknown.
 """
 function leftmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
     _, iright = intersectindices(df_left[:, id_unique], df_right[:, id_unique], bool=true)
     if any(.!iright)
-        df_left = vcat(df_left, df_right[.!iright, :]) # add new rows
+        df_left = vcat(df_left, df_right[.!iright, :]; cols=:union) # add new rows
     end
     return df_left
 end
@@ -2207,8 +2398,14 @@ function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow,
 
                 if any(.!ind1X)
                     er = emptyrow(df)
+                    # Address the id column by name. This used to assign `er[end]`, which is the id only
+                    # while it happens to be the last column -- and a placeholder that keeps
+                    # `emptyrow`'s "0" instead of its granule id is invisible to the check above, so that
+                    # granule is requested again on every future pass, forever.
+                    id_column = columnindex(df, :id)
+                    id_column == 0 && error("point table has no :id column; cannot record placeholders")
                     for idX = id1X[.!ind1X]
-                        er[end] = idX
+                        er[id_column] = idX
                         df = push!(df, er)
                     end
                 end
@@ -2236,6 +2433,38 @@ function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow,
     end
 end
 
+"""
+    getpoints(granule; extent=nothing, replace_corrupt_h5=false)
+
+Read the point table for `granule`, optionally subset to `extent`.
+
+Thin wrapper over `SpaceLiDAR.points` that adds recovery from corrupt local HDF5 files: a download
+killed mid-stream leaves a file that opens but fails to read. With `replace_corrupt_h5=true` the
+local copy is deleted, the granule is looked up again by id and re-downloaded, and the read is
+retried once. `InterruptException` is rethrown untouched so Ctrl-C still stops a build.
+"""
+function getpoints(granule; extent=nothing, replace_corrupt_h5=false)
+    try
+        return SpaceLiDAR.points(granule; bbox=extent)
+    catch e
+        if e isa InterruptException
+            println("function terminated by user")
+            rethrow(e)
+        end
+
+        printstyled("issue reading: $(granule.url)\n"; color=:red)
+        replace_corrupt_h5 || rethrow(e)
+
+        printstyled("               deleting old file and re-downloading from source\n"; color=:red)
+        if isfile(granule.url)
+            rm(granule.url)
+        end
+        (savedir, _) = splitdir(granule.url)
+        granule = search(SpaceLiDAR.mission(granule), granule.info.type; version=granule.info.version, id=granule.id)[1]
+        download!(granule, savedir)
+        return SpaceLiDAR.points(granule; bbox=extent)
+    end
+end
 
 """
     emptyrow(df)
