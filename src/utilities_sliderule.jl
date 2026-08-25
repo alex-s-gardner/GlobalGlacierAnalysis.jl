@@ -618,6 +618,52 @@ function _sliderule_failed_resource(message::AbstractString)
     return isnothing(m) ? nothing : String(m.captures[1])
 end
 
+"""
+    sliderule_unreadable_resources(records) -> Set{String}
+
+Granules for which *no* beam could be read, as distinct from granules where some beams failed.
+
+This distinction decides whether a granule can ever be recorded, and getting it wrong makes a build
+that cannot converge. A granule outside the requested box reports every readable beam with zero rows;
+if two of its beams are additionally unreadable, the result is "some beams failed and no rows came
+back" -- which is indistinguishable, on row count alone, from a granule that could not be read at all.
+Treating the first case as a failure means it is never recorded, so every later pass requests it again
+and gets the same answer, forever.
+
+SlideRule reports both halves in the message stream: `Failure on resource <res> beam <beam>` for a beam
+that threw, and `... on <res> generated dataframe [<beam>] with N rows` for one that finished. A
+granule with at least one finished-and-not-failed beam has given a real answer, even if that answer is
+zero rows, and belongs in the archive. Only a granule where every beam failed is genuinely unreadable.
+"""
+function sliderule_unreadable_resources(records::Vector{Tuple{String,Vector{UInt8}}})
+    failed = Dict{String,Set{String}}()
+    reported = Dict{String,Set{String}}()
+
+    for (rectype, payload) in records
+        rectype == "exceptrec" || continue
+        message = sliderule_alert(payload)
+
+        m = match(r"Failure on resource (\S+) beam (\S+?):", message)
+        if !isnothing(m)
+            push!(get!(failed, String(m.captures[1]), Set{String}()), String(m.captures[2]))
+            continue
+        end
+        m = match(r" on (\S+) generated dataframe \[(\S+?)\] with", message)
+        isnothing(m) ||
+            push!(get!(reported, String(m.captures[1]), Set{String}()), String(m.captures[2]))
+    end
+
+    unreadable = Set{String}()
+    for (resource, bad) in failed
+        # Every beam that reported also failed -- and none reported at all is the same verdict.
+        isempty(setdiff(get(reported, resource, Set{String}()), bad)) && push!(unreadable, resource)
+    end
+    return unreadable
+end
+
+sliderule_unreadable_resources(bytes::Vector{UInt8}) =
+    sliderule_unreadable_resources(sliderule_records(bytes))
+
 # filename field is a fixed-width, NUL-padded string
 function _sliderule_filename(payload::Vector{UInt8})
     field = payload[begin:(begin+SLIDERULE_FILENAME_LEN-1)]
@@ -756,10 +802,16 @@ function _sliderule_batches(endpoint, filename, make_parms, to_archive, granules
             if !isempty(broken)
                 returned = isnothing(frame) || isempty(frame) ? Set{String}() : Set(unique(frame.id))
                 if last_attempt
-                    # Out of attempts: keep what arrived for a granule whose beams are evidently not
-                    # coming, and record it. Only a granule that produced nothing is a failure.
-                    union!(partial, intersect(broken, returned))
-                    union!(failed, setdiff(broken, returned))
+                    # Out of attempts. A granule is only a failure if *no* beam could be read; one
+                    # whose readable beams all reported zero rows has answered the question -- it has
+                    # no data in this box -- and must be recorded, or it is re-requested on every pass
+                    # forever. See `sliderule_unreadable_resources`.
+                    unreadable = sliderule_unreadable_resources(records)
+                    union!(failed, intersect(broken, unreadable))
+                    # Recorded, but short some beams: real data, incomplete. Everything else in
+                    # `broken` gave a complete answer of zero rows and falls through to the caller's
+                    # placeholder bookkeeping.
+                    union!(partial, setdiff(intersect(broken, returned), unreadable))
                 elseif !isnothing(frame)
                     frame = frame[.!in.(frame.id, Ref(broken)), :]
                 end
@@ -1321,6 +1373,46 @@ function _gedi_key(filename::AbstractString)
     return (orbit, granule_number, track)
 end
 
+# Serializes appends to the anomaly log from the concurrent per-geotile tasks.
+const SLIDERULE_ANOMALY_LOCK = ReentrantLock()
+
+# Name of the anomaly log, written beside the geotiles. Deliberately not one of the per-geotile
+# extensions `geotile_ancillary_check` sweeps, so it cannot be mistaken for an ancillary file.
+const SLIDERULE_ANOMALY_FILE = "sliderule_anomalies.tsv"
+
+"""
+    record_sliderule_anomalies(geotile_dir, geotile, failed, partial)
+
+Append the granule ids that failed outright or were recorded without all their beams.
+
+Counts alone are not enough. A granule recorded with beams missing is indistinguishable in the archive
+from a complete one -- same id, fewer points -- so the incremental rule will never ask for it again and
+nothing downstream can tell it apart. Without the ids there is no way to audit or repair it later.
+
+The partial rate is a function of *client concurrency* rather than of the granules: measured on the
+live service at one attempt per request, it is 0% at 1-2 concurrent streams and 15% at 12. Most
+"missing" beams are therefore throttling artifacts, and running too wide silently thins the archive,
+so the log is also the record of what a given concurrency setting cost.
+"""
+function record_sliderule_anomalies(geotile_dir, geotile, failed, partial)
+    (isempty(failed) && isempty(partial)) && return nothing
+    path = joinpath(geotile_dir, SLIDERULE_ANOMALY_FILE)
+    stamp = Dates.format(now(), "yyyy-mm-ddTHH:MM:SS")
+    lock(SLIDERULE_ANOMALY_LOCK) do
+        new_file = !isfile(path)
+        open(path, "a") do io
+            new_file && println(io, "timestamp\tgeotile\tkind\tgranule")
+            for id in sort(collect(failed))
+                println(io, stamp, '\t', geotile, "\tfailed\t", id)
+            end
+            for id in sort(collect(partial))
+                println(io, stamp, '\t', geotile, "\tpartial\t", id)
+            end
+        end
+    end
+    return nothing
+end
+
 # Per-mission query function. Each returns `(DataFrame in archive schema, failed resources)` for one
 # extent and granule list, which is the only thing the build differs on between missions.
 const SLIDERULE_QUERIES = Dict{Symbol,Function}(
@@ -1415,6 +1507,7 @@ function _build_geotile_sliderule(row, geotile_dir; query=sliderule_atl06, fmt=:
     t1 = time()
     requested = length(wanted)
     df, failed, partial, retried = query(row.extent; granules=wanted, warnings, poster)
+    record_sliderule_anomalies(geotile_dir, row.id, failed, partial)
 
     # Subsetting happens server-side against the same polygon, but keep the client-side clip so both
     # sources apply identical bounds to the archive.

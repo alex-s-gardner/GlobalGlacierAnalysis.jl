@@ -925,6 +925,85 @@ end
         @test names(df2) == names(GGA.sliderule_gedi_empty_table())
     end
 
+    @testset "unreadable versus empty-in-box" begin
+        # The distinction that decides whether a build can converge. A granule outside the requested
+        # box reports every readable beam with zero rows; if two of its beams are also unreadable, the
+        # result looks identical to "could not read this granule" if you only count rows. Calling that
+        # a failure means it is never recorded and every later pass asks again.
+        g = "GEDI02_A_2024125115322_O30546_03_T00000_02_004_02_V002.h5"
+
+        # six beams finished with zero rows, two failed -> the granule answered; not unreadable
+        answered = vcat(
+            [mock_except("Failure on resource $g beam beam$(b): H5Coro::Future read failure on BEAM/lat_lowestmode")
+             for b in (8, 11)]...,
+            [mock_except("request <X> on $g generated dataframe [beam$(b)] with 0 rows and 30 columns")
+             for b in (0, 1, 2, 3, 5, 6, 8, 11)]...)
+        @test isempty(GGA.sliderule_unreadable_resources(GGA.sliderule_records(answered)))
+
+        # every beam that reported also failed -> genuinely unreadable
+        dead = vcat(
+            [mock_except("Failure on resource $g beam beam$(b): H5Coro::Future read failure on BEAM/quality_flag")
+             for b in (0, 1, 2, 3, 5, 6, 8, 11)]...,
+            [mock_except("request <X> on $g generated dataframe [beam$(b)] with 0 rows and 9 columns")
+             for b in (0, 1, 2, 3, 5, 6, 8, 11)]...)
+        @test GGA.sliderule_unreadable_resources(GGA.sliderule_records(dead)) == Set([g])
+
+        # failures with no dataframe lines at all is the same verdict
+        @test GGA.sliderule_unreadable_resources(GGA.sliderule_records(
+            mock_except("Failure on resource $g beam beam0: boom"))) == Set([g])
+
+        # Test: end to end -- a granule whose readable beams are empty gets a placeholder and is not
+        # asked for again, which is the whole point.
+        mktempdir() do dir
+            extent = Extent(X=(-74.0, -72.0), Y=(6.0, 8.0))
+            geotiles = DataFrame(id=["lat[+06+08]lon[-074-072]"], extent=[extent],
+                granules=[[(id=g, url=g)]])
+            asked = Vector{String}[]
+            function poster(url, headers, body)
+                push!(asked, String.(JSON.parse(body)["parms"]["resources"]))
+                return (; status=200, body=answered)
+            end
+
+            GGA.geotile_build_sliderule(geotiles, dir; mission=:gedi, poster, ntasks=1)
+            built = DataFrame(Arrow.Table(joinpath(dir, "lat[+06+08]lon[-074-072].arrow")))
+            @test built.id == [g]          # recorded, as a placeholder
+            @test all(isnan, built.height)
+
+            empty!(asked)
+            GGA.geotile_build_sliderule(geotiles, dir; mission=:gedi, poster, ntasks=1)
+            @test isempty(asked)           # and never requested again
+        end
+    end
+
+    @testset "anomalies are recorded by granule id" begin
+        # Counts are not enough: a granule recorded without all its beams is indistinguishable in the
+        # archive from a complete one, so nothing downstream can find it and the incremental rule will
+        # never re-request it. The ids are the only way to audit or repair afterwards.
+        mktempdir() do dir
+            GGA.record_sliderule_anomalies(dir, "lat[+28+30]lon[+086+088]",
+                Set(["bad2.h5", "bad1.h5"]), Set(["thin.h5"]))
+            GGA.record_sliderule_anomalies(dir, "lat[+30+32]lon[+086+088]", Set{String}(), Set(["x.h5"]))
+
+            path = joinpath(dir, GGA.SLIDERULE_ANOMALY_FILE)
+            lines = readlines(path)
+            @test lines[1] == "timestamp\tgeotile\tkind\tgranule"
+            body = lines[2:end]
+            @test length(body) == 4
+            @test count(l -> occursin("\tfailed\t", l), body) == 2
+            @test count(l -> occursin("\tpartial\t", l), body) == 2
+            # ids present and attributed to the right geotile
+            @test any(l -> occursin("lat[+28+30]lon[+086+088]\tpartial\tthin.h5", l), body)
+            @test any(l -> occursin("lat[+30+32]lon[+086+088]\tpartial\tx.h5", l), body)
+            # failed ids sorted, so a diff between passes is readable
+            @test findfirst(l -> occursin("bad1.h5", l), body) < findfirst(l -> occursin("bad2.h5", l), body)
+
+            # Test: nothing to report writes nothing at all
+            other = mktempdir()
+            GGA.record_sliderule_anomalies(other, "g", Set{String}(), Set{String}())
+            @test !isfile(joinpath(other, GGA.SLIDERULE_ANOMALY_FILE))
+        end
+    end
+
     @testset "a permanently unreadable beam is not a failed granule" begin
         # Some granules have beams that never read, however many attempts are made -- release-004
         # granules whose BEAM1000 and BEAM1011 always fail are the case that surfaced this, at ~1.8% of
@@ -945,7 +1024,13 @@ end
                 mock_meta("gga_gedi.feather", length(file)),
                 mock_data("gga_gedi.feather", file),
                 mock_except("Failure on resource $(granule) beam beam8: H5Coro::Future read failure on BEAM1000/lat_lowestmode"),
-                mock_except("Failure on resource $(granule) beam beam11: H5Coro::Future read failure on BEAM1011/lat_lowestmode")))
+                mock_except("Failure on resource $(granule) beam beam11: H5Coro::Future read failure on BEAM1011/lat_lowestmode"),
+                # the six beams that did read report too -- a real response always carries these, and
+                # they are what distinguishes "some beams failed" from "nothing could be read"
+                [mock_except("request <X> on $(granule) generated dataframe [beam$(b)] with 1200 rows and 30 columns")
+                 for b in (0, 1, 2, 3, 5, 6)]...,
+                [mock_except("request <X> on $(granule) generated dataframe [beam$(b)] with 0 rows and 9 columns")
+                 for b in (8, 11)]...))
         end
 
         df, failed, partial, retried = GGA.sliderule_gedi(extent; granules=[granule], poster)
