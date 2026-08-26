@@ -370,7 +370,7 @@ end
             return (; status=200, body=stream)
         end
 
-        df, failed, partial, retried = GGA.sliderule_atl06(extent; granules, poster)
+        df, failed, partial, unreadable, retried = GGA.sliderule_atl06(extent; granules, poster)
         @test nrow(df) == 1
         @test df.id == granules
         @test isempty(failed)
@@ -827,7 +827,7 @@ end
                 mock_data("gga_gedi.feather", file)))
         end
 
-        df, failed, partial, retried = GGA.sliderule_gedi(extent; granules, poster)
+        df, failed, partial, unreadable, retried = GGA.sliderule_gedi(extent; granules, poster)
         @test nrow(df) == 1
         @test df.id == granules
         @test isempty(failed)
@@ -908,7 +908,7 @@ end
             return (; status=200, body)
         end
 
-        df, failed, partial, retried = GGA.sliderule_gedi(extent; granules=[granule], poster)
+        df, failed, partial, unreadable, retried = GGA.sliderule_gedi(extent; granules=[granule], poster)
         @test attempt[] == 2
         @test isempty(failed)
         @test nrow(df) == 1          # not 2 -- the failed attempt's rows were discarded
@@ -938,7 +938,7 @@ end
              for b in (8, 11)]...,
             [mock_except("request <X> on $g generated dataframe [beam$(b)] with 0 rows and 30 columns")
              for b in (0, 1, 2, 3, 5, 6, 8, 11)]...)
-        @test isempty(GGA.sliderule_unreadable_resources(GGA.sliderule_records(answered)))
+        @test GGA.sliderule_beam_verdicts(GGA.sliderule_records(answered))[g] === :reported
 
         # every beam that reported also failed -> genuinely unreadable
         dead = vcat(
@@ -946,11 +946,17 @@ end
              for b in (0, 1, 2, 3, 5, 6, 8, 11)]...,
             [mock_except("request <X> on $g generated dataframe [beam$(b)] with 0 rows and 9 columns")
              for b in (0, 1, 2, 3, 5, 6, 8, 11)]...)
-        @test GGA.sliderule_unreadable_resources(GGA.sliderule_records(dead)) == Set([g])
+        @test GGA.sliderule_beam_verdicts(GGA.sliderule_records(dead))[g] === :unreadable
 
-        # failures with no dataframe lines at all is the same verdict
-        @test GGA.sliderule_unreadable_resources(GGA.sliderule_records(
-            mock_except("Failure on resource $g beam beam0: boom"))) == Set([g])
+        # Test: failures with no dataframe lines at all establish nothing about the granule. This is
+        # what a service-level error looks like, and calling it unreadable would blank readable granules
+        # out of the archive on the strength of an outage.
+        @test GGA.sliderule_beam_verdicts(GGA.sliderule_records(
+            mock_except("Failure on resource $g beam beam0: boom")))[g] === :inconclusive
+
+        # Test: a granule with no failures at all does not appear
+        @test !haskey(GGA.sliderule_beam_verdicts(GGA.sliderule_records(
+            mock_except("request <X> on $g generated dataframe [beam0] with 12 rows and 30 columns"))), g)
 
         # Test: end to end -- a granule whose readable beams are empty gets a placeholder and is not
         # asked for again, which is the whole point.
@@ -968,10 +974,75 @@ end
             built = DataFrame(Arrow.Table(joinpath(dir, "lat[+06+08]lon[-074-072].arrow")))
             @test built.id == [g]          # recorded, as a placeholder
             @test all(isnan, built.height)
+            # empty in this box, not unreadable -- the two placeholder kinds stay distinguishable
+            @test built.track == [GGA.PLACEHOLDER_TRACK_EMPTY]
 
             empty!(asked)
             GGA.geotile_build_sliderule(geotiles, dir; mission=:gedi, poster, ntasks=1)
             @test isempty(asked)           # and never requested again
+        end
+    end
+
+    @testset "an unreadable granule is recorded and stops being requested" begin
+        # The convergence property. A granule nothing can be read from fails identically on every pass,
+        # so leaving it unrecorded means requesting it forever and the build never reports itself done.
+        # Recording it as a placeholder marked unreadable retires it while keeping it findable.
+        g = "GEDI02_A_2022132212910_O19339_03_T01650_02_003_02_V002.h5"
+        dead = vcat(
+            [mock_except("Failure on resource $g beam beam$(b): H5Coro::Future read failure on BEAM/quality_flag")
+             for b in (0, 1, 2, 3, 5, 6, 8, 11)]...,
+            [mock_except("request <X> on $g generated dataframe [beam$(b)] with 0 rows and 9 columns")
+             for b in (0, 1, 2, 3, 5, 6, 8, 11)]...)
+
+        mktempdir() do dir
+            extent = Extent(X=(86.0, 88.0), Y=(28.0, 30.0))
+            gt = "lat[+28+30]lon[+086+088]"
+            geotiles = DataFrame(id=[gt], extent=[extent], granules=[[(id=g, url=g)]])
+            asked = Vector{String}[]
+            function poster(url, headers, body)
+                push!(asked, String.(JSON.parse(body)["parms"]["resources"]))
+                return (; status=200, body=dead)
+            end
+
+            GGA.geotile_build_sliderule(geotiles, dir; mission=:gedi, poster, ntasks=1)
+            built = DataFrame(Arrow.Table(joinpath(dir, gt * ".arrow")))
+            @test built.id == [g]
+            @test built.track == [GGA.PLACEHOLDER_TRACK_UNREADABLE]
+            @test all(isnan, built.height)
+
+            empty!(asked)
+            GGA.geotile_build_sliderule(geotiles, dir; mission=:gedi, poster, ntasks=1)
+            @test isempty(asked)
+
+            # Test: logged under its own kind, so the frozen granules can be listed
+            log = readlines(joinpath(dir, GGA.SLIDERULE_ANOMALY_FILE))
+            @test any(l -> occursin("\tunreadable\t" * g, l), log)
+        end
+    end
+
+    @testset "an inconclusive failure is left for the next pass" begin
+        # Beam failures with no per-beam accounting are what a service outage looks like. Recording such
+        # a granule would freeze real data out of the archive, so it must stay unrecorded and be asked
+        # for again -- the opposite of the unreadable case above.
+        g = "GEDI02_A_2024125115322_O30546_03_T00000_02_004_02_V002.h5"
+        blind = mock_except("Failure on resource $g beam beam0: H5Coro::Future read failure")
+
+        mktempdir() do dir
+            extent = Extent(X=(86.0, 88.0), Y=(28.0, 30.0))
+            gt = "lat[+28+30]lon[+086+088]"
+            geotiles = DataFrame(id=[gt], extent=[extent], granules=[[(id=g, url=g)]])
+            asked = Vector{String}[]
+            function poster(url, headers, body)
+                push!(asked, String.(JSON.parse(body)["parms"]["resources"]))
+                return (; status=200, body=blind)
+            end
+
+            GGA.geotile_build_sliderule(geotiles, dir; mission=:gedi, poster, ntasks=1)
+            @test !isfile(joinpath(dir, gt * ".arrow"))   # nothing recorded at all
+
+            empty!(asked)
+            GGA.geotile_build_sliderule(geotiles, dir; mission=:gedi, poster, ntasks=1)
+            @test g in reduce(vcat, asked)                # and asked for again
         end
     end
 
@@ -980,26 +1051,30 @@ end
         # archive from a complete one, so nothing downstream can find it and the incremental rule will
         # never re-request it. The ids are the only way to audit or repair afterwards.
         mktempdir() do dir
-            GGA.record_sliderule_anomalies(dir, "lat[+28+30]lon[+086+088]",
-                Set(["bad2.h5", "bad1.h5"]), Set(["thin.h5"]))
-            GGA.record_sliderule_anomalies(dir, "lat[+30+32]lon[+086+088]", Set{String}(), Set(["x.h5"]))
+            GGA.record_sliderule_anomalies(dir, "lat[+28+30]lon[+086+088]";
+                failed=Set(["bad2.h5", "bad1.h5"]), partial=Set(["thin.h5"]),
+                unreadable=Set(["dead.h5"]))
+            GGA.record_sliderule_anomalies(dir, "lat[+30+32]lon[+086+088]"; partial=Set(["x.h5"]))
 
             path = joinpath(dir, GGA.SLIDERULE_ANOMALY_FILE)
             lines = readlines(path)
             @test lines[1] == "timestamp\tgeotile\tkind\tgranule"
             body = lines[2:end]
-            @test length(body) == 4
+            @test length(body) == 5
             @test count(l -> occursin("\tfailed\t", l), body) == 2
             @test count(l -> occursin("\tpartial\t", l), body) == 2
+            # the three kinds are distinguishable, which is what makes the log auditable
+            @test count(l -> occursin("\tunreadable\t", l), body) == 1
             # ids present and attributed to the right geotile
             @test any(l -> occursin("lat[+28+30]lon[+086+088]\tpartial\tthin.h5", l), body)
+            @test any(l -> occursin("lat[+28+30]lon[+086+088]\tunreadable\tdead.h5", l), body)
             @test any(l -> occursin("lat[+30+32]lon[+086+088]\tpartial\tx.h5", l), body)
             # failed ids sorted, so a diff between passes is readable
             @test findfirst(l -> occursin("bad1.h5", l), body) < findfirst(l -> occursin("bad2.h5", l), body)
 
             # Test: nothing to report writes nothing at all
             other = mktempdir()
-            GGA.record_sliderule_anomalies(other, "g", Set{String}(), Set{String}())
+            GGA.record_sliderule_anomalies(other, "g")
             @test !isfile(joinpath(other, GGA.SLIDERULE_ANOMALY_FILE))
         end
     end
@@ -1033,7 +1108,7 @@ end
                  for b in (8, 11)]...))
         end
 
-        df, failed, partial, retried = GGA.sliderule_gedi(extent; granules=[granule], poster)
+        df, failed, partial, unreadable, retried = GGA.sliderule_gedi(extent; granules=[granule], poster)
 
         # Test: retried to exhaustion, then accepted rather than discarded
         @test attempts[] == GGA.SLIDERULE_BEAM_ATTEMPTS
