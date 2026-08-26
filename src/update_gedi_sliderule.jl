@@ -40,6 +40,11 @@
 # (`SLIDERULE_BEAM_ATTEMPTS`) and, if still broken, left for the next run rather than recorded as
 # complete. Re-run until it reports nothing outstanding.
 #
+# A granule every one of whose reporting beams fails is the exception: nothing in it can be read, so it
+# is recorded as an unreadable placeholder and stops being requested, and a run is not waiting on it. To
+# put such granules back in front of the incremental rule -- if SlideRule's L2A reader gains the ability
+# to read them -- delete the archive rows whose `track` is `PLACEHOLDER_TRACK_UNREADABLE` and re-run.
+#
 # Version: this updates GEDI02_A v002, which the archive is built on. v003 exists but SlideRule cannot
 # read it -- its L2A reader requires the per-shot `quality_flag` dataset that v003 removed, so every
 # beam fails. v003 is a reprocessing rather than new coverage (both end 2025-07), so a v002 update
