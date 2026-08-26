@@ -101,7 +101,7 @@ println("  geotiles built: ", built, " (was ", n_built_before, ")")
 if isempty(failed)
     printstyled("  all $nparts partitions exited cleanly\n"; color=:green)
 else
-    printstyled("  partitions that failed: $(join(failed, \", \"))\n"; color=:red, bold=true)
+    printstyled("  partitions that failed: " * join(failed, ", ") * "\n"; color=:red, bold=true)
     println("  inspect: ", logdir)
     println("  rerunning is safe -- finished geotiles are skipped, so only the gaps are rebuilt.")
 end
