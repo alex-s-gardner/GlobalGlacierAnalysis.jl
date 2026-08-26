@@ -16,6 +16,7 @@ import GlobalGlacierAnalysis as GGA
         include("unit/test_terrain.jl")
         include("unit/test_models.jl")
         include("unit/test_build_archive.jl")
+        include("unit/test_sliderule.jl")
     end
 
     # Algorithm tests - Complex operations with synthetic data

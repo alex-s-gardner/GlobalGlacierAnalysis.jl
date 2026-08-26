@@ -11,11 +11,16 @@ module GlobalGlacierAnalysis
    # import geographic packages
    using Proj
    using GeoArrays
-   # SpaceLiDAR was renamed SpaceAltimetry. Adding it is blocked upstream: SpaceAltimetry 0.5.0
-   # declares its Makie extension as `SpaceAltimetryMakieExt` in Project.toml while the file is
-   # still `ext/SpaceLiDARMakieExt.jl`, so precompiling any package that loads both it and Makie
-   # (this one loads CairoMakie) fails. See the Phase 1c notes in the plan.
-   #using SpaceAltimetry
+   # SpaceLiDAR was renamed SpaceAltimetry. Registered 0.5.0 cannot be loaded alongside Makie:
+   # its Project.toml declares the extension as `SpaceAltimetryMakieExt` while the file kept its
+   # pre-rename name `ext/SpaceLiDARMakieExt.jl`, so loading it with CairoMakie present fails with
+   # "Missing source file for SpaceAltimetryMakieExt". The Manifest therefore points at a local
+   # checkout on branch `fix-makie-ext-filename`, which renames that one file and changes nothing
+   # else; drop the `develop` once the fix lands upstream (evetion/SpaceAltimetry.jl).
+   #
+   # `SpaceAltimetry` still exports `SpaceLiDAR` as an alias of itself, so `SpaceLiDAR.`-qualified
+   # calls in this package keep working.
+   using SpaceAltimetry
    using Geodesy
    using FastGeoProjections
    using Rasters
@@ -27,6 +32,7 @@ module GlobalGlacierAnalysis
    using FileIO
    using Arrow
    using HTTP
+   using JSON
    using MAT
    using CSV
    using NCDatasets
@@ -95,6 +101,7 @@ module GlobalGlacierAnalysis
    # add utilities
    include("utilities_project.jl")
    include("utilities_build_archive.jl")
+   include("utilities_sliderule.jl")
    include("utilities_hugonnet.jl")
    include("utilities_gemb.jl")
    include("utilities_main.jl")
@@ -109,7 +116,15 @@ module GlobalGlacierAnalysis
    include("utilities_manuscript.jl")
    include("mapzonal.jl")
 
-   function Makie._register_argument_conversions!(::Type{P}, attr::Makie.ComputeGraph, user_kw) where {P}
+   # Makie defines `_register_argument_conversions!` itself (Makie/src/compute-plots.jl), so this
+   # override is a method overwrite. Done in the module body it makes the package unprecompilable
+   # ("Method overwriting is not permitted during Module precompilation"), which forces a
+   # from-source load in every process -- painful when the geotile build runs as N parallel
+   # shells. Defining it in `__init__` instead keeps the override (the `force_dimconverts &&
+   # status == true` gate below is what upstream lacks) and lets the package precompile. The cost
+   # is a method-overwrite warning at load and some invalidation of Makie's cached code.
+   function __init__()
+   @eval function Makie._register_argument_conversions!(::Type{P}, attr::Makie.ComputeGraph, user_kw) where {P}
       dim_converts = to_value(get!(() -> Makie.DimConversions(), user_kw, :dim_conversions))
       args = attr.args[]
       Makie.add_convert_kwargs!(attr, user_kw, P, args)
@@ -163,4 +178,5 @@ module GlobalGlacierAnalysis
 
       return
    end
+   end # __init__
 end
