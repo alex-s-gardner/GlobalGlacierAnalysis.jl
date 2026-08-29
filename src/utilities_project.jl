@@ -70,12 +70,8 @@ function project_paths(; project_id = :v01)
 
         p = project_products(project_id = project_id)
 
-        paths = (
-            icesat2 = setpaths(geotile_width, :icesat2, "$(p.icesat2.name)", lpad("$(p.icesat2.version)", 3, '0')),
-            icesat = setpaths(geotile_width, :icesat, "$(p.icesat.name)", lpad("$(p.icesat.version)", 3, '0')),
-            gedi = setpaths(geotile_width, :gedi, "$(p.gedi.name)", lpad("$(p.gedi.version)", 3, '0')),
-            hugonnet = setpaths(geotile_width, :hugonnet, "$(p.hugonnet.name)", lpad("$(p.hugonnet.version)", 3, '0'))
-        );
+        # One entry per registered product, so a new mission needs adding only to project_products.
+        paths = map(v -> setpaths(geotile_width, v.mission, "$(v.name)", lpad("$(v.version)", 3, '0')), p)
     end
     return paths
 end
@@ -508,35 +504,26 @@ function model_fit_cost_function(res, pscale, mscale; seasonality_weight, distan
         rmse_cost = sqrt(mean(res .^ 2))
     end
 
-    if is_scaling_factor["pscale"]
+    # Distance of a scaling factor from its no-op value of 1, measured symmetrically so that
+    # halving and doubling are penalized equally.
+    dp = _distance_from_origin(pscale, is_scaling_factor["pscale"])
+    dT = _distance_from_origin(mscale, is_scaling_factor["mscale"])
 
-        if pscale < 1
-            dp = 1/pscale - 1
-        else
-            dp = pscale - 1
-        end
-    else
-        dp = pscale;
-    end
-
-    if is_scaling_factor["mscale"]
-         if mscale < 1
-            dT = 1/mscale - 1
-        else
-            dT = mscale - 1
-        end
-    else
-        dT = mscale;
-    end
+    origin_penalty = 1 + sqrt((dT * mscale_to_pscale_weight)^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty
 
     if calibrate_to == :all
-        rmse = sqrt(mean(res .^ 2)) 
-        cost = (((1 - seasonality_weight) * rmse) + (seasonality_weight * fit.amplitude)) * (1 + (sqrt((dT * (mscale_to_pscale_weight))^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty))
+        rmse = sqrt(mean(res .^ 2))
+        cost = ((1 - seasonality_weight) * rmse) + (seasonality_weight * fit.amplitude)
     elseif calibrate_to == :trend
-        cost = ((1 - seasonality_weight) * abs(fit.trend)) * (1 + (sqrt((dT * (mscale_to_pscale_weight))^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty))
+        cost = (1 - seasonality_weight) * abs(fit.trend)
     else
-        cost = ((1 - seasonality_weight) * rmse_cost) * (1 + (sqrt((dT * (mscale_to_pscale_weight))^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty))
+        cost = (1 - seasonality_weight) * rmse_cost
     end
 
-    return cost
+    return cost * origin_penalty
+end
+
+function _distance_from_origin(scale, is_scaling_factor)
+    is_scaling_factor || return scale
+    return scale < 1 ? 1 / scale - 1 : scale - 1
 end

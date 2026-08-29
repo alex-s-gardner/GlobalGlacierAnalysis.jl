@@ -133,6 +133,7 @@ function geotile_binning(;
     # define date and hight binning ranges 
     date_range, date_center = project_date_bins()
     height_range, height_center = project_height_bins()
+    decyear_range = decimalyear.(date_range)
 
     # curvature ranges 
     Δc = 0.1;
@@ -164,6 +165,8 @@ function geotile_binning(;
                 continue
             end
         end
+
+        binfunction = binningfun_define(param.binning_method)
 
         binned_file = binned_filepath(; param.binned_folder, param.surface_mask, param.dem_id, param.binning_method, project_id, param.curvature_correct)
 
@@ -403,15 +406,13 @@ function geotile_binning(;
                         continue
                     end
 
-                    decyear_range = decimalyear.(date_range)
-
                     altim[!, :decimalyear] = decimalyear.(altim.datetime)
-                    
+
                     var0, nobs0 = geotile_bin2d(
                         altim[var_ind, :];
                         var2bin="dh",
                         dims_edges=("decimalyear" => decyear_range, "height_ref" => height_range),
-                        binfunction=binningfun_define(param.binning_method))
+                        binfunction)
 
                     if isnothing(var0)
                         continue
@@ -708,26 +709,26 @@ function geotile_binned_fill(;
                     end
                 end
 
+                # Every stage below renders the same figure, labeled by what that stage produced;
+                # the label also names the file.
+                plot_stage(dh, colorbar_label) = plot_elevation_time_multimission_geotiles(
+                    dh;
+                    geotiles2plot,
+                    area_km2,
+                    colorrange=(-20, 20),
+                    colorbar_label,
+                    hypsometry=true,
+                    area_averaged=true,
+                    plots_show,
+                    plots_save,
+                    plot_save_path_prefix=joinpath(fig_folder, "$(figure_suffix)_$(replace(colorbar_label, " " => "_"))"),
+                    plot_save_format,
+                    mission_order=plot_order["missions"],
+                )
+
                 # plot raw binned height anomalies
                 if plots_show || plots_save
-                    colorbar_label = "binned height anomalies"
-                    plot_save_path_prefix = joinpath(fig_folder, "$(figure_suffix)_$(replace(colorbar_label, " " => "_"))")
-
-                    println(plot_save_path_prefix)
-                    plot_elevation_time_multimission_geotiles(
-                        dh1;
-                        geotiles2plot,
-                        area_km2,
-                        colorrange=(-20, 20),
-                        colorbar_label,
-                        hypsometry=true,
-                        area_averaged=true,
-                        plots_show,
-                        plots_save,
-                        plot_save_path_prefix,
-                        plot_save_format,
-                        mission_order=plot_order["missions"],
-                    )
+                    plot_stage(dh1, "binned height anomalies")
                 end
 
                 # correct for any erronious trends found over land
@@ -735,23 +736,7 @@ function geotile_binned_fill(;
                     hyps_remove_land_surface_trend!(dh1; missions2update, remove_land_surface_trend)
 
                     if plots_show || plots_save
-                        colorbar_label = "land surface trend corrected height anomalies"
-                        plot_save_path_prefix = joinpath(fig_folder, "$(figure_suffix)_$(replace(colorbar_label, " " => "_"))")
-
-                        plot_elevation_time_multimission_geotiles(
-                            dh1;
-                            geotiles2plot,
-                            area_km2,
-                            colorrange=(-20, 20),
-                            colorbar_label,
-                            hypsometry=true,
-                            area_averaged=true,
-                            plots_show,
-                            plots_save,
-                            plot_save_path_prefix,
-                            plot_save_format,
-                            mission_order=plot_order["missions"],
-                        )
+                        plot_stage(dh1, "land surface trend corrected height anomalies")
                     end
                 end
 
@@ -762,23 +747,7 @@ function geotile_binned_fill(;
                         smooth_h2t_length_scale=param_filling.smooth_h2t_length_scale, show_times=false, )
 
                     if plots_show || plots_save
-                        colorbar_label = "interpolated height anomalies"
-                        plot_save_path_prefix = joinpath(fig_folder, "$(figure_suffix)_$(replace(colorbar_label, " " => "_"))")
-
-                        plot_elevation_time_multimission_geotiles(
-                            dh1;
-                            geotiles2plot,
-                            area_km2,
-                            colorrange=(-20, 20),
-                            colorbar_label,
-                            hypsometry=true,
-                            area_averaged=true,
-                            plots_show,
-                            plots_save,
-                            plot_save_path_prefix,
-                            plot_save_format,
-                            mission_order=plot_order["missions"],
-                        )
+                        plot_stage(dh1, "interpolated height anomalies")
                     end
                 end
 
@@ -790,23 +759,7 @@ function geotile_binned_fill(;
                     end
 
                     if plots_show || plots_save
-                        colorbar_label = "normalized height anomalies"
-                        plot_save_path_prefix = joinpath(fig_folder, "$(figure_suffix)_$(replace(colorbar_label, " " => "_"))")
-                        plot_elevation_time_multimission_geotiles(
-                            dh1;
-                            geotiles2plot,
-                            area_km2,
-                            colorrange=(-20, 20),
-                            colorbar_label,
-                            hypsometry=true,
-                            area_averaged=true,
-                            plots_show,
-                            plots_save,
-                            plot_save_path_prefix,
-                            plot_save_format,
-                            mission_order=plot_order["missions"],
-                        )
-
+                        plot_stage(dh1, "normalized height anomalies")
                     end
                 end
 
@@ -829,22 +782,7 @@ function geotile_binned_fill(;
                     dh1 = hyps_fill_updown!(dh1, area_km2; missions2update)
 
                     if plots_show || plots_save
-                        colorbar_label = "extrapolated height anomalies"
-                        plot_save_path_prefix = joinpath(fig_folder, "$(figure_suffix)_$(replace(colorbar_label, " " => "_"))")
-                        plot_elevation_time_multimission_geotiles(
-                            dh1;
-                            geotiles2plot,
-                            area_km2,
-                            colorrange=(-20, 20),
-                            colorbar_label,
-                            hypsometry=true,
-                            area_averaged=true,
-                            plots_show,
-                            plots_save,
-                            plot_save_path_prefix,
-                            plot_save_format,
-                            mission_order=plot_order["missions"],
-                        )
+                        plot_stage(dh1, "extrapolated height anomalies")
                     end
                 end
                 
@@ -853,23 +791,7 @@ function geotile_binned_fill(;
                     dh1, params_fill = hyps_align_dh!(dh1, nobs1, params_fill, area_km2; missions2align2, missions2update)
 
                     if plots_show || plots_save
-                        colorbar_label = "adjusted height anomalies"
-                        plot_save_path_prefix = joinpath(fig_folder, "$(figure_suffix)_$(replace(colorbar_label, " " => "_"))")
-
-                        plot_elevation_time_multimission_geotiles(
-                            dh1;
-                            geotiles2plot,
-                            area_km2,
-                            colorrange=(-20, 20),
-                            colorbar_label,
-                            hypsometry=true,
-                            area_averaged=true,
-                            plots_show,
-                            plots_save,
-                            plot_save_path_prefix,
-                            plot_save_format,
-                            mission_order=plot_order["missions"],
-                        )
+                        plot_stage(dh1, "adjusted height anomalies")
                     end
                 end
 
@@ -878,23 +800,7 @@ function geotile_binned_fill(;
                     dh1, nobs1 = replace_with_model!(dh1, nobs1, geotiles2replace; missions2replace=intersect(missions2replace_with_model, missions2update), missions2align2)
 
                     if plots_show || plots_save
-                        colorbar_label = "model-filled height anomalies"
-                        plot_save_path_prefix = joinpath(fig_folder, "$(figure_suffix)_$(replace(colorbar_label, " " => "_"))")
-
-                        plot_elevation_time_multimission_geotiles(
-                            dh1;
-                            geotiles2plot,
-                            area_km2,
-                            colorrange=(-20, 20),
-                            colorbar_label,
-                            hypsometry=true,
-                            area_averaged=true,
-                            plots_show,
-                            plots_save,
-                            plot_save_path_prefix,
-                            plot_save_format,
-                            mission_order=plot_order["missions"],
-                        )
+                        plot_stage(dh1, "model-filled height anomalies")
                     end
                 end
 

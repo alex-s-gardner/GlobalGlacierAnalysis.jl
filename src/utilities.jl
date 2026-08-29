@@ -1921,10 +1921,6 @@ function ts_seasonal_model(ts; interval=nothing)
     return (;trend, amplitude, phase_peak_month)
 end
 
-function gt_per_yr_to_m3_per_s(gt_per_yr)
-    return gt_per_yr * 1e9 / 365.25 / 24 / 60 / 60
-end
-
 """
     calculate_slope(data::DimArray)
 
@@ -1994,25 +1990,6 @@ function add_single_rgi_column!(df)
     return df
 end
 
-function linear2scale(linear)
-
-    if (linear >= -1) & (linear < 1)
-        error("Linear values must be less than -1 or equal to or greater than 1")
-    end
-
-    if linear < 0
-        scale = linear -1
-    else
-        scale = linear + 1
-    end
-
-    if scale < -1
-        scale = -1 / scale
-    end
-
-    return scale
-end
-
 """
     scale2linear(scaled)
 
@@ -2042,26 +2019,6 @@ function scale2linear(scaled)
         linear += 1
     else
         linear -= 1
-    end
-
-    return linear
-end
-
-
-function linear2scale!(linear)
-
-    if (linear >= -1) & (linear < 1)
-        error("Linear values must be less than -1 or equal to or greater than 1")
-    end
-
-    if linear < 0
-        linear -= 1
-    else
-        linear += 1
-    end
-
-    if linear < -1
-        linear = -1 / linear
     end
 
     return linear

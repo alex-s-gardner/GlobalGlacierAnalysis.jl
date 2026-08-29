@@ -553,105 +553,6 @@ function runs_ref_and_err(runs_rgi, path2reference; error_quantile=0.95, error_s
 end
 
 
-"""
-    dimarray2netcdf(dict::Dict, filename; units=nothing, global_attributes=nothing)
-
-Write a dictionary of DimensionalArrays to a NetCDF file.
-
-# Arguments
-- `dict`: Dictionary mapping variable names to DimensionalArrays (all must share the same dimensions)
-- `filename`: Path to the output NetCDF file
-- `units`: Optional units string applied to all variables (default: use units from arrays)
-- `global_attributes`: Optional iterable of (name, value) pairs for global file attributes
-
-# Returns
-- The path `filename` after writing
-
-# Examples
-```julia
-julia> dict = Dict("runoff" => da_runoff, "dm" => da_dm)
-julia> dimarray2netcdf(dict, "output.nc"; global_attributes=[("source", "GGA")])
-```
-"""
-function dimarray2netcdf(dict::Dict, filename; units=nothing, global_attributes=nothing)
-
-    if isfile(filename)
-        rm(filename)
-    end
-
-    NCDataset(filename, "c") do ds
-
-        # all Dict items must have the same dimensions
-        da = dict[first(keys(dict))]
-        
-        # get dimensions
-        da_dims = dims(da)
-
-        # step 1: define dimensions
-        for dim in da_dims
-            dname = string(DimensionalData.name(dim))
-            defDim(ds, dname, length(dim))
-        end
-
-        # step 2: add dim variables & metadata
-        for dim in da_dims
-            dname = string(DimensionalData.name(dim))
-
-            dim_val = val(val(dim));
-            if eltype(dim_val) == Bool
-                dim_val = UInt8.(dim_val)
-            end
-  
-            d = defVar(ds, dname, dim_val, (dname,))
-
-            if eltype(dim) <: Number
-                d.attrib["units"] = string(Unitful.unit(dim[1]))
-            end
-
-            # add metadata
-            for (k, v) in DD.metadata(dim)
-                d.attrib[k] = v
-            end
-        end
-
-        for k in keys(dict)
-            da = dict[k]
-            name = string(k)
-
-            # step 3: add variable
-
-            val0 = ustrip.(parent(da))
-            if eltype(val0) == Bool
-                val0 = UInt8.(val0)
-            end
-
-            v = defVar(ds, name, val0, string.(DimensionalData.name.(da_dims)))
-
-            # step 4: add variable metadata
-            if units == nothing
-                if eltype(da) <: Number
-                    v.attrib["units"] = string(Unitful.unit(da[1]))
-                end
-            else
-                v.attrib["units"] = string(units)
-            end
-
-            for (k, v) in DD.metadata(da)
-                d.attrib[k] = v
-            end
-        end
-
-        # step 5: add global attributes
-        if global_attributes != nothing
-            for (k, v) in global_attributes
-                ds.attrib[k] = v
-            end
-        end
-
-        return filename
-    end
-end
-
 
 """
     rgi_endorheic(path2river_flux, glacier_summary_file; dates4trend=nothing)
@@ -1078,8 +979,8 @@ function geotile2dimarray_kgm2(
             # convert from Gt to kg/m²
             geotile_out[At(varname), :, :] = reduce(hcat, getindex.(geotiles0[:, varname], (valid,)) ./ geotiles0[:, :area_km2] * 1000 * 1000 * varunits[varname])'
         else
-            # convert from km3(assumed ice density of 910 kg/m³) to kg/m²
-            geotile_out[At(varname), :, :] = reduce(hcat, getindex.(geotiles0[:, varname], (valid,)) ./ geotiles0[:, :area_km2] * 910 * 1000 * varunits[varname])'
+            # convert from km3 of ice to kg/m²
+            geotile_out[At(varname), :, :] = reduce(hcat, getindex.(geotiles0[:, varname], (valid,)) ./ geotiles0[:, :area_km2] * δice * 1000 * varunits[varname])'
         end
     end
 
@@ -1402,15 +1303,6 @@ function glacier_summary_file(
         r.latitude = glaciers0[ind, :CenLat]
         r.longitude = glaciers0[ind, :CenLon]
         r.rgi = geotiles[findfirst(isequal(r.geotile), geotiles.id), :rgi]
-    end
-
-    vars2downscale = nothing
-
-    drgiid = Dim{:rgiid}(glaciers.rgiid)
-    (dvarname, dgeotile, dTi, derror) = dims(geotiles0)
-
-    if !isnothing(vars2downscale)
-        dvarname = Dim{:varname}(vars2downscale)
     end
 
     glacier_out = geotiles_mean_error_glaciers(glaciers, geotiles0) #[2 min]

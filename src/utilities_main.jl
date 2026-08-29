@@ -1,4 +1,28 @@
 """
+    geotiles_subset(geotiles, domain, single_geotile_test)
+
+Restrict `geotiles` to those covering `domain`, or to the single geotile named by
+`single_geotile_test` when it is not `nothing`.
+"""
+function geotiles_subset(geotiles, domain, single_geotile_test)
+    if isnothing(single_geotile_test)
+        return geotiles[geotiles[!, "$(domain)_frac"].>0, :]
+    end
+    @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)] !!!!!!!!!!!!!!"
+    return geotiles[geotiles.id.==single_geotile_test, :]
+end
+
+"""
+    missions_subset(products, missions)
+
+Restrict `products` to `missions`, which must be a `Tuple`.
+"""
+function missions_subset(products, missions)
+    isa(missions, Tuple) || error("missions must be a tuple... maybe you forgot a trailing comma for single-element tuples?")
+    return getindex(products, missions)
+end
+
+"""
     geotile_build_archive(; force_remake=false, project_id=:v01, geotile_width=2,
                          domain=:glacier, missions=(:icesat2,), single_geotile_test=nothing,
                          stages=(:search, :download, :build), partition=nothing, source=:nsidc)
@@ -72,16 +96,9 @@ function geotile_build_archive(;
     products = project_products(; project_id);
     geotiles = geotiles_w_mask(geotile_width; remake=false);
 
-    # Subset: region & mission 
-    if isnothing(single_geotile_test)
-        geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :]
-    else
-        @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)] !!!!!!!!!!!!!!"
-        geotiles = geotiles[geotiles.id .== single_geotile_test, :]
-    end
-
-    isa(missions, Tuple) || error("missions must be a tuple... maybe you forgot a trailing comma for single-element tuples?")
-    products = getindex(products, missions)
+    # Subset: region & mission
+    geotiles = geotiles_subset(geotiles, domain, single_geotile_test)
+    products = missions_subset(products, missions)
 
     # Execute: find granules, download granules, build geotiles
     for product in products
@@ -195,13 +212,8 @@ function geotile_build_hugonnet(;
     paths = project_paths(; project_id);
     geotiles = geotiles_w_mask(geotile_width);
 
-    # Subset: region & mission 
-    if isnothing(single_geotile_test)
-        geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
-    else
-        @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)] !!!!!!!!!!!!!!"
-        geotiles = geotiles[geotiles.id.==single_geotile_test, :]
-    end
+    # Subset: region & mission
+    geotiles = geotiles_subset(geotiles, domain, single_geotile_test)
 
     for hugonnet_dataset in hugonnet_datasets
         # Execute: build geotiles from Hugonnet data
@@ -345,16 +357,9 @@ function geotile_dem_extract(;
     products = project_products(; project_id)
     geotiles = geotiles_w_mask(geotile_width)
 
-    # Subset: region & mission 
-    if isnothing(single_geotile_test)
-        geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :]
-    else
-        @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)] !!!!!!!!!!!!!!"
-        geotiles = geotiles[geotiles.id.==single_geotile_test, :]
-    end
-
-    isa(missions, Tuple) || error("missions must be a tuple... maybe you forgot a trailing comma for single-element tuples?")
-    products = getindex(products, missions)
+    # Subset: region & mission
+    geotiles = geotiles_subset(geotiles, domain, single_geotile_test)
+    products = missions_subset(products, missions)
 
     # Execute: extract dems
     geotile_extract_dem(products, dems2extract, geotiles, paths; slope, curvature, force_remake)
@@ -411,16 +416,9 @@ function geotile_mask_extract(;
     products = project_products(; project_id)
     geotiles = geotiles_w_mask(geotile_width);
 
-    # Subset: region & mission 
-    if isnothing(single_geotile_test)
-        geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :];
-    else
-        @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)] !!!!!!!!!!!!!!"
-        geotiles = geotiles[geotiles.id.==single_geotile_test, :]
-    end
-
-    isa(missions, Tuple) || error("missions must be a tuple... maybe you forgot a trailing comma for single-element tuples?")
-    products = getindex(products, missions)
+    # Subset: region & mission
+    geotiles = geotiles_subset(geotiles, domain, single_geotile_test)
+    products = missions_subset(products, missions)
 
     # Execute: extract masks
     for product in products
@@ -484,16 +482,9 @@ function geotile_canopyh_extract(;
     products = project_products(; project_id);
     geotiles = geotiles_w_mask(geotile_width);
 
-    if isnothing(single_geotile_test)
-        # Subset: region & mission 
-        geotiles = geotiles[geotiles[!, "$(domain)_frac"].>0, :]
-    else
-        @warn "!!!!!!!!!!!!!! SINGLE GEOTILE TEST [$(single_geotile_test)] !!!!!!!!!!!!!!"
-        geotiles = geotiles[geotiles.id.==single_geotile_test, :]
-    end
-
-    isa(missions, Tuple) || error("missions must be a tuple... maybe you forgot a trailing comma for single-element tuples?")
-    products = getindex(products, missions)
+    # Subset: region & mission
+    geotiles = geotiles_subset(geotiles, domain, single_geotile_test)
+    products = missions_subset(products, missions)
 
     # Execute: extract canopy height
     ga = GeoArrays.read(setpaths().canopyheight_10m_v1, masked=false)
@@ -589,8 +580,6 @@ function geotile_hyps_extract(;
 
                 geotile_binarea!(geotile, ras, feature, height_range; invert, excludefeature, var_name)
             end
-
-            Arrow.write(out_file, select!(geotiles, Not(:geometry))::DataFrame)
 
             # file can not be written with geometry column
             if "geometry" in names(geotiles)

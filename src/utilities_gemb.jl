@@ -1465,7 +1465,6 @@ function process_gemb_geotiles(
 
     if elevation_classes_method == :none
         gemb_dv0 = DimStack([DimArray(fill(NaN, (dgeotile, ddate, dpscale, dΔheight)); name=k) for k in vars]...)
-        gemb_dv0 = DimStack([DimArray(fill(NaN, (dgeotile, ddate, dpscale, dΔheight)); name=k) for k in vars]...)
     else
         mscale_range, mscale_center = project_mscale_bins()
         dmscale = Dim{:mscale}(mscale_center)

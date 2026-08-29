@@ -727,7 +727,6 @@ function pointextract(
             return val
         else
             # crop and read into  memory 
-            #@infiltrate
 
             ## ~65% of all time is spent here ##
             ga0 = GeoArrays.crop(ga, extent)
@@ -2240,30 +2239,6 @@ function intersectindices(a, b; bool=false)
 
         return ia0, ib0
     end
-end
-
-"""
-    rightmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
-
-Merge two DataFrames based on a unique identifier column, prioritizing values from df_right.
-
-# Arguments
-- `df_left`: First DataFrame
-- `df_right`: Second DataFrame
-- `id_unique`: Symbol representing the column name containing unique identifiers
-
-# Returns
-- DataFrame with merged data where df_right values take precedence for matching rows
-"""
-function rightmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
-    ileft, iright = intersectindices(df_left[:, id_unique], df_right[:, id_unique], bool=true)
-    if any(ileft)
-        df_left[ileft, :] = df_right[iright, :] # replace duplicates
-    end
-    if any(.!iright)
-        df_left = vcat(df_left, df_right[.!iright, :]) # add new rows
-    end
-    return df_left
 end
 
 """

@@ -1231,46 +1231,6 @@ function ensemble_area_average_height_anomalies(path2runs_synthesized_all_ensemb
 end
 
 """
-    discharge2geotile(discharge, geotiles)
-
-Aggregate discharge variables from a DataFrame to geotile regions.
-
-# Arguments
-- `discharge`: DataFrame containing discharge data with columns for longitude, latitude, and one or more discharge variables.
-- `geotiles`: DataFrame containing geotile information, including :id and :extent columns.
-
-# Returns
-- `discharge0`: DimArray with dimensions (:varname, :geotile), where each entry is the sum of the discharge variable within the geotile extent.
-
-# Description
-For each geotile, this function sums the values of each discharge variable for all points within the geotile's extent.
-The result is a DimArray indexed by variable name and geotile id.
-
-# Examples
-```julia
-julia> discharge0 = discharge2geotile(discharge, geotiles)
-julia> runoff_by_geotile = discharge0[At("discharge_gtyr"), :]
-```
-"""
-function discharge2geotile(discharge, geotiles)
-    dgeotile = Dim{:geotile}(geotiles.id)
-    dvarname = Dim{:varname}(setdiff(names(discharge), ["longitude", "latitude", "extent"]))
-
-    discharge0 = zeros(dvarname, dgeotile)
-
-    for geotile_row in eachrow(geotiles)
-        index = within.(Ref(geotile_row.extent), discharge.longitude, discharge.latitude)
-        if any(index)
-            for varname in dvarname
-                discharge0[varname=At(varname), geotile=At(geotile_row.id)] = sum(discharge[index, varname])
-            end
-        end
-    end
-
-    return discharge0
-end
-
-"""
     discharge2geotile(discharge, dgeotile::Dim; mass2volume=false)
 
 Aggregate discharge from a DataFrame to geotiles using a dimension of geotile IDs.

@@ -52,8 +52,6 @@ begin
     # p[1]: intercept, p[2]: linear, p[3]: quadratic
     model2(h, p) = p[1] .+ p[2] .* h .+ p[3] .* h .^ 2
     const p2 = zeros(3)
-    const lb2 = [-30.0, -0.1, -0.01]
-    const ub2 = [+30.0, +0.1, 0.01]
 
     # Polynomial + seasonal model in time t
     # p = [offset, slope, acceleration, amplitude, phase]
@@ -89,11 +87,6 @@ begin
         p[4] .* cos.(2π .* t) .+           # Cosine (annual)
         p[5] .* sin.(2π .* t)              # Sine (annual)
 
-    # 10th order polynomial 
-    polynomial10(x, p) =
-        p[1] .+ p[2] .* x .+ p[3] .* x .^ 2 .+ p[4] .* x .^ 3 .+ p[5] .* x .^ 4 .+ p[6] .* x .^ 5 .+ p[7] .* x .^ 6 .+ p[8] .* x .^ 7 .+ p[9] .* x .^ 8 .+ p[10] .* x .^ 9 .+ p[11] .* x .^ 10
-    const p10 = zeros(11)
-    
     # Initial parameters for offset/trend/seasonal fitting
     const p_offset_trend_seasonal = zeros(4)
 end
@@ -857,7 +850,7 @@ end
 """
     binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, fill_param)
 
-Generate filepath for filled binned elevation change data and corresponding figure suffix.
+Generate filepath for filled binned elevation change data.
 
 # Arguments
 - `binned_folder`: Path to the binned folder
@@ -871,7 +864,6 @@ Generate filepath for filled binned elevation change data and corresponding figu
 
 # Returns
 - `binned_filled_file`: Full filepath to the filled binned data file
-- `figure_suffix`: Suffix string for related figure filenames
 """
 function binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, fill_param)
 
@@ -887,30 +879,7 @@ function binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_m
         binned_filled_file = joinpath(binned_folder, "$(runid)_filled_p$(fill_param)_aligned.jld2")
     end
 
-    figure_suffix = splitpath(binned_filled_file)
-    figure_suffix = figure_suffix[end]
-    figure_suffix = replace(figure_suffix, ".jld2" => "")
-    figure_suffix = replace(figure_suffix, "dh" => "dm")
-
     return binned_filled_file
-end
-
-function binned2filled_filepath(;binned_file, amplitude_correct, fill_param)
-
-    binned_file0 = replace(binned_file, ".jld2" => "")
-    
-    if amplitude_correct
-        binned_filled_file = "$(binned_file0)_filled_ac_p$(fill_param)_aligned.jld2"
-    else
-        binned_filled_file = "$(binned_file0)_filled_p$(fill_param)_aligned.jld2"
-    end
-
-    figure_suffix = splitpath(binned_filled_file)
-    figure_suffix = figure_suffix[end]
-    figure_suffix = replace(figure_suffix, ".jld2" => "")
-    figure_suffix = replace(figure_suffix, "dh" => "dm")
-
-    return binned_filled_file, figure_suffix
 end
 
 
