@@ -134,12 +134,6 @@ Create and return paths for analysis outputs.
 julia> paths = analysis_paths(; geotile_width=2)
 julia> binned_path = paths.binned
 ```
-
-# Arguments
-- `geotile_width::Int`: Width of geotiles in degrees (default: 2)
-
-# Returns
-- Named tuple containing paths for analysis outputs
 """
 function analysis_paths(; geotile_width = 2)
     paths = (
@@ -203,13 +197,9 @@ function project_height_bins()
     return height_range, height_center
 end
 
-# NOTE: a second, linear-spaced `project_mscale_bins()` (mscale_range = -10.5:1:10.5) used to be
-# defined immediately above this one with an identical empty signature, so it was silently
-# shadowed by the log-style version below and never ran. Two same-signature methods in one module
-# also make the package unprecompilable ("Method overwriting is not permitted during Module
-# precompilation"), forcing a ~55 s from-source rebuild on every load. Removed the dead linear
-# version, which leaves runtime behaviour unchanged. Restore it under a distinct name if the
-# linear binning is ever wanted.
+# An alternative binning must be a distinctly named function, not a second `project_mscale_bins()`
+# method: a duplicate empty signature is silently shadowed, and method overwriting makes the module
+# unprecompilable, forcing a from-source rebuild on every load.
 
 """
     project_mscale_bins()
@@ -257,8 +247,8 @@ function mission_land_trend()
     return mission_trend_myr
 end
 
-geotiles_golden_test = [
-    "lat[+30+32]lon[+078+080]", 
+const geotiles_golden_test = [
+    "lat[+30+32]lon[+078+080]",
     "lat[+60+62]lon[-142-140]", 
     "lat[+62+64]lon[-052-050]", 
     "lat[-68-66]lon[-070-068]", 
@@ -434,7 +424,7 @@ function geotile_groups_forced()
     return out
 end
 
-plot_order = Dict("missions" => ["hugonnet", "icesat", "gedi", "icesat2"], "synthesis" => ["hugonnet", "ICESat & ICESat 2", "gedi", "Synthesis"])
+const plot_order = Dict("missions" => ["hugonnet", "icesat", "gedi", "icesat2"], "synthesis" => ["hugonnet", "ICESat & ICESat 2", "gedi", "Synthesis"])
 
 """
     gemb_altim_cost(x, dv_altim, dv_gemb, kwargs)

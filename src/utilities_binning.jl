@@ -72,7 +72,7 @@ Process satellite altimetry data into geotiles by elevation and time.
 - `surface_masks`: Surface types to process (default: [:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km])
 - `binned_folders`: Output directories (default: ("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"))
 - `dem_ids`: DEM sources (default: [:best, :cop30_v2])
-- `binning_methods`: Binning methods (default: ["nmad3", "nmad5", "median", "nmad10"])
+- `binning_methods`: Binning methods (default: ["nmad5", "nmad3", "median", "nmad10"])
 - `curvature_corrects`: Apply curvature correction (default: [true, false])
 - `max_canopy_height`: Max canopy height in meters (default: 1)
 - `dh_max`: Max height difference in meters (default: 200)
@@ -96,7 +96,7 @@ function geotile_binning(;
     surface_masks = [:glacier, :glacier_rgi7, :land, :glacier_b1km, :glacier_b10km],
     binned_folders=("/mnt/bylot-r3/data/binned/2deg", "/mnt/bylot-r3/data/binned_unfiltered/2deg"),
     dem_ids = [:best, :cop30_v2],
-    binning_methods = ["nmad5", "nmad3", "median", "mad10"],
+    binning_methods = ["nmad5", "nmad3", "median", "nmad10"],
     curvature_corrects = [true, false],
 
      #### DON NOT CHANGE THESE PARAMETERS
@@ -147,7 +147,7 @@ function geotile_binning(;
     param_nt = (; project_id = [project_id], surface_mask=surface_masks, dem_id=dem_ids, binning_method=binning_methods, curvature_correct=curvature_corrects, binned_folder=binned_folders)
     params = ntpermutations(param_nt)
 
-    # Threads is throwing errors due to reading of JLD2 files, Threads is implimented at
+    # Threads is throwing errors due to reading of JLD2 files, Threads is implemented at
     # lower level with reasonable performance
 
     # perfomance could be improved considerably if data was saved per geotile, this would allow 
@@ -160,7 +160,7 @@ function geotile_binning(;
         # skip permutations if all_permutations_for_glacier_only = true
         if all_permutations_for_glacier_only
             if ((!(occursin("glacier", string(param.surface_mask))) && occursin("unfiltered", param.binned_folder)) &&
-                ((string(param.dem_id) != "best") && (param.binning_method != "mad3") && param.curvature_correct))
+                ((string(param.dem_id) != "best") && (param.binning_method != "nmad3") && param.curvature_correct))
                 continue
             end
         end
@@ -570,7 +570,7 @@ function geotile_binned_fill(;
         geotiles0[surface_mask], _ = geotiles_mutually_exclusive_rgi!(geotiles0[surface_mask])
     end
 
-    # usings threads here cuases the memory usage to explode, Threads is implimented at
+    # usings threads here causes the memory usage to explode, Threads is implemented at
     # lower level with reasonable performance
 
     @showprogress desc = "Filling hypsometric elevation change data ..." for param in params
@@ -599,7 +599,7 @@ function geotile_binned_fill(;
         # load binned data that is the same for all paramater sets
         dh11 = FileIO.load(binned_file, "dh_hyps")
 
-        if .!any(.!isnan.(dh11["hugonnet"]))
+        if !any(!isnan, dh11["hugonnet"])
             println("!!!!!! NO HUGONNET DATA - skipping: $binned_file !!!!!!!")
             continue
         end
@@ -815,7 +815,7 @@ function geotile_binned_fill(;
                     # hyps_fill_empty! can add mission data to geotiles that would 
                     # otherwise be empty. an example of this is lat[+60+62]lon[-142-140] 
                     # which has not GEDI data but GEDI data is added after hyps_fill_empty! 
-                    # becuase at least on of its 5 closest neighbors have GEDI data..  
+                    # because at least one of its 5 closest neighbors have GEDI data..  
                     # to limit the degree of extrapoaltion mission latitudinal limits are used
                     
                     # NOTE: if valid data extends beyond elevation range of surface_mask then extents of valid output data can differ.. this is not a problem
@@ -932,7 +932,7 @@ function add_dem_ref!(altim, dem_id, geotile, mission_geotile_folder)
 
     # add dem height and curvature
     if dem_id == :best
-        # last dem takes precidence over earlier dems
+        # last dem takes precedence over earlier dems
         dem_id0 = [:cop30_v2, :arcticdem_v4_10m, :rema_v2_10m]
     elseif any([:cop30_v2, :arcticdem_v4_10m, :rema_v2_10m] .== dem_id)
         dem_id0 = [dem_id]
@@ -1079,17 +1079,18 @@ Create a binning function based on the specified method.
   - "nmad5": Mean of values with MAD normalization < 5
   - "nmad10": Mean of values with MAD normalization < 10
   - "median": Median of all values
+  - "mean": Mean of all values
 
 # Returns
 - Function that implements the specified binning method
 """
 function binningfun_define(binning_method)
     if binning_method == "nmad3"
-        x -> mean(x[nmad(x).<3])
+        x -> nmad_trimmed_mean(x, 3)
     elseif binning_method == "nmad5"
-        x -> mean(x[nmad(x).<5])
+        x -> nmad_trimmed_mean(x, 5)
     elseif binning_method == "nmad10"
-        x -> mean(x[nmad(x).<10])
+        x -> nmad_trimmed_mean(x, 10)
     elseif binning_method == "median"
         x -> median(x)
     elseif binning_method == "mean"

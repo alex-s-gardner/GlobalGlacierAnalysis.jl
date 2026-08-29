@@ -159,7 +159,7 @@ function decimalyear2datetime(decyear)
     s = (m - m0) * 60
     s0 = floor(s)
 
-    # integer millisecond (1000 ms per second -- this was *100, losing a factor of ten)
+    # integer millisecond (1000 ms per second)
     ms = round((s - s0)*1000)
 
     # calculate datetime
@@ -186,6 +186,22 @@ function nmad(x)
     x_abs = abs.(x .- median(x))
     x_nmad = x_abs ./ (median(x_abs) .* consistent_estimator)
     return x_nmad
+end
+
+"""
+    nmad_trimmed_mean(x, threshold) -> Float64
+
+Mean of the values in `x` whose [`nmad`](@ref) is below `threshold`, or `NaN` if none are.
+
+This is the per-bin kernel of the `"nmad*"` binning methods. Fusing the scaling into the comparison
+keeps the normalized deviations out of memory, leaving only the mask: [`nmad`](@ref) returns them as
+an array, so `mean(x[nmad(x) .< threshold])` would allocate one the size of `x` per bin.
+"""
+function nmad_trimmed_mean(x, threshold)
+    consistent_estimator = 1.4826 #mad to sigma conversion factor
+    x_abs = abs.(x .- median(x))
+    keep = x_abs ./ (median(x_abs) .* consistent_estimator) .< threshold
+    return mean(x[keep])
 end
 
 """

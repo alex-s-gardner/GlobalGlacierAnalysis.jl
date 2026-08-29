@@ -228,13 +228,12 @@ This function fills gaps in elevation change data by:
 function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5, smooth_n=9, smooth_h2t_length_scale=800, show_times=false, missions2update=nothing)
 
     if smooth_h2t_length_scale < 1
-        error("smooth_h2t_length_scale is < 1, should be in the range 2000 to 1, sypically 800")
+        error("smooth_h2t_length_scale is $smooth_h2t_length_scale, must be >= 1 and is typically in the range 1 to 2000, usually 800")
     end
 
-    # `bincount_min` and `smooth_n` are per-mission in production (`binned_filling_parameters`
-    # supplies `Dict("icesat" => 9, ...)`) but the signature above advertises plain scalars. Indexing
-    # a scalar by mission name threw `MethodError: no method matching getindex(::Int64, ::String)`,
-    # so the documented defaults could never actually be used. Accept either form.
+    # `bincount_min` and `smooth_n` accept either a scalar applied to every mission or a per-mission
+    # lookup: `binned_filling_parameters` supplies `Dict("icesat" => 9, ...)`, while the defaults
+    # above are scalars. Both must keep working.
     per_mission(x, mission) = x isa Union{AbstractDict,NamedTuple} ? x[mission] : x
 
     t = decimalyear.(dims(dh1[first(keys(dh1))], :date))
@@ -1064,12 +1063,8 @@ function geotile_bin2d(
     date_ind = (dims_edges[1][2] .>= minmax_date[1] - Δd) .&
                (dims_edges[1][2] .<= (minmax_date[2] + Δd))
 
-    date_ind_center = findall(date_ind)[1:end-1]
-
     height_ind = (dims_edges[2][2] .>= minmax_height[1] - Δh) .&
                  (dims_edges[2][2] .<= (minmax_height[2] + Δh))
-
-    height_ind_center = findall(height_ind)[1:end-1]
 
     nobs0 = nothing
     var0 = nothing
@@ -1088,10 +1083,10 @@ function geotile_bin2d(
     df = binstats(df, [getindex.(dims_edges, 1)...], [getindex.(dims_edges, 2)...],
         var2bin; col_function=[binfunction], missing_bins=true)
 
-    # binstats names the aggregated column "<var2bin>_<function name>" -- "dh_function" for an
-    # anonymous closure (what `binningfun_define` returns), but "dh_median" for a named `median`.
-    # This was hardcoded as "dh_function" below, which broke both a non-default `var2bin` and any
-    # named `binfunction`. Identify it as the one output column that is neither an axis nor `nrow`.
+    # binstats names the aggregated column "<var2bin>_<function name>", so it varies with both
+    # `var2bin` and `binfunction`: "dh_function" for the anonymous closure `binningfun_define`
+    # returns, "dh_median" for a named `median`. Identify it by elimination -- it is the one output
+    # column that is neither an axis nor `nrow` -- rather than reconstructing the name.
     binned_col = only(setdiff(names(df), string.(first.(dims_edges)), ["nrow"]))
 
     gdf = DataFrames.groupby(df, dims_edges[1][1])
@@ -1107,12 +1102,13 @@ function geotile_bin2d(
 
     for (i, df) in enumerate(gdf)
 
-        isval = .!ismissing.(df[p, binned_col])
+        binned = df[p, binned_col]
+        isval = .!ismissing.(binned)
         var2 = @view var0[i, :]
         nobs2 = @view nobs0[i, :]
         if any(isval)
-            var2[isval] = df[p, binned_col][isval]
-            nobs2[isval] = df.nrow[p][isval]
+            var2[isval] = binned[isval]
+            nobs2[isval] = df.nrow[p[isval]]
         end
     end
 
@@ -1140,7 +1136,7 @@ function dh_area_average(dh, area0)
     ddate = dims(dh, :date);
     dh_area_avg = fill(NaN, dims(dh, :date))
 
-    if !all(isnan.(dh))
+    if !all(isnan, dh)
         for date in ddate
             dh0 = dh[date = At(date)]
             valid0 = .!isnan.(dh0)
