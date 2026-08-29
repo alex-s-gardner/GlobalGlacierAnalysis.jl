@@ -2408,10 +2408,9 @@ function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow,
 
                 if any(.!ind1X)
                     er = emptyrow(df)
-                    # Address the id column by name. This used to assign `er[end]`, which is the id only
-                    # while it happens to be the last column -- and a placeholder that keeps
-                    # `emptyrow`'s "0" instead of its granule id is invisible to the check above, so that
-                    # granule is requested again on every future pass, forever.
+                    # Address the id column by name, not by position: a placeholder that keeps
+                    # `emptyrow`'s "0" instead of its granule id is invisible to the check above, so
+                    # that granule would be requested again on every future pass, forever.
                     id_column = columnindex(df, :id)
                     id_column == 0 && error("point table has no :id column; cannot record placeholders")
                     for idX = id1X[.!ind1X]
@@ -2437,7 +2436,7 @@ function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow,
                 write_time = round((time() - t1) / 60, digits=1)
                 printstyled("\n    -> $(row[:id]): generation complete [read: $read_time min, write: $write_time min]\n"; color=:light_black)
             else
-                printstyled("\n    -> $(row[:id]): no new granules to add to exisitng GeoTile\n"; color=:light_green)
+                printstyled("\n    -> $(row[:id]): no new granules to add to existing GeoTile\n"; color=:light_green)
             end
         end
     end

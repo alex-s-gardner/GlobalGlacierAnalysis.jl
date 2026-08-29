@@ -116,7 +116,7 @@ end
         glacier_runoff[index1, At(comid)] .= 0 * u"m^3/s"
     end
 
-    # calcualte the fraction of flux that is from glacier runoff
+    # calculate the fraction of flux that is from glacier runoff
     glacier_fraction = @d (glacier_runoff ./ (glacier_runoff .+ river_flux))
     
     glacier_fraction[isnan.(glacier_fraction)] .= 0

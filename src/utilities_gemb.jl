@@ -1516,7 +1516,7 @@ function process_gemb_geotiles(
             hidespines!(ax)  # hide the frame
         end
 
-        # Populate classes through interpolation and extrapolation... elevation classes are not used to pupulate elevation range
+        # Populate classes through interpolation and extrapolation... elevation classes are not used to populate elevation range
         if elevation_classes_method == :none
 
             gemb0 = DimStack([DimArray(fill(NaN, (ddate, dheight, dpscale, dΔheight)); name=k) for k in vars]...)

@@ -1562,16 +1562,16 @@ function plot_point_location_river_flux(land_flux, glacier_flux, snow_flux; date
     glacier_flux0 = glacier_flux[Ti=date_interval, COMID=At(COMID)]
 
     if !isnothing(snow_flux)
-         seperate_out_snow = true
+         separate_out_snow = true
          snow_flux0 = snow_flux[Ti = date_interval, COMID=At(COMID)]
     else
-        seperate_out_snow = false
+        separate_out_snow = false
     end
 
     x = decimalyear.(val(dims(land_flux0, :Ti)))
     xticks = collect(floor(minimum(x)/5)*5:5:ceil(maximum(x)/5)*5)
 
-    seperate_out_snow && (y_snow = parent(snow_flux0) ./ 1000)
+    separate_out_snow && (y_snow = parent(snow_flux0) ./ 1000)
 
     ax1 = CairoMakie.Axis(f[1:2, 1]; xticklabelsvisible=false, xticksvisible=false, xticks=xticks)
     if show_title
@@ -1580,7 +1580,7 @@ function plot_point_location_river_flux(land_flux, glacier_flux, snow_flux; date
 
     # plot land flux
     y = parent(land_flux0) ./ 1000
-    seperate_out_snow && (y .-= y_snow)
+    separate_out_snow && (y .-= y_snow)
 
     x0 = vcat(x[1], x, x[end])
     yunits = Unitful.unit(land_flux[1])
@@ -1589,7 +1589,7 @@ function plot_point_location_river_flux(land_flux, glacier_flux, snow_flux; date
     poly!(ax1, GI.Point.(ustrip(x0), ustrip(y)); color=(:peru, 1), label="land")
 
     # plot snow flux
-    if seperate_out_snow
+    if separate_out_snow
         y = y_snow
         yunits = Unitful.unit(y[1])
         y = vcat(0.0 * yunits, y, 0.0 * yunits)

@@ -278,7 +278,18 @@ The main module `GlobalGlacierAnalysis` (abbreviated `GGA` in scripts) includes 
 
 ## Testing
 
-This package does not have a formal test suite. Validation is performed through:
+`test/runtests.jl` runs the suite (~2350 tests, ~4 minutes). It uses synthetic data with known
+ground truth and mocks external files, so it needs no access to the JPL data directories:
+
+```bash
+julia --project test/runtests.jl
+```
+
+Tests are organized as `test/unit/` (pure functions), `test/algorithms/` (binning, GEMB, routing,
+synthesis with synthetic inputs), `test/io/` (round-trips), and `test/integration/` (end-to-end
+workflows and statistical invariants). Generators live in `test/fixtures/`. See `test/README.md`.
+
+Scientific validation is separate from the test suite and happens through:
 - Comparison with published datasets (GRACE, Zemp2019)
 - Visual inspection of figures generated in `manuscript_extended_data_figures.jl`
 - Running single-geotile tests before full workflow execution
@@ -299,5 +310,5 @@ When adding new functionality:
 - **Time zones:** Timestamps are UTC; convert with `local2utc = Hour(7)` constant
 - **File formats:** JLD2 for intermediate data, NetCDF for final outputs, Arrow for tabular data
 - **Custom units:** The package defines `Gt` (gigatons) via `MyUnits` module - must call `Unitful.register(GGA.MyUnits)`
-- **No package tests:** This is a research workflow package, not a library - validation happens through scientific comparison
+- **Two kinds of validation:** `test/runtests.jl` covers algorithms with synthetic data; scientific correctness is established separately by comparison against published datasets
 - **Geotile independence:** Each geotile processes independently - don't create cross-geotile dependencies when modifying code

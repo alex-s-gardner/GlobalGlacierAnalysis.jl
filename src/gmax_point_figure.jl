@@ -26,7 +26,7 @@ begin
     using Unitful
 
     dates4plot = (Date(2000,1,1), Date(2024,10,1))
-    seperate_out_snow = false;
+    separate_out_snow = false;
 
     paths = GGA.pathlocal
 
@@ -44,12 +44,12 @@ begin #[50s]
     # load data from netcdf files
     glacier_flux = NCDataset(glacier_flux_path)
     land_flux = NCDataset(glacier_rivers_land_flux_path)
-    seperate_out_snow && (snow_flux = NCDataset(glacier_rivers_snow_flux_path))
+    separate_out_snow && (snow_flux = NCDataset(glacier_rivers_snow_flux_path))
 
     # convert to DimensionalData
     glacier_flux = GGA.nc2dd(glacier_flux["runoff"]) / (1000 * u"kg/m^3")
     land_flux = GGA.nc2dd(land_flux["flux"])
-    seperate_out_snow && (snow_flux = GGA.nc2dd(snow_flux["flux"]))
+    separate_out_snow && (snow_flux = GGA.nc2dd(snow_flux["flux"]))
     # having issues with sortslices
     #@time glacier_flux = sortslices(glacier_flux, dims=:COMID)
     #@time land_flux = sortslices(land_flux, dims=:COMID)
@@ -60,12 +60,12 @@ begin #[50s]
     p = sortperm(dims(land_flux,:COMID).val)
     land_flux = land_flux[:,p]
 
-    seperate_out_snow && (p = sortperm(dims(snow_flux,:COMID).val))
-    seperate_out_snow && (snow_flux = snow_flux[:,p])
+    separate_out_snow && (p = sortperm(dims(snow_flux,:COMID).val))
+    separate_out_snow && (snow_flux = snow_flux[:,p])
 
     # do this little hack to get COMID as ForwardOrdered
     land_flux = DimArray(parent(land_flux), (dims(land_flux, :Ti), Dim{:COMID}(val(dims(land_flux, :COMID).val))))
-    seperate_out_snow && (snow_flux = DimArray(parent(snow_flux), (dims(snow_flux, :Ti), Dim{:COMID}(val(dims(snow_flux, :COMID).val)))))
+    separate_out_snow && (snow_flux = DimArray(parent(snow_flux), (dims(snow_flux, :Ti), Dim{:COMID}(val(dims(snow_flux, :COMID).val)))))
 
     #TODO: WHY DOES RUNOFF NOT GO TO ZERO? This needs further investigation... 
     # COMID = 81020092 

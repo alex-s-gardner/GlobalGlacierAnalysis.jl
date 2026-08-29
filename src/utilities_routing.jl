@@ -275,9 +275,9 @@ function to_latlong_polygon(cap::UnitSphericalCap, n_points::Int)
 end
 
 #=
-# This was causing the following error:
-# WARNING: Method definition deepcopy(Observables.Observable{T} where T) in module Makie at /home/gardnera/.julia/packages/Makie/4JW9B/src/attributes.jl:51 overwritten in module # # MakieCore at /home/gardnera/.julia/packages/MakieCore/dw3iH/src/attributes.jl:48.
-# ERROR: Method overwriting is not permitted during Module precompilation. Use `__precompile__(false)` to opt-out of precompilation.
+# Disabled: importing MakieCore here makes the package unprecompilable. Makie and MakieCore both
+# define `deepcopy(::Observables.Observable)`, and the resulting method overwriting is an error
+# during module precompilation. Plot a cap by converting it with `to_latlong_polygon` instead.
 #
 import MakieCore
 function MakieCore.convert_arguments(::Type{MakieCore.Mesh}, cap::UnitSphericalCap)
@@ -853,7 +853,7 @@ if !isfile(glacier_rivers_path)
     # save the glaciers with the routing information
     GeoDataFrames.write(glacier_routing_path, glaciers)
 
-    # identify just those rivers that recieve glacier meltwater
+    # identify just those rivers that receive glacier meltwater
     glacier_melt_rivers = unique(reduce(vcat, glaciers.RiverIDTrace))
     rivers = rivers[in.(rivers.COMID, Ref(glacier_melt_rivers)), :]
 

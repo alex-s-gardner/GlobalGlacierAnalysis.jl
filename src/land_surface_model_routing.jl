@@ -75,13 +75,10 @@ if download_lsm_files
     for file_urls in gldas_file_urls
     #file_urls = last(gldas_file_urls)
 
-        # NOTE: this used to read `... -j 1 -i --max-connection-per-server 15 -c ...`. The first
-        # `-i` takes a filename argument, so it swallowed `--max-connection-per-server` and left
-        # `15` to be parsed as a URI -- every batch carried a bogus entry and, with `-j 1`, ran one
-        # file at a time. Same defect as the one fixed in `geotile_download_granules!`.
-        # Uses the Aria2_jll binary rather than whatever `aria2c` is on PATH. The note that "jll
-        # doesn't seem to work" that used to sit here was the OpenSSL `legacy` provider failure that
-        # `GGA.aria2c_cmd` explains and works around.
+        # `-i` must stay last: it takes a filename argument, so any flag placed after it is
+        # swallowed and that flag's value is parsed as a URI.
+        # `GGA.aria2c_cmd` wraps the Aria2_jll binary rather than whatever `aria2c` is on PATH, and
+        # works around the OpenSSL `legacy` provider failure it documents.
         cmd = GGA.aria2c_cmd(`--max-tries=10 --retry-wait=1 -c -k 1M -j 16 -x $downloadstreams -s $downloadstreams -d $gldas_folder -i $file_urls`)
 
         println(cmd)

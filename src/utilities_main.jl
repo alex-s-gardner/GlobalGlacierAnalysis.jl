@@ -100,7 +100,7 @@ function geotile_build_archive(;
         end
 
         ## 'find' can run in parallel.. therfore run first [GLAH06 = 30 min from scratch]
-        # do not use kward `after` as it will cuase downstream issues as earlier data will be excluded
+        # do not use kward `after` as it will cause downstream issues as earlier data will be excluded
         if :search in stages
             geotile_search_granules(geotiles, product.mission, product.name, product.version, paths[product.mission].granules_remote; rebuild_dataframe=rebuild_geotiles_dataframe)
         end
@@ -111,12 +111,10 @@ function geotile_build_archive(;
             # load remote granule list
             geotile_granules = granules_load(paths[product.mission].granules_remote, product.mission; geotiles = geotiles)
 
-            # Bounded retry with exponential backoff. This was previously an unbounded `while` loop
-            # that swallowed the exception and re-entered the download at geotile 1 on every
-            # failure. If the failure was deterministic -- e.g. Arrow.write choking on the nested
-            # `granules` column -- the loop spun forever, and each pass left a `tempname` stub in
-            # the geotile directory. That is the origin of the 633,838 orphaned 8-byte `jl_*` files
-            # found in icesat2/ATL06/006/geotile/2deg, and why that archive was never built.
+            # The retry must stay bounded and must rethrow once exhausted. A deterministic failure
+            # here -- Arrow.write choking on the nested `granules` column, say -- would otherwise
+            # restart the download from the first geotile forever, each pass leaving a `tempname`
+            # stub behind in the geotile directory.
             with_retry("$(product.mission) download") do
                 geotile_download_granules!(geotile_granules, product.mission, paths[product.mission].raw_data,
                     paths[product.mission].granules_local; threads=false, aria2c=true,
