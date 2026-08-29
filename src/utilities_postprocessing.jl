@@ -1148,11 +1148,7 @@ function geotiles_mean_error(path2ref, path2files; error_quantile=0.95, error_sc
     Threads.@threads for varname in dvarname
         for geotile in dgeotile
             for Ti in dTi
-                try
-                    geotiles_ref_err[varname=At(varname), geotile= At(geotile), Ti = At(Ti)] = quantile(abs.(geotiles0[varname=At(varname), geotile= At(geotile), Ti = At(Ti)]), error_quantile) * error_scaling
-                catch
-                    return geotiles0[varname=At(varname), geotile= At(geotile), Ti = At(Ti)]
-                end
+                geotiles_ref_err[varname=At(varname), geotile=At(geotile), Ti=At(Ti)] = quantile(abs.(geotiles0[varname=At(varname), geotile=At(geotile), Ti=At(Ti)]), error_quantile) * error_scaling
             end
         end
     end
