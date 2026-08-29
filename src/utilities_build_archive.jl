@@ -859,13 +859,18 @@ function epsg2epsg(
             xyh = trans(x, y, height)
         end
     else
-        # This will work with threads (and you can add your own Proj context in ctxs), but not on the GPU - that would pretty much require a Julia implementation of Proj.
-        ctxs = [Proj.proj_context_clone() for _ in 1:Threads.nthreads()]
-        transforms = [Proj.Transformation(from_epsg, to_epsg; always_xy=true, ctx) for ctx in ctxs]
-
+        # A Proj.Transformation and its context can only be used by one thread at a time, so
+        # each chunk builds its own. Index by chunk rather than by `Threads.threadid()`: thread
+        # ids are offset by the interactive threadpool and exceed `Threads.nthreads()`.
         xyh = Vector{Tuple{Float64,Float64,Float64}}(undef, size(x))
-        Threads.@threads for i in eachindex(latitude)
-            xyh[i] = transforms[Threads.threadid()](x[i], y[i], height[i])
+        chunk_length = max(1, cld(length(xyh), Threads.nthreads()))
+        @sync for chunk in Iterators.partition(eachindex(xyh), chunk_length)
+            Threads.@spawn begin
+                trans = Proj.Transformation(from_epsg, to_epsg; always_xy=true, ctx=Proj.proj_context_clone())
+                for i in chunk
+                    xyh[i] = trans(x[i], y[i], height[i])
+                end
+            end
         end
     end
 
@@ -927,13 +932,18 @@ function epsg2epsg(
             xy = trans(x, y)
         end
     else
-        # This will work with threads (and you can add your own Proj context in ctxs), but not on the GPU - that would pretty much require a Julia implementation of Proj.
-        ctxs = [Proj.proj_context_clone() for _ in 1:Threads.nthreads()]
-        transforms = [Proj.Transformation(from_epsg, to_epsg; always_xy=true, ctx) for ctx in ctxs]
-
+        # A Proj.Transformation and its context can only be used by one thread at a time, so
+        # each chunk builds its own. Index by chunk rather than by `Threads.threadid()`: thread
+        # ids are offset by the interactive threadpool and exceed `Threads.nthreads()`.
         xy = Vector{Tuple{Float64,Float64}}(undef, size(x))
-        Threads.@threads for i in eachindex(xy)
-            xy[i] = transforms[Threads.threadid()](x[i], y[i])
+        chunk_length = max(1, cld(length(xy), Threads.nthreads()))
+        @sync for chunk in Iterators.partition(eachindex(xy), chunk_length)
+            Threads.@spawn begin
+                trans = Proj.Transformation(from_epsg, to_epsg; always_xy=true, ctx=Proj.proj_context_clone())
+                for i in chunk
+                    xy[i] = trans(x[i], y[i])
+                end
+            end
         end
     end
 
