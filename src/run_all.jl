@@ -62,7 +62,7 @@ begin
     # Binning parameters
     force_remake_before = DateTime(2025, 7, 1, 0, 0, 0)
     update_geotile = true # Update select missions from previous results
-    missions2update = nothing #["hugonnet"]
+    missions2update = ["icesat2",  "gedi"] # ["icesat2", "icesat", "gedi", "hugonnet   "]
     warnings = false
     max_canopy_height = 1
     dh_max = 200
@@ -206,7 +206,7 @@ GGA.geotile_binning(;
     plots_show,
 
     # run parameters
-    force_remake_before = Date(2024, 1, 1),
+    force_remake_before = Date(2026, 8, 26), # this will force remake of all binned files before this date
     missions2update,# this will load in prevous results to update select geotiles or missions
 
     # run parameters
@@ -227,7 +227,7 @@ GGA.geotile_binning(;
 # 9. Fill, extrapolate, and adjust binned data
 GGA.geotile_binned_fill(; project_id,
     geotile_width,
-    missions2update, # All missions must update if ICESat-2 updates
+    missions2update = nothing, # All missions must update if ICESat-2 updates
 
     mission_reference_for_amplitude_normalization,
     all_permutations_for_glacier_only, 
@@ -249,7 +249,7 @@ GGA.geotile_binned_fill(; project_id,
     
     single_geotile_test,
 
-    force_remake_before=DateTime("2025-07-14T01:00:00") + GGA.local2utc
+    force_remake_before=DateTime("2026-08-27T01:00:00") + GGA.local2utc
 )
 
 # 10. Synthesize geotile data by combining multiple altimetry missions and applying error corrections
@@ -258,7 +258,7 @@ GGA.geotile_synthesize(path2runs_filled;
     error_file="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
     mission_error=GGA.binned_mad_mission(binned_file_for_over_land_mission_error),
     missions2update=nothing,
-    force_remake_before,
+    force_remake_before =DateTime("2026-08-27T01:00:00") + GGA.local2utc,
 )
 
 # 11. Create glacier model (GEMB) classes for each geotile
