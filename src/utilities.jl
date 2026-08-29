@@ -100,31 +100,25 @@ end
 """
     decimalyear(datetime)
 
-Convert DateTime to decimal year representation.
+Convert a `Date` or `DateTime` to decimal year representation.
 
 The fraction is elapsed time since midnight on January 1 divided by the length of that year, so
 `DateTime(2019, 1, 1)` is exactly `2019.0` and the result is the exact inverse of
 [`decimalyear2datetime`](@ref).
 
 # Arguments
-- `datetime`: DateTime object to convert
+- `datetime`: `Date` or `DateTime` to convert
 
 # Returns
 - Float representing year with decimal fraction (e.g., 2018.8109589041096 for 2018-10-24)
-
-# Note
-
-This previously used `Dates.dayofyear`, which is 1-based, so `DateTime(2019, 1, 1)` returned
-`2019 + 1/365` rather than `2019.0` -- a systematic one-day offset against
-`decimalyear2datetime`, which has always treated `YYYY.0` as January 1. Time of day was also
-discarded, making round-trips lose up to a full day. Both are fixed here, which shifts every
-converted date roughly one day earlier relative to the old behaviour.
 """
 function decimalyear(datetime)
-    year = Dates.year(datetime)
+    # Promote to DateTime so `Date` inputs subtract against a matching year start.
+    dt = DateTime(datetime)
+    year = Dates.year(dt)
     year_start = DateTime(year)
     year_length = Dates.value(DateTime(year + 1) - year_start)
-    return year + Dates.value(datetime - year_start) / year_length
+    return year + Dates.value(dt - year_start) / year_length
 end
 
 """
