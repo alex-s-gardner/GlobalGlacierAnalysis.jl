@@ -23,6 +23,27 @@ using DimensionalData
         @test_throws "unrecognized gemb_run_id" GGA.gemb_info(; gemb_run_id=7)
     end
 
+    @testset "file_is_current" begin
+        absent = joinpath(mktempdir(), "not_written.jld2")
+
+        # A missing file is never current, and must not compare an mtime against `nothing`.
+        @test GGA.file_is_current(absent, nothing) == false
+        @test GGA.file_is_current(absent, DateTime(2020, 1, 1)) == false
+
+        present = tempname()
+        write(present, "x")
+        try
+            # No rebuild date means any existing file is reusable.
+            @test GGA.file_is_current(present, nothing) == true
+
+            # Written after the rebuild date -> reusable; written before -> rebuild.
+            @test GGA.file_is_current(present, DateTime(2000, 1, 1)) == true
+            @test GGA.file_is_current(present, DateTime(2999, 1, 1)) == false
+        finally
+            rm(present; force=true)
+        end
+    end
+
     @testset "project_paths covers every product" begin
         products = GGA.project_products(project_id=:v01)
         paths = GGA.project_paths(project_id=:v01)

@@ -378,7 +378,7 @@ function geotile_synthesize_runs(;
 
         binned_synthesized_file = replace(binned_aligned_file, "aligned.jld2" => "synthesized.jld2")
 
-        if isfile(binned_synthesized_file) && (isnothing(force_remake_before) || Dates.unix2datetime(mtime(binned_synthesized_file)) > force_remake_before) && isnothing(single_geotile_test) && isnothing(dh_override)
+        if file_is_current(binned_synthesized_file, force_remake_before) && isnothing(single_geotile_test) && isnothing(dh_override)
             printstyled("    -> Skipping $(binned_synthesized_file) because it was created after the latest synthesis_error: $force_remake_before\n"; color=:light_green)
             continue
         else
@@ -1006,9 +1006,7 @@ function global_discharge_filled(;
     force_remake_before_hypsometry=nothing
 )
 
-    if isfile(discharge_global_fn) && isnothing(force_remake_before)
-        discharge = FileIO.load(discharge_global_fn, "discharge")
-    elseif isfile(discharge_global_fn) && Dates.unix2datetime(mtime(discharge_global_fn)) > force_remake_before
+    if file_is_current(discharge_global_fn, force_remake_before)
         discharge = FileIO.load(discharge_global_fn, "discharge")
     else
         # Get geotiles containing glaciers and initialize parameters:
@@ -1157,7 +1155,7 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width,
 
         binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
 
-        if isfile(binned_synthesized_dv_file) && (isnothing(force_remake_before) || Dates.unix2datetime(mtime(binned_synthesized_dv_file)) > force_remake_before)
+        if file_is_current(binned_synthesized_dv_file, force_remake_before)
             printstyled("    -> Skipping $(binned_synthesized_dv_file) because it was created after force_remake_before: $force_remake_before\n"; color=:light_green)
             continue
         else

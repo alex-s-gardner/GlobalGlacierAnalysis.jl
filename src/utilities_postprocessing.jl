@@ -1253,7 +1253,7 @@ function glacier_summary_file(
 
     glacier_summary_file = pathlocal[:glacier_summary]
 
-    if isfile(glacier_summary_file) && (isnothing(force_remake_before) || (Dates.unix2datetime(mtime(glacier_summary_file)) > force_remake_before))
+    if file_is_current(glacier_summary_file, force_remake_before)
         printstyled("    -> Skipping $(glacier_summary_file) because it was created after force_remake_before:$force_remake_before\n"; color=:light_green)
         return
     end
