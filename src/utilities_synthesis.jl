@@ -1157,7 +1157,7 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width,
 
         binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
 
-        if (isfile(binned_synthesized_dv_file) && (isnothing(force_remake_before)) || ((Dates.unix2datetime(mtime(binned_synthesized_dv_file)) > force_remake_before)))
+        if isfile(binned_synthesized_dv_file) && (isnothing(force_remake_before) || Dates.unix2datetime(mtime(binned_synthesized_dv_file)) > force_remake_before)
             printstyled("    -> Skipping $(binned_synthesized_dv_file) because it was created after force_remake_before: $force_remake_before\n"; color=:light_green)
             continue
         else

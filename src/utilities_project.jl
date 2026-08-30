@@ -299,22 +299,24 @@ function gemb_info(; gemb_run_id = 4)
         dΔheight = Dim{:Δheight}(["t1"])
         elevation_delta = DimArray([0], dΔheight) # do not change order as these are lookup values
         precipitation_scale = DimArray([1], dpscale) # do not change order as these are lookup values
+        file_uniqueid = "rv1_0_19500101_20231231"
         gemb_info = (;
             gemb_folder = ["/home/schlegel/Share/GEMBv1/"],
-            file_uniqueid = "rv1_0_19500101_20231231",
+            file_uniqueid,
             elevation_delta,
             precipitation_scale,
             filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/$file_uniqueid.jld2",
             modify_melt_only = false
         )
     elseif gemb_run_id == 2
-        dpscale = Dim{:pscale}(["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"]) # do not change order as these are lookup values
-        dΔheight = Dim{:Δheight}(["t1", "t2", "t3", "t4", "t5", "t6"])
+        dpscale = Dim{:pscale}(["p1", "p2", "p3", "p4", "p5", "p6"]) # do not change order as these are lookup values
+        dΔheight = Dim{:Δheight}(["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9"])
         elevation_delta = DimArray([-1000, -750, -500, -250, 0, 250, 500, 750, 1000], dΔheight) # do not change order as these are lookup values
         precipitation_scale = DimArray([0.5, 1, 1.5, 2, 5, 10], dpscale) # do not change order as these are lookup values
+        file_uniqueid = "1979to2023_820_40_racmo_grid_lwt"
         gemb_info = (;
             gemb_folder = "/home/schlegel/Share/GEMBv1/Alaska_sample/v1/",
-            file_uniqueid = "1979to2023_820_40_racmo_grid_lwt",
+            file_uniqueid,
             elevation_delta,
             precipitation_scale,
             filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/$file_uniqueid.jld2",

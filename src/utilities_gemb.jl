@@ -720,7 +720,7 @@ function gemb_calibration(
 
         synthesized_gemb_fit = replace(binned_synthesized_file, ".jld2" => "_gembfit.arrow")
 
-        if (isfile(synthesized_gemb_fit) && (isnothing(force_remake_before)) || (Dates.unix2datetime(mtime(synthesized_gemb_fit)) > force_remake_before) && isnothing(single_geotile_test))
+        if isfile(synthesized_gemb_fit) && (isnothing(force_remake_before) || Dates.unix2datetime(mtime(synthesized_gemb_fit)) > force_remake_before) && isnothing(single_geotile_test)
             printstyled("    -> Skipping $(synthesized_gemb_fit) because it was created after force_remake_before:$force_remake_before\n"; color=:light_green)
             continue
         else

@@ -15,6 +15,7 @@ import GlobalGlacierAnalysis as GGA
         include("unit/test_extents.jl")
         include("unit/test_terrain.jl")
         include("unit/test_models.jl")
+        include("unit/test_project.jl")
         include("unit/test_build_archive.jl")
         include("unit/test_sliderule.jl")
     end
