@@ -113,7 +113,6 @@ module GlobalGlacierAnalysis
    include("utilities.jl")
    include("utilities_plotting.jl")
    include("utilities_readers.jl")
-   include("utilities_manuscript.jl")
    include("mapzonal.jl")
 
    # Makie defines `_register_argument_conversions!` itself (Makie/src/compute-plots.jl), so this
