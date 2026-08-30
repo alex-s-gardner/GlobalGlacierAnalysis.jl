@@ -95,6 +95,32 @@ offset_trend(t, p) = p[1] .+ p[2] .* t;
 offset_trend_p = zeros(2);
 
 """
+    seasonal_peak_fraction(cos_coefficient, sin_coefficient)
+
+Fraction of the year, in `[0, 1)`, at which the seasonal cycle
+`cos_coefficient * cos(2πt) + sin_coefficient * sin(2πt)` reaches its maximum, for `t` in
+decimal years.
+
+The coefficients are the pair fitted by `offset_trend_seasonal2` (`p[3]`, `p[4]`) or by
+`offset_trend_acceleration_seasonal2` (`p[4]`, `p[5]`), cosine first.
+
+# Examples
+```julia
+julia> seasonal_peak_fraction(1.0, 0.0)  # pure cosine peaks at the start of the year
+0.0
+
+julia> seasonal_peak_fraction(0.0, 1.0)  # pure sine peaks a quarter year later
+0.25
+```
+"""
+function seasonal_peak_fraction(cos_coefficient, sin_coefficient)
+    fraction = mod(atan(sin_coefficient, cos_coefficient) / 2π, 1)
+    # A peak an exact year along is a peak at the start of it. `mod` rounds a small negative
+    # angle up to 1.0, so fold that back rather than reporting a fraction of a full year.
+    return fraction < 1 ? fraction : zero(fraction)
+end
+
+"""
     replace_with_model!(dh, nobs, geotiles2replace::AbstractArray; mission2replace="hugonnet", missions2align2, missions2update)
 
 Replace elevation change data for specified geotiles with model-fitted values.

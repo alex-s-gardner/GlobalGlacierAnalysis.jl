@@ -1105,7 +1105,7 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
             g[out_var_offset] = fit.param[1]
             g[out_var_trend] = fit.param[2]
             g[out_var_amp] = hypot(fit.param[3], fit.param[4])
-            g[out_var_phase] = 365.25 * (mod((atan(fit.param[3], fit.param[4]) + π/2) / (2π), 1))
+            g[out_var_phase] = 365.25 * seasonal_peak_fraction(fit.param[3], fit.param[4])
         end
 
         # Update the progress meter
@@ -1914,7 +1914,7 @@ function ts_seasonal_model(ts; interval=nothing)
 
     amplitude = sqrt(p[3]^2 + p[4]^2)
 
-    phase_peak = mod(((atan(p[4], p[3]) + π/2) / 2π), 1) 
+    phase_peak = seasonal_peak_fraction(p[3], p[4])
     phase_peak_month = month(decimalyear2datetime(phase_peak))
 
     trend = p[2]

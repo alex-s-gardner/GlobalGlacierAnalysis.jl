@@ -193,8 +193,7 @@ function rgi_trends(regional_sum::AbstractDict, discharge_rgi, daterange)
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("acceleration")] = dm_fit.param[3]
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("amplitude")] = hypot(dm_fit.param[4], dm_fit.param[5])
 
-
-                phase0 = 365.25 * mod(((atan(dm_fit.param[4], dm_fit.param[5]) + π/2) / 2π), 1)
+                phase0 = 365.25 * seasonal_peak_fraction(dm_fit.param[4], dm_fit.param[5])
                 region_fit[At(varname), At(binned_synthesized_file), At(rgi), At("phase")] = phase0
             end
         end
@@ -267,7 +266,7 @@ function rgi_trends(da::AbstractDimArray, daterange)
         region_fit[At(rgi), At("acceleration")] = dm_fit.param[3]
         region_fit[At(rgi), At("amplitude")] = hypot(dm_fit.param[4], dm_fit.param[5])
 
-        phase0 = 365.25 * mod(((atan(dm_fit.param[4], dm_fit.param[5]) + π/2) / 2π), 1)
+        phase0 = 365.25 * seasonal_peak_fraction(dm_fit.param[4], dm_fit.param[5])
         region_fit[At(rgi), At("phase")] = phase0
     end
 
