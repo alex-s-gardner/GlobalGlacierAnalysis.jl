@@ -100,31 +100,25 @@ end
 """
     decimalyear(datetime)
 
-Convert DateTime to decimal year representation.
+Convert a `Date` or `DateTime` to decimal year representation.
 
 The fraction is elapsed time since midnight on January 1 divided by the length of that year, so
 `DateTime(2019, 1, 1)` is exactly `2019.0` and the result is the exact inverse of
 [`decimalyear2datetime`](@ref).
 
 # Arguments
-- `datetime`: DateTime object to convert
+- `datetime`: `Date` or `DateTime` to convert
 
 # Returns
 - Float representing year with decimal fraction (e.g., 2018.8109589041096 for 2018-10-24)
-
-# Note
-
-This previously used `Dates.dayofyear`, which is 1-based, so `DateTime(2019, 1, 1)` returned
-`2019 + 1/365` rather than `2019.0` -- a systematic one-day offset against
-`decimalyear2datetime`, which has always treated `YYYY.0` as January 1. Time of day was also
-discarded, making round-trips lose up to a full day. Both are fixed here, which shifts every
-converted date roughly one day earlier relative to the old behaviour.
 """
 function decimalyear(datetime)
-    year = Dates.year(datetime)
+    # Promote to DateTime so `Date` inputs subtract against a matching year start.
+    dt = DateTime(datetime)
+    year = Dates.year(dt)
     year_start = DateTime(year)
     year_length = Dates.value(DateTime(year + 1) - year_start)
-    return year + Dates.value(datetime - year_start) / year_length
+    return year + Dates.value(dt - year_start) / year_length
 end
 
 """
@@ -165,7 +159,7 @@ function decimalyear2datetime(decyear)
     s = (m - m0) * 60
     s0 = floor(s)
 
-    # integer millisecond (1000 ms per second -- this was *100, losing a factor of ten)
+    # integer millisecond (1000 ms per second)
     ms = round((s - s0)*1000)
 
     # calculate datetime
@@ -192,6 +186,22 @@ function nmad(x)
     x_abs = abs.(x .- median(x))
     x_nmad = x_abs ./ (median(x_abs) .* consistent_estimator)
     return x_nmad
+end
+
+"""
+    nmad_trimmed_mean(x, threshold) -> Float64
+
+Mean of the values in `x` whose [`nmad`](@ref) is below `threshold`, or `NaN` if none are.
+
+This is the per-bin kernel of the `"nmad*"` binning methods. Fusing the scaling into the comparison
+keeps the normalized deviations out of memory, leaving only the mask: [`nmad`](@ref) returns them as
+an array, so `mean(x[nmad(x) .< threshold])` would allocate one the size of `x` per bin.
+"""
+function nmad_trimmed_mean(x, threshold)
+    consistent_estimator = 1.4826 #mad to sigma conversion factor
+    x_abs = abs.(x .- median(x))
+    keep = x_abs ./ (median(x_abs) .* consistent_estimator) .< threshold
+    return mean(x[keep])
 end
 
 """
@@ -1095,7 +1105,7 @@ function df_tsfit!(df, tsvars; progress=true, datelimits = nothing)
             g[out_var_offset] = fit.param[1]
             g[out_var_trend] = fit.param[2]
             g[out_var_amp] = hypot(fit.param[3], fit.param[4])
-            g[out_var_phase] = 365.25 * (mod((atan(fit.param[3], fit.param[4]) + π/2) / (2π), 1))
+            g[out_var_phase] = 365.25 * seasonal_peak_fraction(fit.param[3], fit.param[4])
         end
 
         # Update the progress meter
@@ -1904,15 +1914,11 @@ function ts_seasonal_model(ts; interval=nothing)
 
     amplitude = sqrt(p[3]^2 + p[4]^2)
 
-    phase_peak = mod(((atan(p[4], p[3]) + π/2) / 2π), 1) 
+    phase_peak = seasonal_peak_fraction(p[3], p[4])
     phase_peak_month = month(decimalyear2datetime(phase_peak))
 
     trend = p[2]
     return (;trend, amplitude, phase_peak_month)
-end
-
-function gt_per_yr_to_m3_per_s(gt_per_yr)
-    return gt_per_yr * 1e9 / 365.25 / 24 / 60 / 60
 end
 
 """
@@ -1984,25 +1990,6 @@ function add_single_rgi_column!(df)
     return df
 end
 
-function linear2scale(linear)
-
-    if (linear >= -1) & (linear < 1)
-        error("Linear values must be less than -1 or equal to or greater than 1")
-    end
-
-    if linear < 0
-        scale = linear -1
-    else
-        scale = linear + 1
-    end
-
-    if scale < -1
-        scale = -1 / scale
-    end
-
-    return scale
-end
-
 """
     scale2linear(scaled)
 
@@ -2032,26 +2019,6 @@ function scale2linear(scaled)
         linear += 1
     else
         linear -= 1
-    end
-
-    return linear
-end
-
-
-function linear2scale!(linear)
-
-    if (linear >= -1) & (linear < 1)
-        error("Linear values must be less than -1 or equal to or greater than 1")
-    end
-
-    if linear < 0
-        linear -= 1
-    else
-        linear += 1
-    end
-
-    if linear < -1
-        linear = -1 / linear
     end
 
     return linear

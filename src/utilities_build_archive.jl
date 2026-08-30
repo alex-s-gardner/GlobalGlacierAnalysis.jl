@@ -727,7 +727,6 @@ function pointextract(
             return val
         else
             # crop and read into  memory 
-            #@infiltrate
 
             ## ~65% of all time is spent here ##
             ga0 = GeoArrays.crop(ga, extent)
@@ -859,13 +858,18 @@ function epsg2epsg(
             xyh = trans(x, y, height)
         end
     else
-        # This will work with threads (and you can add your own Proj context in ctxs), but not on the GPU - that would pretty much require a Julia implementation of Proj.
-        ctxs = [Proj.proj_context_clone() for _ in 1:Threads.nthreads()]
-        transforms = [Proj.Transformation(from_epsg, to_epsg; always_xy=true, ctx) for ctx in ctxs]
-
+        # A Proj.Transformation and its context can only be used by one thread at a time, so
+        # each chunk builds its own. Index by chunk rather than by `Threads.threadid()`: thread
+        # ids are offset by the interactive threadpool and exceed `Threads.nthreads()`.
         xyh = Vector{Tuple{Float64,Float64,Float64}}(undef, size(x))
-        Threads.@threads for i in eachindex(latitude)
-            xyh[i] = transforms[Threads.threadid()](x[i], y[i], height[i])
+        chunk_length = max(1, cld(length(xyh), Threads.nthreads()))
+        @sync for chunk in Iterators.partition(eachindex(xyh), chunk_length)
+            Threads.@spawn begin
+                trans = Proj.Transformation(from_epsg, to_epsg; always_xy=true, ctx=Proj.proj_context_clone())
+                for i in chunk
+                    xyh[i] = trans(x[i], y[i], height[i])
+                end
+            end
         end
     end
 
@@ -927,13 +931,18 @@ function epsg2epsg(
             xy = trans(x, y)
         end
     else
-        # This will work with threads (and you can add your own Proj context in ctxs), but not on the GPU - that would pretty much require a Julia implementation of Proj.
-        ctxs = [Proj.proj_context_clone() for _ in 1:Threads.nthreads()]
-        transforms = [Proj.Transformation(from_epsg, to_epsg; always_xy=true, ctx) for ctx in ctxs]
-
+        # A Proj.Transformation and its context can only be used by one thread at a time, so
+        # each chunk builds its own. Index by chunk rather than by `Threads.threadid()`: thread
+        # ids are offset by the interactive threadpool and exceed `Threads.nthreads()`.
         xy = Vector{Tuple{Float64,Float64}}(undef, size(x))
-        Threads.@threads for i in eachindex(xy)
-            xy[i] = transforms[Threads.threadid()](x[i], y[i])
+        chunk_length = max(1, cld(length(xy), Threads.nthreads()))
+        @sync for chunk in Iterators.partition(eachindex(xy), chunk_length)
+            Threads.@spawn begin
+                trans = Proj.Transformation(from_epsg, to_epsg; always_xy=true, ctx=Proj.proj_context_clone())
+                for i in chunk
+                    xy[i] = trans(x[i], y[i])
+                end
+            end
         end
     end
 
@@ -2233,30 +2242,6 @@ function intersectindices(a, b; bool=false)
 end
 
 """
-    rightmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
-
-Merge two DataFrames based on a unique identifier column, prioritizing values from df_right.
-
-# Arguments
-- `df_left`: First DataFrame
-- `df_right`: Second DataFrame
-- `id_unique`: Symbol representing the column name containing unique identifiers
-
-# Returns
-- DataFrame with merged data where df_right values take precedence for matching rows
-"""
-function rightmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
-    ileft, iright = intersectindices(df_left[:, id_unique], df_right[:, id_unique], bool=true)
-    if any(ileft)
-        df_left[ileft, :] = df_right[iright, :] # replace duplicates
-    end
-    if any(.!iright)
-        df_left = vcat(df_left, df_right[.!iright, :]) # add new rows
-    end
-    return df_left
-end
-
-"""
     leftmerge(df_left::DataFrame, df_right::DataFrame, id_unique::Symbol)
 
 Merge two DataFrames based on a unique identifier column, keeping all rows from df_left
@@ -2398,10 +2383,9 @@ function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow,
 
                 if any(.!ind1X)
                     er = emptyrow(df)
-                    # Address the id column by name. This used to assign `er[end]`, which is the id only
-                    # while it happens to be the last column -- and a placeholder that keeps
-                    # `emptyrow`'s "0" instead of its granule id is invisible to the check above, so that
-                    # granule is requested again on every future pass, forever.
+                    # Address the id column by name, not by position: a placeholder that keeps
+                    # `emptyrow`'s "0" instead of its granule id is invisible to the check above, so
+                    # that granule would be requested again on every future pass, forever.
                     id_column = columnindex(df, :id)
                     id_column == 0 && error("point table has no :id column; cannot record placeholders")
                     for idX = id1X[.!ind1X]
@@ -2427,7 +2411,7 @@ function geotile_build(geotile_granules, geotile_dir; warnings=true, fmt=:arrow,
                 write_time = round((time() - t1) / 60, digits=1)
                 printstyled("\n    -> $(row[:id]): generation complete [read: $read_time min, write: $write_time min]\n"; color=:light_black)
             else
-                printstyled("\n    -> $(row[:id]): no new granules to add to exisitng GeoTile\n"; color=:light_green)
+                printstyled("\n    -> $(row[:id]): no new granules to add to existing GeoTile\n"; color=:light_green)
             end
         end
     end

@@ -38,7 +38,7 @@ function hstack_catalogue(hstack_parent_dir; force_remake = false)
         for (i, file) in enumerate(hstacks.path)
         
             ##----------------------------------------
-            # edgest => centers [this was an issue with v1 hstacks]
+            # edges => centers [this was an issue with v1 hstacks]
             if !Base.contains(hstack_parent_dir, "HSTACK/001")
                 error("hugonnet verson 1 data had a 1/2 pixel offset that is corrected for here, check different versions before useing")
             end

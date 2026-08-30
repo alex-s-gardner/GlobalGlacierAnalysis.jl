@@ -720,7 +720,7 @@ function gemb_calibration(
 
         synthesized_gemb_fit = replace(binned_synthesized_file, ".jld2" => "_gembfit.arrow")
 
-        if (isfile(synthesized_gemb_fit) && (isnothing(force_remake_before)) || (Dates.unix2datetime(mtime(synthesized_gemb_fit)) > force_remake_before) && isnothing(single_geotile_test))
+        if isfile(synthesized_gemb_fit) && (isnothing(force_remake_before) || Dates.unix2datetime(mtime(synthesized_gemb_fit)) > force_remake_before) && isnothing(single_geotile_test)
             printstyled("    -> Skipping $(synthesized_gemb_fit) because it was created after force_remake_before:$force_remake_before\n"; color=:light_green)
             continue
         else
@@ -1465,7 +1465,6 @@ function process_gemb_geotiles(
 
     if elevation_classes_method == :none
         gemb_dv0 = DimStack([DimArray(fill(NaN, (dgeotile, ddate, dpscale, dΔheight)); name=k) for k in vars]...)
-        gemb_dv0 = DimStack([DimArray(fill(NaN, (dgeotile, ddate, dpscale, dΔheight)); name=k) for k in vars]...)
     else
         mscale_range, mscale_center = project_mscale_bins()
         dmscale = Dim{:mscale}(mscale_center)
@@ -1516,7 +1515,7 @@ function process_gemb_geotiles(
             hidespines!(ax)  # hide the frame
         end
 
-        # Populate classes through interpolation and extrapolation... elevation classes are not used to pupulate elevation range
+        # Populate classes through interpolation and extrapolation... elevation classes are not used to populate elevation range
         if elevation_classes_method == :none
 
             gemb0 = DimStack([DimArray(fill(NaN, (ddate, dheight, dpscale, dΔheight)); name=k) for k in vars]...)

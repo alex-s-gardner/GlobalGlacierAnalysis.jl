@@ -52,20 +52,6 @@ path2shapefile = "https://drive.google.com/file/d/1NeKbo_tiaiyAnd15QLN2mqzt-oPuW
 
 
 rgi = 1
-
-varnames = ["not_ocean", "glacier"]
-
-#--------------- set local paths --------------- 
-paths = GGA.pathlocal
-datadir = paths.data_dir;
-outshapepath = joinpath(datadir, "global_vector_mask")
-
-# path2shapefile must be manually downloaded... google drive does not provide direct access... place files in outshapepath 
-path2shapefile = "https://drive.google.com/file/d/1NeKbo_tiaiyAnd15QLN2mqzt-oPuWan3/view?usp=sharing"
-#------------------------------------------------
-
-
-rgi = 1
 varnames = ["not_ocean", "glacier"]
 
 # get paths to ITS_LIVE component velocities (download locally if it does not exist)

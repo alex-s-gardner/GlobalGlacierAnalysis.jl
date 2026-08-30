@@ -452,10 +452,13 @@ function sliderule_keepalive(f; node_capacity=10, ttl=SLIDERULE_MAX_TTL, every=1
         return f()
     finally
         running[] = false
-        # let the task observe the flag rather than leaving it dangling
+        # let the task observe the flag rather than leaving it dangling. The refresher warns and
+        # continues on a failed extension, so anything surfacing here is a fault in the task itself:
+        # report it, but do not rethrow out of `finally` and discard what `f` returned.
         try
             wait(refresher)
-        catch
+        catch e
+            @warn "SlideRule TTL refresher task failed" exception = (e, catch_backtrace())
         end
     end
 end
@@ -798,10 +801,9 @@ function _sliderule_batches(endpoint, filename, make_parms, to_archive, granules
             parms = make_parms(pending, filename)
             bytes = sliderule_post(endpoint, parms; poster)
 
-            # Parse the record stream once. Both the failure scan and the file reassembly used to take
-            # the raw bytes and re-walk them independently, each copying every record out again --
-            # measured at 5x the response size in allocations for a 20 MB response, on a run that
-            # issued tens of thousands of requests.
+            # Parse the record stream once and share it: the failure scan and the file reassembly
+            # below both need the records, and re-walking the raw bytes for each copies every record
+            # out again -- 5x the response size in allocations, across tens of thousands of requests.
             records = sliderule_records(bytes)
             broken = sliderule_failed_resources(records)
 
@@ -1548,7 +1550,7 @@ function _build_geotile_sliderule(row, geotile_dir; query=sliderule_atl06, fmt=:
     end
 
     if isempty(wanted)
-        printstyled("\n    -> $(row.id): no new granules to add to exisitng GeoTile\n"; color=:light_green)
+        printstyled("\n    -> $(row.id): no new granules to add to existing GeoTile\n"; color=:light_green)
         return nothing
     end
 

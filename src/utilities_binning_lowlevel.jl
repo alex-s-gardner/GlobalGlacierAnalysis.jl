@@ -52,8 +52,6 @@ begin
     # p[1]: intercept, p[2]: linear, p[3]: quadratic
     model2(h, p) = p[1] .+ p[2] .* h .+ p[3] .* h .^ 2
     const p2 = zeros(3)
-    const lb2 = [-30.0, -0.1, -0.01]
-    const ub2 = [+30.0, +0.1, 0.01]
 
     # Polynomial + seasonal model in time t
     # p = [offset, slope, acceleration, amplitude, phase]
@@ -89,17 +87,38 @@ begin
         p[4] .* cos.(2π .* t) .+           # Cosine (annual)
         p[5] .* sin.(2π .* t)              # Sine (annual)
 
-    # 10th order polynomial 
-    polynomial10(x, p) =
-        p[1] .+ p[2] .* x .+ p[3] .* x .^ 2 .+ p[4] .* x .^ 3 .+ p[5] .* x .^ 4 .+ p[6] .* x .^ 5 .+ p[7] .* x .^ 6 .+ p[8] .* x .^ 7 .+ p[9] .* x .^ 8 .+ p[10] .* x .^ 9 .+ p[11] .* x .^ 10
-    const p10 = zeros(11)
-    
     # Initial parameters for offset/trend/seasonal fitting
     const p_offset_trend_seasonal = zeros(4)
 end
 
 offset_trend(t, p) = p[1] .+ p[2] .* t;
 offset_trend_p = zeros(2);
+
+"""
+    seasonal_peak_fraction(cos_coefficient, sin_coefficient)
+
+Fraction of the year, in `[0, 1)`, at which the seasonal cycle
+`cos_coefficient * cos(2πt) + sin_coefficient * sin(2πt)` reaches its maximum, for `t` in
+decimal years.
+
+The coefficients are the pair fitted by `offset_trend_seasonal2` (`p[3]`, `p[4]`) or by
+`offset_trend_acceleration_seasonal2` (`p[4]`, `p[5]`), cosine first.
+
+# Examples
+```julia
+julia> seasonal_peak_fraction(1.0, 0.0)  # pure cosine peaks at the start of the year
+0.0
+
+julia> seasonal_peak_fraction(0.0, 1.0)  # pure sine peaks a quarter year later
+0.25
+```
+"""
+function seasonal_peak_fraction(cos_coefficient, sin_coefficient)
+    fraction = mod(atan(sin_coefficient, cos_coefficient) / 2π, 1)
+    # A peak an exact year along is a peak at the start of it. `mod` rounds a small negative
+    # angle up to 1.0, so fold that back rather than reporting a fraction of a full year.
+    return fraction < 1 ? fraction : zero(fraction)
+end
 
 """
     replace_with_model!(dh, nobs, geotiles2replace::AbstractArray; mission2replace="hugonnet", missions2align2, missions2update)
@@ -228,13 +247,12 @@ This function fills gaps in elevation change data by:
 function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5, smooth_n=9, smooth_h2t_length_scale=800, show_times=false, missions2update=nothing)
 
     if smooth_h2t_length_scale < 1
-        error("smooth_h2t_length_scale is < 1, should be in the range 2000 to 1, sypically 800")
+        error("smooth_h2t_length_scale is $smooth_h2t_length_scale, must be >= 1 and is typically in the range 1 to 2000, usually 800")
     end
 
-    # `bincount_min` and `smooth_n` are per-mission in production (`binned_filling_parameters`
-    # supplies `Dict("icesat" => 9, ...)`) but the signature above advertises plain scalars. Indexing
-    # a scalar by mission name threw `MethodError: no method matching getindex(::Int64, ::String)`,
-    # so the documented defaults could never actually be used. Accept either form.
+    # `bincount_min` and `smooth_n` accept either a scalar applied to every mission or a per-mission
+    # lookup: `binned_filling_parameters` supplies `Dict("icesat" => 9, ...)`, while the defaults
+    # above are scalars. Both must keep working.
     per_mission(x, mission) = x isa Union{AbstractDict,NamedTuple} ? x[mission] : x
 
     t = decimalyear.(dims(dh1[first(keys(dh1))], :date))
@@ -858,7 +876,7 @@ end
 """
     binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, fill_param)
 
-Generate filepath for filled binned elevation change data and corresponding figure suffix.
+Generate filepath for filled binned elevation change data.
 
 # Arguments
 - `binned_folder`: Path to the binned folder
@@ -872,7 +890,6 @@ Generate filepath for filled binned elevation change data and corresponding figu
 
 # Returns
 - `binned_filled_file`: Full filepath to the filled binned data file
-- `figure_suffix`: Suffix string for related figure filenames
 """
 function binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_method, project_id, curvature_correct, amplitude_correct, fill_param)
 
@@ -888,30 +905,7 @@ function binned_filled_filepath(; binned_folder, surface_mask, dem_id, binning_m
         binned_filled_file = joinpath(binned_folder, "$(runid)_filled_p$(fill_param)_aligned.jld2")
     end
 
-    figure_suffix = splitpath(binned_filled_file)
-    figure_suffix = figure_suffix[end]
-    figure_suffix = replace(figure_suffix, ".jld2" => "")
-    figure_suffix = replace(figure_suffix, "dh" => "dm")
-
     return binned_filled_file
-end
-
-function binned2filled_filepath(;binned_file, amplitude_correct, fill_param)
-
-    binned_file0 = replace(binned_file, ".jld2" => "")
-    
-    if amplitude_correct
-        binned_filled_file = "$(binned_file0)_filled_ac_p$(fill_param)_aligned.jld2"
-    else
-        binned_filled_file = "$(binned_file0)_filled_p$(fill_param)_aligned.jld2"
-    end
-
-    figure_suffix = splitpath(binned_filled_file)
-    figure_suffix = figure_suffix[end]
-    figure_suffix = replace(figure_suffix, ".jld2" => "")
-    figure_suffix = replace(figure_suffix, "dh" => "dm")
-
-    return binned_filled_file, figure_suffix
 end
 
 
@@ -1064,12 +1058,8 @@ function geotile_bin2d(
     date_ind = (dims_edges[1][2] .>= minmax_date[1] - Δd) .&
                (dims_edges[1][2] .<= (minmax_date[2] + Δd))
 
-    date_ind_center = findall(date_ind)[1:end-1]
-
     height_ind = (dims_edges[2][2] .>= minmax_height[1] - Δh) .&
                  (dims_edges[2][2] .<= (minmax_height[2] + Δh))
-
-    height_ind_center = findall(height_ind)[1:end-1]
 
     nobs0 = nothing
     var0 = nothing
@@ -1088,10 +1078,10 @@ function geotile_bin2d(
     df = binstats(df, [getindex.(dims_edges, 1)...], [getindex.(dims_edges, 2)...],
         var2bin; col_function=[binfunction], missing_bins=true)
 
-    # binstats names the aggregated column "<var2bin>_<function name>" -- "dh_function" for an
-    # anonymous closure (what `binningfun_define` returns), but "dh_median" for a named `median`.
-    # This was hardcoded as "dh_function" below, which broke both a non-default `var2bin` and any
-    # named `binfunction`. Identify it as the one output column that is neither an axis nor `nrow`.
+    # binstats names the aggregated column "<var2bin>_<function name>", so it varies with both
+    # `var2bin` and `binfunction`: "dh_function" for the anonymous closure `binningfun_define`
+    # returns, "dh_median" for a named `median`. Identify it by elimination -- it is the one output
+    # column that is neither an axis nor `nrow` -- rather than reconstructing the name.
     binned_col = only(setdiff(names(df), string.(first.(dims_edges)), ["nrow"]))
 
     gdf = DataFrames.groupby(df, dims_edges[1][1])
@@ -1107,12 +1097,13 @@ function geotile_bin2d(
 
     for (i, df) in enumerate(gdf)
 
-        isval = .!ismissing.(df[p, binned_col])
+        binned = df[p, binned_col]
+        isval = .!ismissing.(binned)
         var2 = @view var0[i, :]
         nobs2 = @view nobs0[i, :]
         if any(isval)
-            var2[isval] = df[p, binned_col][isval]
-            nobs2[isval] = df.nrow[p][isval]
+            var2[isval] = binned[isval]
+            nobs2[isval] = df.nrow[p[isval]]
         end
     end
 
@@ -1140,7 +1131,7 @@ function dh_area_average(dh, area0)
     ddate = dims(dh, :date);
     dh_area_avg = fill(NaN, dims(dh, :date))
 
-    if !all(isnan.(dh))
+    if !all(isnan, dh)
         for date in ddate
             dh0 = dh[date = At(date)]
             valid0 = .!isnan.(dh0)

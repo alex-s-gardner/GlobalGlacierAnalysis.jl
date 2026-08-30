@@ -1,6 +1,9 @@
 using Test
 using GlobalGlacierAnalysis
 import GlobalGlacierAnalysis as GGA
+using Dates
+using LsqFit: curve_fit
+using Statistics: mean
 
 @testset "Parametric Model Functions" begin
     @testset "model3 - trend + seasonality" begin
@@ -128,6 +131,30 @@ import GlobalGlacierAnalysis as GGA
         # At t=1.0: 10 + 2*1 + 0.5*1 + 1*cos(2π) + 0.5*sin(2π)
         #          = 10 + 2 + 0.5 + 1 + 0 = 13.5
         @test result[3] ≈ 13.5 rtol=1e-6
+    end
+
+    @testset "seasonal_peak_fraction" begin
+        # A pure cosine peaks at the start of the year, a pure sine a quarter year later.
+        @test GGA.seasonal_peak_fraction(1.0, 0.0) ≈ 0.0 atol=1e-12
+        @test GGA.seasonal_peak_fraction(0.0, 1.0) ≈ 0.25 atol=1e-12
+        @test GGA.seasonal_peak_fraction(-1.0, 0.0) ≈ 0.5 atol=1e-12
+        @test GGA.seasonal_peak_fraction(0.0, -1.0) ≈ 0.75 atol=1e-12
+
+        # Always in [0, 1)
+        @test all(0 <= GGA.seasonal_peak_fraction(cos(θ), sin(θ)) < 1 for θ in range(-2π, 2π, length=97))
+
+        # Amplitude does not affect the peak timing
+        @test GGA.seasonal_peak_fraction(3.0, 3.0) ≈ GGA.seasonal_peak_fraction(0.5, 0.5) atol=1e-12
+
+        # Recover a peak planted at a known day of year by fitting offset_trend_seasonal2.
+        dates = DateTime(2010, 1, 15):Month(1):DateTime(2015, 12, 15)
+        t = GGA.decimalyear.(collect(dates))
+        for peak_day in (15, 100, 200, 300)
+            y = 3.0 .* cos.(2π .* (t .- peak_day / 365.25))
+            fit = curve_fit(GGA.offset_trend_seasonal2, t .- ceil(mean(t)), y, zeros(4))
+            recovered = 365.25 * GGA.seasonal_peak_fraction(fit.param[3], fit.param[4])
+            @test recovered ≈ peak_day rtol=1e-4
+        end
     end
 
     @testset "Model vectorization" begin

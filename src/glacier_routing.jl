@@ -239,7 +239,7 @@ if !isfile(glacier_rivers_path)
     # save the glaciers with the routing information
     GeoDataFrames.write(glacier_routing_path, glaciers)
 
-    # identify just those rivers that recieve glacier meltwater
+    # identify just those rivers that receive glacier meltwater
     glacier_melt_rivers = unique(reduce(vcat, glaciers.RiverIDTrace))
     rivers = rivers[in.(rivers.COMID, Ref(glacier_melt_rivers)), :]
 

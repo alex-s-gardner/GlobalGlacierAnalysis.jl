@@ -275,9 +275,9 @@ function to_latlong_polygon(cap::UnitSphericalCap, n_points::Int)
 end
 
 #=
-# This was causing the following error:
-# WARNING: Method definition deepcopy(Observables.Observable{T} where T) in module Makie at /home/gardnera/.julia/packages/Makie/4JW9B/src/attributes.jl:51 overwritten in module # # MakieCore at /home/gardnera/.julia/packages/MakieCore/dw3iH/src/attributes.jl:48.
-# ERROR: Method overwriting is not permitted during Module precompilation. Use `__precompile__(false)` to opt-out of precompilation.
+# Disabled: importing MakieCore here makes the package unprecompilable. Makie and MakieCore both
+# define `deepcopy(::Observables.Observable)`, and the resulting method overwriting is an error
+# during module precompilation. Plot a cap by converting it with `to_latlong_polygon` instead.
 #
 import MakieCore
 function MakieCore.convert_arguments(::Type{MakieCore.Mesh}, cap::UnitSphericalCap)
@@ -290,20 +290,6 @@ function MakieCore.convert_arguments(::Type{MakieCore.Mesh}, cap::UnitSphericalC
     return (GeometryBasics.normal_mesh(points, faces),)
 end
 =#
-
-function trace_upstream(COMID, river_traces)
-    upstream_trace = [Vector{eltype(COMID)}() for _ in COMID]
-    ind = falses(length(river_traces))
-    
-    for (i, id) in enumerate(COMID)   
-        for (j, haystack) in enumerate(river_traces)
-            ind[j] = in(id, haystack)
-        end
-        upstream_trace[i] = copy(COMID[ind])
-    end
-    return upstream_trace
-end
-
 
 function trace_downstream(start_id::Integer, ids, next_ids; maxiters=length(ids))
     # prog = ProgressUnknown(; dt = 0.1, desc = "Tracing downstream...")
@@ -324,28 +310,6 @@ function trace_downstream(start_id::Integer, ids, next_ids; maxiters=length(ids)
     # finish!(prog)
     return visited_ids
 end
-
-function trace_downstream_idx(start_id::Integer, ids, next_ids; maxiters=length(ids))
-    # prog = ProgressUnknown(; dt = 0.1, desc = "Tracing downstream...")
-    if start_id == 0
-        return Base.nonmissingtype(eltype(ids))[]
-    end
-    visited_ids = Base.nonmissingtype(eltype(ids))[]
-    current_id = start_id
-    current_idx = searchsortedfirst(ids, start_id)
-    iter_count = 0
-    while current_id != 0 && iter_count <= maxiters
-        current_idx = searchsortedfirst(ids, current_id)
-        push!(visited_ids, current_idx)
-        current_id = next_ids[current_idx]
-        # next!(prog)
-        iter_count += 1
-    end
-    # finish!(prog)
-    return visited_ids
-end
-
-
 
 function haversine_distance(x, y)
     return haversine_distance(GOC.Spherical(), x, y)
@@ -520,26 +484,6 @@ function river_reaches(rivers_paths; col_names=nothing)
     sort!(rivers, [:COMID])
     return rivers
 end
-
-
-function river_cumulative_lengths(rivers)
-
-    # add basin02 and headbasin flags to glacier rivers
-    rivers[!, :basin02] = floor.(Int16, rivers.COMID ./ 1000000)
-    rivers[!, :headbasin] = rivers.up1 .== 0
-
-    # if there is no input from upstream then it is a head basin
-    # This is needed as only a subset of the full river network is routed
-    rivers[!, :headbasin] .|= .!in.(rivers.COMID, Ref(unique(rivers.NextDownID)))
-
-    dcomid = Dim{:COMID}(rivers.COMID)
-    river_lengths = DimArray(rivers.lengthkm, dcomid; name = "river lengths [km]")
-
-    river_lengths = flux_accumulate!(river_lengths, rivers.COMID, rivers.NextDownID, rivers.headbasin, rivers.basin02; accumulated_length=true)
-
-    return river_lengths
-end
-
 
 
 function compute_population(gpw_ras, rivers, country_polygons, gmax, runoff, buffer_radii; progress=true)
@@ -853,7 +797,7 @@ if !isfile(glacier_rivers_path)
     # save the glaciers with the routing information
     GeoDataFrames.write(glacier_routing_path, glaciers)
 
-    # identify just those rivers that recieve glacier meltwater
+    # identify just those rivers that receive glacier meltwater
     glacier_melt_rivers = unique(reduce(vcat, glaciers.RiverIDTrace))
     rivers = rivers[in.(rivers.COMID, Ref(glacier_melt_rivers)), :]
 

@@ -125,8 +125,7 @@
             v.attrib["units"] = string(Unitful.unit(dstack[vaname][1]))
         end
 
-        # add area_km2 [this was added but not yet tested... you might get an error that needs to be fixed]
-        defVar(ds, "glacier_area", glaciers.area_km2, string.(DimensionalData.name.(data_dims[1:1])))
+        v = defVar(ds, "glacier_area", ustrip.(glaciers.area_km2), string.(DimensionalData.name.(data_dims[1:1])))
         v.attrib["units"] = "km^2"
 
         # add latitude and longitude [This is a hack until I can get geometry into a NetCDF]

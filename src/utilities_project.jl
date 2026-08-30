@@ -70,12 +70,8 @@ function project_paths(; project_id = :v01)
 
         p = project_products(project_id = project_id)
 
-        paths = (
-            icesat2 = setpaths(geotile_width, :icesat2, "$(p.icesat2.name)", lpad("$(p.icesat2.version)", 3, '0')),
-            icesat = setpaths(geotile_width, :icesat, "$(p.icesat.name)", lpad("$(p.icesat.version)", 3, '0')),
-            gedi = setpaths(geotile_width, :gedi, "$(p.gedi.name)", lpad("$(p.gedi.version)", 3, '0')),
-            hugonnet = setpaths(geotile_width, :hugonnet, "$(p.hugonnet.name)", lpad("$(p.hugonnet.version)", 3, '0'))
-        );
+        # One entry per registered product, so a new mission needs adding only to project_products.
+        paths = map(v -> setpaths(geotile_width, v.mission, "$(v.name)", lpad("$(v.version)", 3, '0')), p)
     end
     return paths
 end
@@ -134,12 +130,6 @@ Create and return paths for analysis outputs.
 julia> paths = analysis_paths(; geotile_width=2)
 julia> binned_path = paths.binned
 ```
-
-# Arguments
-- `geotile_width::Int`: Width of geotiles in degrees (default: 2)
-
-# Returns
-- Named tuple containing paths for analysis outputs
 """
 function analysis_paths(; geotile_width = 2)
     paths = (
@@ -203,13 +193,9 @@ function project_height_bins()
     return height_range, height_center
 end
 
-# NOTE: a second, linear-spaced `project_mscale_bins()` (mscale_range = -10.5:1:10.5) used to be
-# defined immediately above this one with an identical empty signature, so it was silently
-# shadowed by the log-style version below and never ran. Two same-signature methods in one module
-# also make the package unprecompilable ("Method overwriting is not permitted during Module
-# precompilation"), forcing a ~55 s from-source rebuild on every load. Removed the dead linear
-# version, which leaves runtime behaviour unchanged. Restore it under a distinct name if the
-# linear binning is ever wanted.
+# An alternative binning must be a distinctly named function, not a second `project_mscale_bins()`
+# method: a duplicate empty signature is silently shadowed, and method overwriting makes the module
+# unprecompilable, forcing a from-source rebuild on every load.
 
 """
     project_mscale_bins()
@@ -257,8 +243,8 @@ function mission_land_trend()
     return mission_trend_myr
 end
 
-geotiles_golden_test = [
-    "lat[+30+32]lon[+078+080]", 
+const geotiles_golden_test = [
+    "lat[+30+32]lon[+078+080]",
     "lat[+60+62]lon[-142-140]", 
     "lat[+62+64]lon[-052-050]", 
     "lat[-68-66]lon[-070-068]", 
@@ -313,22 +299,24 @@ function gemb_info(; gemb_run_id = 4)
         dΔheight = Dim{:Δheight}(["t1"])
         elevation_delta = DimArray([0], dΔheight) # do not change order as these are lookup values
         precipitation_scale = DimArray([1], dpscale) # do not change order as these are lookup values
+        file_uniqueid = "rv1_0_19500101_20231231"
         gemb_info = (;
             gemb_folder = ["/home/schlegel/Share/GEMBv1/"],
-            file_uniqueid = "rv1_0_19500101_20231231",
+            file_uniqueid,
             elevation_delta,
             precipitation_scale,
             filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/$file_uniqueid.jld2",
             modify_melt_only = false
         )
     elseif gemb_run_id == 2
-        dpscale = Dim{:pscale}(["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"]) # do not change order as these are lookup values
-        dΔheight = Dim{:Δheight}(["t1", "t2", "t3", "t4", "t5", "t6"])
+        dpscale = Dim{:pscale}(["p1", "p2", "p3", "p4", "p5", "p6"]) # do not change order as these are lookup values
+        dΔheight = Dim{:Δheight}(["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9"])
         elevation_delta = DimArray([-1000, -750, -500, -250, 0, 250, 500, 750, 1000], dΔheight) # do not change order as these are lookup values
         precipitation_scale = DimArray([0.5, 1, 1.5, 2, 5, 10], dpscale) # do not change order as these are lookup values
+        file_uniqueid = "1979to2023_820_40_racmo_grid_lwt"
         gemb_info = (;
             gemb_folder = "/home/schlegel/Share/GEMBv1/Alaska_sample/v1/",
-            file_uniqueid = "1979to2023_820_40_racmo_grid_lwt",
+            file_uniqueid,
             elevation_delta,
             precipitation_scale,
             filename_gemb_combined = "/mnt/bylot-r3/data/gemb/raw/$file_uniqueid.jld2",
@@ -434,7 +422,7 @@ function geotile_groups_forced()
     return out
 end
 
-plot_order = Dict("missions" => ["hugonnet", "icesat", "gedi", "icesat2"], "synthesis" => ["hugonnet", "ICESat & ICESat 2", "gedi", "Synthesis"])
+const plot_order = Dict("missions" => ["hugonnet", "icesat", "gedi", "icesat2"], "synthesis" => ["hugonnet", "ICESat & ICESat 2", "gedi", "Synthesis"])
 
 """
     gemb_altim_cost(x, dv_altim, dv_gemb, kwargs)
@@ -518,35 +506,26 @@ function model_fit_cost_function(res, pscale, mscale; seasonality_weight, distan
         rmse_cost = sqrt(mean(res .^ 2))
     end
 
-    if is_scaling_factor["pscale"]
+    # Distance of a scaling factor from its no-op value of 1, measured symmetrically so that
+    # halving and doubling are penalized equally.
+    dp = _distance_from_origin(pscale, is_scaling_factor["pscale"])
+    dT = _distance_from_origin(mscale, is_scaling_factor["mscale"])
 
-        if pscale < 1
-            dp = 1/pscale - 1
-        else
-            dp = pscale - 1
-        end
-    else
-        dp = pscale;
-    end
-
-    if is_scaling_factor["mscale"]
-         if mscale < 1
-            dT = 1/mscale - 1
-        else
-            dT = mscale - 1
-        end
-    else
-        dT = mscale;
-    end
+    origin_penalty = 1 + sqrt((dT * mscale_to_pscale_weight)^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty
 
     if calibrate_to == :all
-        rmse = sqrt(mean(res .^ 2)) 
-        cost = (((1 - seasonality_weight) * rmse) + (seasonality_weight * fit.amplitude)) * (1 + (sqrt((dT * (mscale_to_pscale_weight))^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty))
+        rmse = sqrt(mean(res .^ 2))
+        cost = ((1 - seasonality_weight) * rmse) + (seasonality_weight * fit.amplitude)
     elseif calibrate_to == :trend
-        cost = ((1 - seasonality_weight) * abs(fit.trend)) * (1 + (sqrt((dT * (mscale_to_pscale_weight))^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty))
+        cost = (1 - seasonality_weight) * abs(fit.trend)
     else
-        cost = ((1 - seasonality_weight) * rmse_cost) * (1 + (sqrt((dT * (mscale_to_pscale_weight))^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty))
+        cost = (1 - seasonality_weight) * rmse_cost
     end
 
-    return cost
+    return cost * origin_penalty
+end
+
+function _distance_from_origin(scale, is_scaling_factor)
+    is_scaling_factor || return scale
+    return scale < 1 ? 1 / scale - 1 : scale - 1
 end

@@ -51,7 +51,7 @@ end
 function _alloc_mapzonal(reducer, operator, x, geoms, n; kw...)
     # Find first non-missing entry and count number of missing entries
     n_missing::Int = 0
-    z1 = _mapzonal(reducer, operator, x, first(geoms); kw...)
+    z1 = missing
     for geom in geoms
         z1 = _mapzonal(reducer, operator, x, geom; kw...)
         if !ismissing(z1)
