@@ -81,7 +81,7 @@ include("../fixtures/synthetic_network.jl")
     #
     #   flux_accumulate!(river_inputs, id, nextdown_id, headbasin, majorbasin_id)
     #
-    # (see the real callers in glacier_routing.jl and land_surface_model_routing.jl). `headbasin`
+    # (see the real callers in utilities_routing.jl and land_surface_model_routing.jl). `headbasin`
     # flags headwater nodes -- those nothing else drains into -- and `majorbasin_id` groups nodes
     # into independently-processed basins.
     function accumulate_flux(ids, next_ids, local_flux)
