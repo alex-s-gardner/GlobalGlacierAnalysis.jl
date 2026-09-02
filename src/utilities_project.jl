@@ -150,6 +150,14 @@ end
 
 Define temporal bins for the project.
 
+The end date is the one place the length of the record is set; [`project_decyear_bins`](@ref) derives
+its own extent from this, so the two cannot drift apart. Extend it when a mission's archive grows past
+the last bin, and re-run the binning: everything downstream inherits the grid from here.
+
+The bins run to `2026-07-01`, which covers ICESat-2 ATL06 v7 (to 2026-05-18) with one bin to spare.
+Other inputs stop earlier -- GEDI in 2025-07, Hugonnet in 2019-10, ICESat in 2009-10, and the GEMB
+runs in 2024 -- and simply hold no data in later bins, which the synthesis already handles.
+
 # Returns
 - Tuple containing (date_range, date_center) where:
   - date_range: DateTime range with 30-day intervals
@@ -163,10 +171,31 @@ julia> ddate = Dim{:date}(date_center)
 """
 function project_date_bins()
         Δd = 30
-        date_range = Date(1990):Day(Δd):Date(2026, 1, 1)
+        date_range = Date(1990):Day(Δd):Date(2026, 7, 1)
         date_center = date_range[1:end-1] .+ Day(Δd / 2)
 
     return date_range, date_center
+end
+
+"""
+    project_decyear_bins()
+
+Bin edges used to group observations by date, in decimal years.
+
+Same count as [`project_date_bins`](@ref)'s `date_range`, so a binned array always has one date bin per
+`date_center`. Taking only the count from there, rather than converting the dates, is deliberate: the
+edges keep their original `1990 + k * 30/365` spacing, so extending the record appends bins without
+moving any existing one.
+
+Note that `30/365` is not thirty calendar days, so the window an observation is grouped into runs late
+relative to the date it is labelled with. The offset accumulates: zero in 1990, 5 days by 2009, and
+9 days by 2025 -- largest over exactly the years with the most data. Deriving these edges from the
+dates instead would move about 30% of observations into an adjacent bin (41% for 2025 onward), which
+changes published values, so the spacing is left as it is.
+"""
+function project_decyear_bins()
+    date_range, _ = project_date_bins()
+    return range(1990.0; step=30 / 365, length=length(date_range))
 end
 
 """

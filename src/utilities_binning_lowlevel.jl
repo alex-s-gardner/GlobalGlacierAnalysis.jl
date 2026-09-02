@@ -1018,9 +1018,9 @@ end
 
 """
     geotile_bin2d(
-        df; 
+        df;
         var2bin="dh",
-        dims_edges=("decyear" => 1990:(30/365):2026, "height_reference" => 0.:100.:10000.),
+        dims_edges=("decyear" => project_decyear_bins(), "height_reference" => 0.:100.:10000.),
         binfunction::T = binningfun_define(binning_method)
     ) where {T <: Function} -> Tuple{Union{Nothing, DimArray}, Union{Nothing, DimArray}}
 
@@ -1044,7 +1044,7 @@ and returns both the binned values and observation counts as DimArrays.
 function geotile_bin2d(
     df;
     var2bin="dh",
-    dims_edges=("decyear" => 1990:(30/365):2026, "height_reference" => 0.:100.:10000.),
+    dims_edges=("decyear" => project_decyear_bins(), "height_reference" => 0.0:100.0:10000.0),
     binfunction::T=binningfun_define(binning_method)
 ) where {T<:Function}
 
