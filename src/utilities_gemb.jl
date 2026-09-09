@@ -733,8 +733,10 @@ function gemb_calibration(
 
             dh = FileIO.load(binned_synthesized_file, "dh_hyps")
 
-            # Convert elevation change to volume change
-            dv_altim = dh2dv_geotile(dh[date=At(dates2extract)], area_km2[surface_mask])
+            # Convert elevation change to volume change. The altimetry spans every glacier geotile
+            # while GEMB may cover only some of them, so restrict to the geotiles the hypsometry --
+            # and hence the whole fit -- is built on.
+            dv_altim = dh2dv_geotile(dh[date=At(dates2extract), geotile=At(collect(dgeotile))], area_km2[surface_mask])
 
             all_nans = dropdims(all(isnan.(dv_altim), dims=:date), dims=:date)
 
