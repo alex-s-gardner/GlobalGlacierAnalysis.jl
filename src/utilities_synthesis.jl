@@ -941,7 +941,7 @@ end
         discharge2smb_max_latitude=-60,
         discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
         pscale=1,
-        ΔT=1,
+        ΔT=0,
         geotile_width=2,
         force_remake_before=nothing,
         force_remake_before_hypsometry=nothing
@@ -1002,7 +1002,7 @@ function global_discharge_filled(;
     discharge2smb_max_latitude=-60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
     pscale=1,
-    ΔT=1,
+    ΔT=0,
     geotile_width=2,
     force_remake_before=nothing,
     force_remake_before_hypsometry=nothing
