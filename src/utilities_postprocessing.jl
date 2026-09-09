@@ -1395,7 +1395,7 @@ julia> # Writes Arrow and GeoPackage files to the project output directory
 function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="Gardner2025_geotiles_rates", datelimits=(DateTime(2000, 3, 1), DateTime(2025, 1, 1)))
     # export trends and amplitudes for reference_run
 
-    # data is in units of km3 assuming an ice density of 910 kg/m3
+    # data is in units of km3 of ice equivalent at `δice`
     geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
 
     altim_cols = names(geotiles0)[occursin.("_altim", names(geotiles0))]
@@ -1405,7 +1405,7 @@ function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="Gardner2025
     rain_cols = occursin.("rain", names(geotiles0))
     geotiles0 = geotiles0[:, .!rain_cols];
 
-    vars_no_write = setdiff(names(geotiles0), ["id", "geometry", "group", "pscale", "mscale", "area_km2", "rgiid"])
+    vars_no_write = setdiff(names(geotiles0), ["id", "geometry", "group", "pscale", "ΔT", "area_km2", "rgiid"])
     geotiles0[!, :area_km2] = sum.(geotiles0[:, :area_km2])
 
     # Fit temporal trends to all variables with dates in metadata

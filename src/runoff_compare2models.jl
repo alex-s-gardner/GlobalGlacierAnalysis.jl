@@ -34,7 +34,7 @@ begin
     glacier_summary_file = GGA.pathlocal[:glacier_summary]
    
     paths = GGA.pathlocal
-    km2Gt = 910/1000
+    km2Gt = GGA.δice / 1000
 end
 
 """

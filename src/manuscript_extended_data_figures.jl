@@ -215,7 +215,7 @@ discharge = GGA.global_discharge_filled(;
     discharge2smb_max_latitude=-60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
     pscale=1,
-    mscale=1,
+    ΔT=1,
     geotile_width=2,
     force_remake_before=DateTime("2025-01-31T14:00") + GGA.local2utc,
     force_remake_before_hypsometry=nothing
@@ -236,7 +236,7 @@ for calibrate_to in calibrate_to
         single_geotile_test,
         seasonality_weight=GGA.seasonality_weight,
         distance_from_origin_penalty=1.5,
-        mscale_to_pscale_weight=GGA.mscale_to_pscale_weight,
+        ΔT_to_pscale_weight=GGA.ΔT_to_pscale_weight,
         force_remake_before=DateTime("2025-01-31T14:00"),
         calibrate_to
     );
@@ -259,7 +259,7 @@ begin
     geotiles0 = GeoDataFrames.read(fname)
 
 
-    f = GGA.plot_ref_pscale_mscale_summary(path2runs_synthesized, first(path2runs_synthesized); rgi2plot=[99], show_title=false, bin_width=0.5)
+    f = GGA.plot_ref_pscale_ΔT_summary(path2runs_synthesized, first(path2runs_synthesized); rgi2plot=[99], show_title=false, bin_width=0.5)
     fname = joinpath(GGA.pathlocal[:figures], "Extended_Data_Figure_9.png")
     display(f[1])
     CairoMakie.save(fname, f[1])

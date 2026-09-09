@@ -5,7 +5,7 @@ using DimensionalData
 
 @testset "Project configuration" begin
     @testset "gemb_info" begin
-        # Every registered run must be constructible: the pscale and Δheight grids carry one
+        # Every point-run entry must be constructible: the pscale and Δheight grids carry one
         # label per value, and filename_gemb_combined resolves its interpolated id.
         for gemb_run_id in 1:6
             g = GGA.gemb_info(; gemb_run_id)
@@ -20,7 +20,16 @@ using DimensionalData
             @test g.modify_melt_only isa Bool
         end
 
-        @test_throws "unrecognized gemb_run_id" GGA.gemb_info(; gemb_run_id=7)
+        # The tile path has a different shape: its forcing axes live in the data, so it declares a
+        # directory to read instead of a precipitation grid and an elevation-class list.
+        tiles = GGA.gemb_info(; gemb_run_id=7)
+        @test tiles.tile_dir isa AbstractString
+        @test isnothing(tiles.precipitation_scale)
+        @test !occursin("\$", tiles.filename_gemb_combined)
+        @test endswith(tiles.filename_gemb_combined, ".jld2")
+        @test tiles.modify_melt_only isa Bool
+
+        @test_throws "unrecognized gemb_run_id" GGA.gemb_info(; gemb_run_id=8)
     end
 
     @testset "file_is_current" begin

@@ -1,9 +1,12 @@
 #density of glacier ice
-const δice = 910; #kg m-3
+# Ice density [kg m-3]. Matches the `density_ice` the GEMB runs use, which the tile files record as
+# their `model_density_ice` attribute and divide by to build the height-change decomposition. The two
+# have to agree: a GEMB volume converted to mass with a different density carries that ratio as a bias.
+const δice = 917;
 const local2utc = Hour(7) # LA timezone to UTC
 const seasonality_weight = 85/100
-const distance_from_origin_penalty = 70 / 100 # NOTE FOR PAPER THIS == 35/100 for Wd when when mscale_to_pscale_weight == 50/100
-const mscale_to_pscale_weight = 50/100
+const distance_from_origin_penalty = 70 / 100 # NOTE FOR PAPER THIS == 35/100 for Wd when when ΔT_to_pscale_weight == 50/100
+const ΔT_to_pscale_weight = 50/100
 const ocean_area_km2 = 362.5 * 1E6
 const reference_ensemble_file = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_rgi7_dh_cop30_v2_cc_nmad5_v01_filled_ac_p2_aligned.jld2"; 
 
@@ -158,10 +161,14 @@ The bins run to `2026-07-01`, which covers ICESat-2 ATL06 v7 (to 2026-05-18) wit
 Other inputs stop earlier -- GEDI in 2025-07, Hugonnet in 2019-10, ICESat in 2009-10, and the GEMB
 runs in 2024 -- and simply hold no data in later bins, which the synthesis already handles.
 
+Binned products carry `date_center` as their `:date` dimension. `geotile_binning` builds that dimension
+only when the output file does not yet exist, so a product updated in place keeps the dimension it was
+first written with; rebuild every mission (`missions2update=nothing`) whenever this grid changes.
+
 # Returns
 - Tuple containing (date_range, date_center) where:
-  - date_range: DateTime range with 30-day intervals
-  - date_center: DateTime values at the center of each bin
+  - date_range: `Date` range of bin edges with 30-day intervals
+  - date_center: `Date` values at the center of each bin, one per bin
 
 # Examples
 ```julia
@@ -230,6 +237,10 @@ end
     project_mscale_bins()
 
 Define melt-scaling bins (log-style spacing).
+
+Used only by `process_gemb_geotiles`, whose forcing axis is a melt multiplier centred on 1. The tile
+path's axis is a temperature offset in K centred on 0 and takes its values from the data, so it does not
+come through here.
 
 # Returns
 - Tuple containing (mscale_range, mscale_center) with values [1/6, 1/4, 1/2, 2, 4, 6] and centers.
@@ -407,6 +418,18 @@ function gemb_info(; gemb_run_id = 4)
             filename_gemb_combined="/mnt/bylot-r3/data/gemb/raw/FAC_forcing_glaciers_1979to2024_820_40_lwt_e97_0_corrected.jld2",
             modify_melt_only=false
         )
+    elseif gemb_run_id == 7
+        # `GEMB_GlacierSims` tile NetCDF rather than point `.mat` files. The forcing axes live in the
+        # data and are read from it by `gemb_tile_forcing_grid`, so there is nothing to declare here:
+        # the tiles are complete over the height range, so `elevation_delta` -- which existed to fake
+        # elevation classes from sparse point runs -- has no counterpart. `tile_dir` replaces
+        # `gemb_folder`, and `read_gemb_files` is not used on this path.
+        gemb_info = (;
+            tile_dir=joinpath(get(ENV, "CLIMATE_CACHE", "/mnt/bylot-r3/data/era5land"), "tile_runs"),
+            precipitation_scale=nothing,
+            filename_gemb_combined="/mnt/bylot-r3/data/gemb/raw/gemb_glacier_sims_tiles_1950to2026.jld2",
+            modify_melt_only=false
+        )
     else
         error("unrecognized gemb_run_id: $gemb_run_id")
     end
@@ -458,11 +481,11 @@ const plot_order = Dict("missions" => ["hugonnet", "icesat", "gedi", "icesat2"],
 
 Compute cost between altimetry-derived volume change and GEMB-sampled volume change.
 
-Samples GEMB at (pscale, mscale) from x, subtracts from dv_altim, then evaluates
+Samples GEMB at (pscale, ΔT) from x, subtracts from dv_altim, then evaluates
 model_fit_cost_function on the residuals with the given kwargs.
 
 # Arguments
-- `x`: Parameter vector [pscale, mscale]
+- `x`: Parameter vector [pscale, ΔT]
 - `dv_altim`: DimArray of altimetry-derived volume change (geotile, date)
 - `dv_gemb`: GEMB volume change array used for sampling
 - `kwargs`: Keyword arguments passed to model_fit_cost_function (e.g. seasonality_weight, distance_from_origin_penalty)
@@ -472,33 +495,34 @@ model_fit_cost_function on the residuals with the given kwargs.
 
 # Examples
 ```julia
-julia> cost = gemb_altim_cost([1.0, 0.0], dv_altim, dv_gemb, (; seasonality_weight=0.85, distance_from_origin_penalty=0.2, mscale_to_pscale_weight=0.5))
+julia> cost = gemb_altim_cost([1.0, 0.0], dv_altim, dv_gemb, (; seasonality_weight=0.85, distance_from_origin_penalty=0.2, ΔT_to_pscale_weight=0.5))
 ```
 """
 function gemb_altim_cost(x, dv_altim, dv_gemb, kwargs)
     pscale = x[1]
-    mscale = x[2]
+    ΔT = x[2]
     
-    res = dv_altim .- gemb_dv_sample(pscale, mscale, dv_gemb)
+    res = dv_altim .- gemb_dv_sample(pscale, ΔT, dv_gemb)
     res .-= mean(res)
 
-    cost = model_fit_cost_function(res, pscale, mscale; kwargs...)
+    cost = model_fit_cost_function(res, pscale, ΔT; kwargs...)
 
     return cost
 end
 
 """
-    model_fit_cost_function(res, pscale, mscale; seasonality_weight, distance_from_origin_penalty, calibrate_to_trend_only=false, calibrate_to_annual_change_only=true)
+    model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_from_origin_penalty, calibrate_to_trend_only=false, calibrate_to_annual_change_only=true)
 
 Compute a composite cost function for fitting a model to altimetry data, incorporating trend, seasonality, and parameter penalties.
 
 # Arguments
 - `res`: Residuals between observed and modeled values. Should be a DimArray or array-like object with a :date dimension.
 - `pscale`: Precipitation scaling factor (numeric).
-- `mscale`: Elevation offset (numeric, in meters).
+- `ΔT`: Air temperature offset applied to the GEMB forcing (numeric, in K). An additive parameter whose
+  no-op is 0, unlike `pscale`; `is_scaling_factor` selects which distance the penalty below uses.
 - `seasonality_weight`: Weight (0–1) for the seasonal amplitude in the cost function. Higher values emphasize seasonality.
 - `distance_from_origin_penalty`: Penalty factor for deviation of parameters from their reference values.
-- `mscale_to_pscale_weight`: Weight for the difference between melt scaling and precipitation scaling in the cost function.
+- `ΔT_to_pscale_weight`: Weight of the temperature-offset penalty against the precipitation-scaling one.
 - `calibrate_to`` = [:all, :annual, :five_year, :trend]
 
 # Returns
@@ -510,14 +534,14 @@ A tuple `cost` where:
 - If `calibrate_to_annual_change_only` is `true`, the cost is computed using only the annual change (residuals at the seasonal minimum).
 - If `calibrate_to_trend_only` is `true`, the cost is based only on the absolute value of the linear trend.
 - Otherwise, the cost is a weighted sum of RMSE and the amplitude of the seasonal cycle.
-- Penalty terms are applied for deviation of `pscale` from 1 and `mscale` from 0 (scaled to kilometers).
+- Penalty terms are applied for deviation of `pscale` from its no-op of 1 and `ΔT` from its no-op of 0.
 
 # Examples
 ```julia
-julia> cost = model_fit_cost_function(res, 1.0, 0.0; seasonality_weight=0.85, distance_from_origin_penalty=0.2, mscale_to_pscale_weight=0.5)
+julia> cost = model_fit_cost_function(res, 1.0, 0.0; seasonality_weight=0.85, distance_from_origin_penalty=0.2, ΔT_to_pscale_weight=0.5)
 ```
 """
-function model_fit_cost_function(res, pscale, mscale; seasonality_weight, distance_from_origin_penalty, mscale_to_pscale_weight, calibrate_to = :all, is_scaling_factor=Dict("pscale" => true, "mscale" => true))
+function model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to = :all, is_scaling_factor=Dict("pscale" => true, "ΔT" => true))
     
     # remove linear trend to emphasize seasonality
     if calibrate_to != :five_year
@@ -538,9 +562,9 @@ function model_fit_cost_function(res, pscale, mscale; seasonality_weight, distan
     # Distance of a scaling factor from its no-op value of 1, measured symmetrically so that
     # halving and doubling are penalized equally.
     dp = _distance_from_origin(pscale, is_scaling_factor["pscale"])
-    dT = _distance_from_origin(mscale, is_scaling_factor["mscale"])
+    dT = _distance_from_origin(ΔT, is_scaling_factor["ΔT"])
 
-    origin_penalty = 1 + sqrt((dT * mscale_to_pscale_weight)^2 + (dp * (1 - mscale_to_pscale_weight))^2) * distance_from_origin_penalty
+    origin_penalty = 1 + sqrt((dT * ΔT_to_pscale_weight)^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty
 
     if calibrate_to == :all
         rmse = sqrt(mean(res .^ 2))
