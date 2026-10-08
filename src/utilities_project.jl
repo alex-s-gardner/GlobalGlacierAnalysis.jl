@@ -430,6 +430,18 @@ function gemb_info(; gemb_run_id = 4)
             filename_gemb_combined="/mnt/bylot-r3/data/gemb/raw/gemb_glacier_sims_tiles_1950to2026.jld2",
             modify_melt_only=false
         )
+    elseif gemb_run_id == 8
+        # Same tile-based path as run 7, over a wider ΔT axis: `[-3, -1, -0.5, 0, 0.5, 1, 3, 4, 5, 6]`
+        # against run 7's `[-3, -1, -0.5, 0, 0.5, 1, 3]`. `merge_tile_perturbations` built each tile here
+        # by joining a +4/+5/+6 supplementary sweep onto the corresponding run-7 tile, so the two trees
+        # share every point run 7 has and this one only adds coverage above +3 K, where `gemb_calibration`
+        # pins a fitted ΔT at the grid ceiling for a sizeable share of global glacier area under run 7.
+        gemb_info = (;
+            tile_dir=joinpath(get(ENV, "CLIMATE_CACHE", "/mnt/bylot-r3/data/era5land"), "tile_runs_merged"),
+            precipitation_scale=nothing,
+            filename_gemb_combined="/mnt/bylot-r3/data/gemb/raw/gemb_glacier_sims_tiles_1950to2026_merged.jld2",
+            modify_melt_only=false
+        )
     else
         error("unrecognized gemb_run_id: $gemb_run_id")
     end

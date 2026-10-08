@@ -88,7 +88,7 @@ begin
     single_geotile_test = nothing #GGA.geotiles_golden_test[1] # nothing 
 
     # Synthesis parameters
-    gemb_run_id = 7
+    gemb_run_id = 8
     path2runs_filled, params = GGA.binned_filled_filepaths(;
         project_id,
         surface_masks=["glacier", "glacier_rgi7"],
@@ -265,7 +265,9 @@ GGA.geotile_synthesize(path2runs_filled;
 include("gemb_tiles_binning.jl")
 
 # parms_ref = GGA.binned_filled_fileparts(binned_synthesized_dv_file_ref)
-force_remake_before_gemb = DateTime("2026-09-07T01:00:00") + GGA.local2utc
+# Steps 12-14 all descend from the GEMB ensemble step 11 rebuilds, so they share one cutoff: anything
+# predating the current GEMB tile sweep is stale. Step 11 itself has no cutoff -- it always rebuilds.
+force_remake_before_gemb = DateTime("2026-10-04T19:00:00") + GGA.local2utc
 
 gemb = GGA.gemb_ensemble_dv(; gemb_run_id);
 
@@ -297,7 +299,7 @@ GGA.gemb_calibration(
     seasonality_weight=GGA.seasonality_weight,
     distance_from_origin_penalty=GGA.distance_from_origin_penalty,
     ΔT_to_pscale_weight=GGA.ΔT_to_pscale_weight,
-    force_remake_before=DateTime("2028-01-31T14:00"),
+    force_remake_before=force_remake_before_gemb,
     calibrate_to=:all
 )
 
@@ -306,9 +308,9 @@ GGA.geotile_synthesis_gembfit_dv(
     path2runs_synthesized, 
     discharge,
     gemb;
-    geotile_grouping_min_feature_area_km2 = 100, 
-    geotile_width, 
-    force_remake_before=DateTime(2028, 1, 1),
+    geotile_grouping_min_feature_area_km2 = 100,
+    geotile_width,
+    force_remake_before=force_remake_before_gemb,
 )
 
 

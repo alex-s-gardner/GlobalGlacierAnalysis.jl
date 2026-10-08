@@ -2,10 +2,15 @@
 # consumes.
 #
 # The tile files carry band-resolved output on the same 100 m grid as `project_height_bins`, over a
-# (ΔT × precipitation scaling) forcing matrix, for every glacierized 2° tile. That makes the
-# hypsometric gap-filling in `process_gemb_geotiles` unnecessary: there is no search buffer and no
-# simulated elevation class, and the only interpolation across the forcing grid is the one
-# `gemb_dv_sample` already performs downstream.
+# (ΔT × precipitation scaling) forcing matrix, for most glacierized 2° tiles. That makes the
+# hypsometric gap-filling in `process_gemb_geotiles` unnecessary: there is no simulated elevation
+# class, and the only interpolation across the forcing grid is the one `gemb_dv_sample` already
+# performs downstream.
+#
+# The sweep does not reach every geotile this package finds ice in, so a geotile with no tile file of
+# its own borrows the nearest one ([`gemb_tile_donors`](@ref)) and is rebinned onto its own hypsometry.
+# The borrowed series is a worse estimate the further the donor is and the less its band range overlaps
+# the target's ice, which is why `process_gemb_tiles` reports both per substitution.
 #
 # Bands are weighted by this package's own `_geotile_area_km2`, not the tile file's `band_area`. The two
 # are different inventories on the same grid and disagree by a few percent per tile; the altimetry these
@@ -101,6 +106,66 @@ function gemb_tile_paths(tile_dir; covering=nothing)
     lo, hi = DateTime(first(covering)), DateTime(last(covering))
     return Dict(id => span.path for (id, span) in coverage
                 if span.first <= lo && span.last >= hi)
+end
+
+# Geotile center as (longitude, latitude), the order `Distances.Haversine` takes.
+function _geotile_center(geotile_id)
+    extent = geotile_extent(geotile_id)
+    return ((extent.X[1] + extent.X[2]) / 2, (extent.Y[1] + extent.Y[2]) / 2)
+end
+
+"""
+    gemb_tile_donors(geotile_ids, paths; max_distance_km=2000) -> Dict{String,@NamedTuple{donor::String, distance_km::Float64}}
+
+For each of `geotile_ids`, the geotile whose tile file supplies its GEMB series.
+
+A geotile present in `paths` is its own donor at zero distance. One that is not borrows the tile whose
+geotile center is nearest by great-circle distance; the borrowed series is then rebinned onto the
+target's own hypsometry by [`_gemb_band_weights`](@ref), which interpolates across the donor's bands in
+height and holds the outermost band constant beyond them.
+
+A donor is only defensible where the two geotiles share a climate and an elevation range, and neither
+condition is checked here -- distance is the whole criterion. `max_distance_km` is the backstop: it is
+loose enough for the isolated sub-polar islands the sweep omits, whose nearest neighbor is over a
+thousand kilometres away, and tight enough that a sweep which dropped a whole region throws rather than
+smearing one surviving tile across it.
+
+Throws if `paths` is empty or if any geotile's nearest donor is further than `max_distance_km`.
+"""
+function gemb_tile_donors(geotile_ids, paths; max_distance_km=2000)
+    isempty(paths) && error("no GEMB tile files to draw donors from")
+
+    donor_ids = collect(keys(paths))
+    donor_centers = _geotile_center.(donor_ids)
+    # Kilometres, so `max_distance_km` and the reported distances share units.
+    haversine = Haversine(6371.0)
+
+    donors = Dict{String,@NamedTuple{donor::String, distance_km::Float64}}()
+    too_far = Tuple{String,String,Float64}[]
+
+    for geotile_id in geotile_ids
+        if haskey(paths, geotile_id)
+            donors[geotile_id] = (; donor=geotile_id, distance_km=0.0)
+            continue
+        end
+
+        center = _geotile_center(geotile_id)
+        distance_km, j = findmin(donor_center -> haversine(center, donor_center), donor_centers)
+
+        if distance_km > max_distance_km
+            push!(too_far, (geotile_id, donor_ids[j], distance_km))
+        else
+            donors[geotile_id] = (; donor=donor_ids[j], distance_km)
+        end
+    end
+
+    if !isempty(too_far)
+        report = join(("$(id) (nearest $(donor) at $(round(Int, d)) km)" for (id, donor, d) in too_far),
+                      ", ")
+        error("$(length(too_far)) geotiles have no GEMB tile within $(max_distance_km) km: $report")
+    end
+
+    return donors
 end
 
 """
@@ -313,7 +378,7 @@ function read_gemb_tile(path, area_km2, target_days; n_pscale, n_ΔT)
 end
 
 """
-    process_gemb_tiles(geotiles, area_km2; tile_dir, date_center, show_stats=true)
+    process_gemb_tiles(geotiles, area_km2; tile_dir, date_center, show_stats=true, max_donor_distance_km=2000)
 
 Build the GEMB volume-change ensemble from `GEMB_GlacierSims` tile NetCDF, as a drop-in for
 `process_gemb_geotiles`.
@@ -323,24 +388,22 @@ equivalent. `smb`, `runoff` and `dv` are added later by `gemb_add_derived_vars!`
 path.
 
 Every band is weighted by `area_km2`, so the ensemble and the altimetry it is calibrated against share
-one hypsometry. Errors, rather than emitting all-NaN rows, if a geotile holding ice has no tile file:
-a NaN geotile would otherwise survive to the ensemble's own NaN check with no indication of why.
+one hypsometry. A geotile with no tile file of its own borrows the nearest one within
+`max_donor_distance_km` -- see [`gemb_tile_donors`](@ref) -- and is rebinned onto its own hypsometry, so
+every geotile passed in gets a series rather than an all-NaN row that would reach the ensemble's NaN
+check with no indication of why.
 
-`show_stats` prints the geotiles whose ice extends beyond GEMB's band range, worst first, and the
-largest `ec` closure residual -- both are silent data-quality problems otherwise.
+`show_stats` prints the substitutions worst-area first, the geotiles whose ice extends beyond the band
+range they were read against, and the largest `ec` closure residual. All three are silent data-quality
+problems otherwise, and the first two compound: a borrowed tile whose bands miss the target's ice
+entirely is held constant from its nearest band, which is the weakest estimate this produces.
 """
-function process_gemb_tiles(geotiles, area_km2; tile_dir, date_center, show_stats=true)
+function process_gemb_tiles(geotiles, area_km2; tile_dir, date_center, show_stats=true,
+                            max_donor_distance_km=2000)
     paths = gemb_tile_paths(tile_dir; covering=extrema(date_center))
+    donors = gemb_tile_donors(geotiles.id, paths; max_distance_km=max_donor_distance_km)
 
-    absent = [row.id for row in eachrow(geotiles)
-              if !haskey(paths, row.id) && sum(area_km2[geotile=At(row.id)]) > 0]
-    if !isempty(absent)
-        error("$(length(absent)) geotiles hold ice but have no GEMB tile file in $tile_dir; " *
-              "restrict `geotiles` to the tiles that exist or extend the sweep. First few: " *
-              join(first(absent, 5), ", "))
-    end
-
-    grid = gemb_tile_forcing_grid(paths[first(geotiles.id)])
+    grid = gemb_tile_forcing_grid(paths[donors[first(geotiles.id)].donor])
     ddate = Dim{:date}(collect(date_center))
     dgeotile = Dim{:geotile}(collect(geotiles.id))
     dpscale = Dim{:pscale}(grid.pscale)
@@ -355,7 +418,7 @@ function process_gemb_tiles(geotiles, area_km2; tile_dir, date_center, show_stat
     closure = fill(NaN, dgeotile)
 
     @showprogress desc = "Reading GEMB tiles" Threads.@threads for row in collect(eachrow(geotiles))
-        tile = read_gemb_tile(paths[row.id], area_km2[geotile=At(row.id)], target_days;
+        tile = read_gemb_tile(paths[donors[row.id].donor], area_km2[geotile=At(row.id)], target_days;
                               n_pscale=length(grid.pscale), n_ΔT=length(grid.ΔT))
 
         for k in GEMB_TILE_LAYERS
@@ -374,6 +437,24 @@ function process_gemb_tiles(geotiles, area_km2; tile_dir, date_center, show_stat
         @printf("  max |dv| closure error : %.3g km3\n", maximum(closure))
         @printf("  melt vs GEMB's melt    : up to %.1f km3 (%s) -- the rain GEMB nets off its melt\n",
                 maximum(melt_offset), val(dgeotile)[argmax(melt_offset)])
+
+        borrowed = [id for id in val(dgeotile) if donors[id].donor != id]
+        if isempty(borrowed)
+            println("  every geotile has a GEMB tile of its own")
+        else
+            ice_km2 = Dict(id => sum(area_km2[geotile=At(id)]) for id in val(dgeotile))
+            sort!(borrowed; by=id -> ice_km2[id], rev=true)
+            total_km2 = sum(values(ice_km2))
+            @printf("  %d geotiles have no tile of their own and borrow the nearest (%.0f km2, %.3f%% of the ice):\n",
+                    length(borrowed), sum(ice_km2[id] for id in borrowed),
+                    100 * sum(ice_km2[id] for id in borrowed) / total_km2)
+            for id in first(borrowed, 10)
+                @printf("      %-28s %8.2f km2 <- %-28s %5.0f km, %5.1f%% of ice beyond its bands\n",
+                        id, ice_km2[id], donors[id].donor, donors[id].distance_km,
+                        100 * extrapolated[At(id)])
+            end
+            length(borrowed) > 10 && println("      ... $(length(borrowed) - 10) more, all smaller")
+        end
 
         beyond = findall(>(0), collect(extrapolated))
         if isempty(beyond)

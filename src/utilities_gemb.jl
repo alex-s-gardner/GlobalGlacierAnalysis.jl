@@ -316,7 +316,7 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
     ΔT_to_pscale_weight = 1,
     seasonality_weight = 85/100,
     calibrate_to=:all,
-    is_scaling_factor=Dict("pscale" => true, "ΔT" => true)
+    is_scaling_factor=Dict("pscale" => true, "ΔT" => false)
 )
 
     if ΔT_to_pscale_weight > 1 || ΔT_to_pscale_weight < 0
@@ -364,7 +364,7 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
         pscale0 = s0:step_size:e0
         dpscale_search = vcat(-1 ./ pscale0[pscale0.<-1], pscale0[pscale0.>=1])
 
-        if all(dΔT .> 0)
+        if is_scaling_factor["ΔT"]
             s0 = -1 / minimum(dΔT.val)
             e0 = maximum(dΔT.val)
             ΔT0 = s0:step_size:e0
@@ -632,33 +632,62 @@ function gemb_calibration(
     end
 
     dgeotile = dims(dv_gemb, :geotile)
-    dΔT = dims(dv_gemb, :ΔT)
-    dpscale = dims(dv_gemb, :pscale)
     params = binned_filled_fileparts.(path2runs)
     surface_masks = unique(getindex.(params, :surface_mask))
 
-    # having issues with pscale and ΔT seeming somewhat random... I'm thinking that it's realated to something that is no Thread safe
+    # Windows on the fitted pscale of two reference geotiles, wide enough to pass every member of the
+    # ensemble and tight enough to catch a fit that has come out wildly wrong. They are not physical
+    # bounds: the precipitation bias of the GEMB forcing sets where pscale lands, so they have to be
+    # re-checked against the printed values whenever the forcing changes.
+    #
+    # `lat[+58+60]lon[-138-136]` needs the looser window because its fitted ΔT saturates at the top of
+    # the forcing grid. The cost surface is then degenerate along ΔT, which leaves pscale only weakly
+    # constrained, so it scatters between local minima across ensemble members rather than tracking one
+    # value. A geotile whose ΔT sits at a grid bound cannot be held to a narrow pscale.
     dgeotile_test = Dim{:geotile}([geotiles_golden_test[1], "lat[+58+60]lon[-138-136]"])
-    pscale_range_test = DimStack(DimArray([1.8, 1.5], dgeotile_test; name="min"), DimArray([3.0, 2.5], dgeotile_test; name="max"))
+    pscale_range_test = DimStack(DimArray([1.3, 1.0], dgeotile_test; name="min"), DimArray([3.0, 2.9], dgeotile_test; name="max"))
 
     # Process each surface mask to load aligned geotiles and calculate hypsometry
     geotiles = Dict()
     area_km2 = Dict()
 
-    if all(dΔT .> 0)
-        ΔT_is_scaling = true;
-    else
-        ΔT_is_scaling = false;
+    # `ΔT` is an additive air-temperature offset (no-op 0) and `pscale` is a multiplicative
+    # precipitation scaling (no-op 1); neither is inferred from the sign of the data they happen to
+    # be run with. A grid of `ΔT` values that were all positive, or a `pscale` grid that included 0,
+    # would otherwise flip these from the sign check that used to live here.
+    is_scaling_factor = Dict("pscale" => true, "ΔT" => false)
+
+    # Restrict dv_gemb to what the altimetry and GEMB share, in both geotile and date, before anything
+    # is built on its axes. GEMB spans every geotile holding ice under its own mask, which includes
+    # sub-km2 slivers the binning drops, so the altimetry is the smaller set and decides.
+    begin
+        dh = FileIO.load(first(path2runs), "dh_hyps")
+        dgeotile_altim = dims(dh, :geotile)
+
+        geotiles2extract = [id for id in val(dgeotile) if in(id, val(dgeotile_altim))]
+        isempty(geotiles2extract) &&
+            error("GEMB and the altimetry share no geotiles: $(first(path2runs))")
+        if length(geotiles2extract) < length(dgeotile)
+            dropped = setdiff(val(dgeotile), geotiles2extract)
+            printstyled("    -> $(length(dropped)) of $(length(dgeotile)) GEMB geotiles are absent from the altimetry and take no part in the fit: $(join(first(sort(dropped), 8), ", "))\n"; color=:light_yellow)
+            dv_gemb = dv_gemb[geotile=At(geotiles2extract)]
+            dgeotile = dims(dv_gemb, :geotile)
+        end
+
+        ddate = dims(dh, :date)
+        ddate_gemb = dims(dv_gemb, :date)
+        index = .!isnan.(dv_gemb[geotile=1, pscale=1, ΔT=1])
+        ex_gemb = extrema(ddate_gemb[index])
+        index = .!isnan.(dh[geotile=1, height=1])
+        ex_dv = extrema(ddate[vec(index)])
+        ex = max(ex_gemb[1], ex_dv[1]), min(ex_gemb[2], ex_dv[2])
+        index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
+        index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
+        sum(index_dv) == sum(index_gemb) ? nothing : error("index_dv and index_gemb do not have the same length: $(ex)")
+        dates2extract = ddate[index_dv].val
+
+        dv_gemb = dv_gemb[date=At(ddate_gemb[index_gemb].val)]
     end
-
-    if all(dpscale .> 0)
-        pscale_is_scaling = true;
-    else
-        pscale_is_scaling = false;
-    end
-
-    is_scaling_factor = Dict("pscale" => pscale_is_scaling, "ΔT" => ΔT_is_scaling)
-
 
     for surface_mask in surface_masks # takes 7 seconds
 
@@ -699,25 +728,6 @@ function gemb_calibration(
         add_single_rgi_column!(geotiles[surface_mask])
     end
 
-    # align dv_altim and dv_gemb
-    begin
-        synthesized_gemb_fit = replace(path2runs[1], ".jld2" => "_gembfit.arrow")
-        dh = FileIO.load(first(path2runs), "dh_hyps")
-        ddate = dims(dh, :date)
-        ddate_gemb = dims(dv_gemb, :date)
-        index = .!isnan.(dv_gemb[geotile=1, pscale=1, ΔT=1])
-        ex_gemb = extrema(ddate_gemb[index])
-        index = .!isnan.(dh[geotile=1, height=1])
-        ex_dv = extrema(ddate[vec(index)])
-        ex = max(ex_gemb[1], ex_dv[1]), min(ex_gemb[2], ex_dv[2])
-        index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
-        index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
-        sum(index_dv) == sum(index_gemb) ? nothing : error("index_dv and index_gemb do not have the same length: $(ex)")
-        dates2extract = ddate[index_dv].val
-
-        dv_gemb = dv_gemb[date=At(ddate_gemb[index_gemb].val)]
-    end
-
     # I'm getting an "geotile volume change contains all NaNs" when run using Threads.. no clue why
     @showprogress desc = "Calibrating GEMB model to altimetry data" for binned_synthesized_file in path2runs
 
@@ -733,9 +743,15 @@ function gemb_calibration(
 
             dh = FileIO.load(binned_synthesized_file, "dh_hyps")
 
-            # Convert elevation change to volume change. The altimetry spans every glacier geotile
-            # while GEMB may cover only some of them, so restrict to the geotiles the hypsometry --
-            # and hence the whole fit -- is built on.
+            # Every run is fitted on the one geotile axis established above, so a run that does not
+            # cover it would otherwise fail inside `At` with no indication of which file or which
+            # geotile is at fault.
+            absent = setdiff(val(dgeotile), val(dims(dh, :geotile)))
+            isempty(absent) ||
+                error("$(binned_synthesized_file) is missing $(length(absent)) of the $(length(dgeotile)) " *
+                      "geotiles the fit is built on: $(join(first(sort(absent), 8), ", "))")
+
+            # Convert elevation change to volume change, over the geotiles the altimetry and GEMB share.
             dv_altim = dh2dv_geotile(dh[date=At(dates2extract), geotile=At(collect(dgeotile))], area_km2[surface_mask])
 
             all_nans = dropdims(all(isnan.(dv_altim), dims=:date), dims=:date)
@@ -752,10 +768,6 @@ function gemb_calibration(
             
                 gembfit = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles[surface_mask]; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to, is_scaling_factor)
 
-                # having issues with pscale and ΔT seeming somewhat random... I'm thinking that it's realated to something that is no Thread safe
-                dgeotile_test = Dim{:geotile}([geotiles_golden_test[1], "lat[+58+60]lon[-138-136]"])
-                pscale_range_test = DimStack(DimArray([1.8, 1.5], dgeotile_test; name="min"), DimArray([3.0, 2.5], dgeotile_test; name="max"))
-
                 for geotile_test in dgeotile_test
                     geotile_sanity_check = geotile_test
                     gt_index = findfirst(gembfit.id .== geotile_sanity_check)
@@ -768,8 +780,12 @@ function gemb_calibration(
                     dv_gemb_mean = mean(dv_gemb_mean[.!isnan.(dv_gemb_mean)])
 
                     println("\n$(geotile_sanity_check): pscale = $pscale, ΔT = $ΔT, dv_altim_mean = $(round(dv_altim_mean, digits=2)), dv_gemb_mean = $(round(dv_gemb_mean, digits=2)), file = $(binned_synthesized_file)")
-                    if !(pscale_range_test[:min][geotile=At(geotile_test)] < pscale < pscale_range_test[:max][geotile=At(geotile_test)])
-                        error("pscale for $geotile_sanity_check is out of bounds: $pscale")
+                    pscale_min = pscale_range_test[:min][geotile=At(geotile_test)]
+                    pscale_max = pscale_range_test[:max][geotile=At(geotile_test)]
+                    if !(pscale_min < pscale < pscale_max)
+                        error("pscale for $geotile_sanity_check is $pscale, outside the expected " *
+                              "$pscale_min-$pscale_max: either the fit is wrong or the GEMB forcing " *
+                              "has changed enough to move it, in which case widen pscale_range_test")
                     end
                 end
 

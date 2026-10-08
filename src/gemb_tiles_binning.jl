@@ -4,9 +4,11 @@
 #
 # Replaces `gemb_classes_binning.jl`. That script's job was mostly to repair sparse point output:
 # buffer each geotile's search extent until the elevation profile filled, interpolate and extrapolate
-# across height bins, and fake elevation classes by scaling melt. The tile files are already complete
-# over each geotile's height range and carry a real (ΔT × precipitation scaling) forcing matrix, so all
-# of that is gone and this script only reads, area-weights and rebins.
+# across height bins, and fake elevation classes by scaling melt. A tile file is complete over its own
+# geotile's height range and carries a real (ΔT × precipitation scaling) forcing matrix, so all of that
+# is gone and this script only reads, area-weights and rebins. Height interpolation survives in one
+# place: a geotile the sweep does not cover borrows the nearest tile, whose bands need not line up with
+# the target's ice.
 #
 # The forcing matrix's second axis is a temperature offset in K (`:ΔT`), where the `.mat` path used a
 # melt multiplier (`:mscale`). Downstream code detects which it is from the sign of the axis values.
@@ -23,9 +25,7 @@ begin
     using DimensionalData
     using Statistics
 
-    # Restrict to a single RGI region, or `nothing` for every geotile whose tile covers the date range.
-    # The date-range filter below is the one that matters: the tile directory also holds short
-    # development runs, and only the full-record sweep can populate this axis.
+    # Restrict to a single RGI region, or `nothing` for every geotile holding ice.
     rgi_subset = nothing
 
     single_geotile_test = nothing # e.g. "lat[+62+64]lon[-152-150]"
@@ -33,7 +33,7 @@ begin
     project_id = :v01
     geotile_width = 2
     surface_mask = :glacier
-    gemb_run_id = 7
+    gemb_run_id = 8
 
     gembinfo = GGA.gemb_info(; gemb_run_id)
 
@@ -51,14 +51,16 @@ begin
                                       only_geotiles_w_area_gt_0=true)
     area_km2 = GGA._geotile_area_km2(; surface_mask, geotile_width)
 
-    # Only geotiles whose tile spans the whole date axis. Everything else would arrive partly NaN and
-    # fail the checks below with no indication of why, so the set is narrowed here rather than
-    # discovered later. The directory also holds shorter development sweeps, which this excludes.
+    # Every geotile holding ice is processed. Those the sweep covers are read from their own tile; the
+    # rest borrow the nearest one and are rebinned onto their own hypsometry by `process_gemb_tiles`,
+    # which reports each substitution. Only tiles spanning the whole date axis are eligible, as donor or
+    # otherwise: a partial one would arrive partly NaN and fail the checks below with no indication of
+    # why, and the directory also accumulates shorter development sweeps.
     coverage = GGA.gemb_tile_coverage(gembinfo.tile_dir)
     available = keys(GGA.gemb_tile_paths(gembinfo.tile_dir;
                                         covering=(first(date_center), last(date_center))))
     println("tile files: $(length(coverage)), of which $(length(available)) span the date axis")
-    geotiles = geotiles[[in(id, available) for id in geotiles.id], :]
+    println("geotiles with a tile of their own: $(sum(in(id, available) for id in geotiles.id)) of $(nrow(geotiles))")
 
     if !isnothing(rgi_subset)
         GGA.add_single_rgi_column!(geotiles)
