@@ -382,4 +382,19 @@ include("../fixtures/synthetic_timeseries.jl")
         # Test: Trend should be zero
         @test abs(slope) < 1e-10
     end
+
+    @testset "Minimum fractional error keeps the larger error" begin
+        dvar = Dim{:varname}(["runoff", "dm"]); drgi = Dim{:rgi}([1, 2])
+        dpar = Dim{:parameter}(["trend", "amplitude"]); derr = Dim{:error}([false, true])
+        rf = zeros(dvar, drgi, dpar, derr)
+        rf[varname=At("runoff"), rgi=At(1), parameter=At("trend"), error=At(false)] = 100.0
+        rf[varname=At("runoff"), rgi=At(1), parameter=At("trend"), error=At(true)] = 5.0     # below 20%: raised
+        rf[varname=At("runoff"), rgi=At(2), parameter=At("trend"), error=At(false)] = -50.0
+        rf[varname=At("runoff"), rgi=At(2), parameter=At("trend"), error=At(true)] = 30.0    # above 20%: kept
+        rf[varname=At("dm"), rgi=At(1), parameter=At("trend"), error=At(true)] = 7.0         # not in varnames
+        GGA.region_min_frac_error!(rf; fractional_error_min=0.2, varnames=["runoff"], parameters=["trend"])
+        @test rf[varname=At("runoff"), rgi=At(1), parameter=At("trend"), error=At(true)] ≈ 20.0
+        @test rf[varname=At("runoff"), rgi=At(2), parameter=At("trend"), error=At(true)] ≈ 30.0
+        @test rf[varname=At("dm"), rgi=At(1), parameter=At("trend"), error=At(true)] ≈ 7.0
+    end
 end
