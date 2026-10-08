@@ -5,8 +5,18 @@
 const δice = 917;
 const local2utc = Hour(7) # LA timezone to UTC
 const seasonality_weight = 85/100
-const distance_from_origin_penalty = 70 / 100 # NOTE FOR PAPER THIS == 35/100 for Wd when when ΔT_to_pscale_weight == 50/100
+# Strength of the forcing-prior penalty (`origin_penalty_mode = :prior`): the cost is multiplied by
+# 1 + wd × d, d the Mahalanobis distance from `gemb_forcing_prior`. 0.35 is the largest value within 1% of the
+# best held-out skill in temporal cross-validation; see notes/methods_2026-10_seasonal_cycle_and_calibration.md.
+const distance_from_origin_penalty = 35 / 100
+# Only used by the `:legacy` penalty mode.
 const ΔT_to_pscale_weight = 50/100
+
+# Empirical prior on the GEMB forcing corrections for `origin_penalty_mode = :prior`: the area-weighted
+# centre, spread and correlation of the unpenalized fits of the well-constrained geotile groups (sd of
+# log pscale < 0.15 and of ΔT < 0.5 K within 5% of the minimum cost; 88% of ice area) for the reference
+# ensemble member, fill set 6, GEMB run 8. See notes/methods_2026-10_seasonal_cycle_and_calibration.md.
+const gemb_forcing_prior = (pscale=1.60, log_pscale_sd=0.45, ΔT=2.20, ΔT_sd=1.65, corr=0.50)
 const ocean_area_km2 = 362.5 * 1E6
 const reference_ensemble_file = "/mnt/bylot-r3/data/binned_unfiltered/2deg/glacier_rgi7_dh_cop30_v2_cc_nmad5_v01_filled_ac_p2_aligned.jld2"; 
 
@@ -513,7 +523,7 @@ julia> cost = gemb_altim_cost([1.0, 0.0], dv_altim, dv_gemb, (; seasonality_weig
 function gemb_altim_cost(x, dv_altim, dv_gemb, kwargs)
     pscale = x[1]
     ΔT = x[2]
-    
+
     res = dv_altim .- gemb_dv_sample(pscale, ΔT, dv_gemb)
     res .-= mean(res)
 
@@ -523,7 +533,7 @@ function gemb_altim_cost(x, dv_altim, dv_gemb, kwargs)
 end
 
 """
-    model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_from_origin_penalty, calibrate_to_trend_only=false, calibrate_to_annual_change_only=true)
+    model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to=:all, is_scaling_factor, origin_penalty_mode=:prior, forcing_prior=gemb_forcing_prior)
 
 Compute a composite cost function for fitting a model to altimetry data, incorporating trend, seasonality, and parameter penalties.
 
@@ -531,11 +541,18 @@ Compute a composite cost function for fitting a model to altimetry data, incorpo
 - `res`: Residuals between observed and modeled values. Should be a DimArray or array-like object with a :date dimension.
 - `pscale`: Precipitation scaling factor (numeric).
 - `ΔT`: Air temperature offset applied to the GEMB forcing (numeric, in K). An additive parameter whose
-  no-op is 0, unlike `pscale`; `is_scaling_factor` selects which distance the penalty below uses.
+  no-op is 0, unlike `pscale`; `is_scaling_factor` selects which distance the `:legacy` penalty uses.
 - `seasonality_weight`: Weight (0–1) for the seasonal amplitude in the cost function. Higher values emphasize seasonality.
-- `distance_from_origin_penalty`: Penalty factor for deviation of parameters from their reference values.
-- `ΔT_to_pscale_weight`: Weight of the temperature-offset penalty against the precipitation-scaling one.
+- `distance_from_origin_penalty`: Strength `wd` of the penalty on the forcing corrections.
+- `ΔT_to_pscale_weight`: Weight of the temperature-offset penalty against the precipitation-scaling one
+  (`:legacy` only).
 - `calibrate_to`` = [:all, :annual, :five_year, :trend]
+- `origin_penalty_mode`: `:prior` (default) multiplies the fit cost by `1 + wd * d`, `d` the Mahalanobis
+  distance of (log pscale, ΔT) from `forcing_prior`, i.e. the distance in prior standard deviations
+  allowing for the correlation between the two. `:legacy` multiplies it by `1 + wd * d`, `d` the weighted
+  distance from the no-op point (1, 0).
+- `forcing_prior`: `(; pscale, log_pscale_sd, ΔT, ΔT_sd, corr)`, the centre, spreads and correlation used
+  by `origin_penalty_mode = :prior`; defaults to `gemb_forcing_prior`.
 
 # Returns
 A tuple `cost` where:
@@ -546,15 +563,18 @@ A tuple `cost` where:
 - If `calibrate_to_annual_change_only` is `true`, the cost is computed using only the annual change (residuals at the seasonal minimum).
 - If `calibrate_to_trend_only` is `true`, the cost is based only on the absolute value of the linear trend.
 - Otherwise, the cost is a weighted sum of RMSE and the amplitude of the seasonal cycle.
-- Penalty terms are applied for deviation of `pscale` from its no-op of 1 and `ΔT` from its no-op of 0.
+- The penalty measures deviation of (`pscale`, `ΔT`) from `forcing_prior`, or from the no-op point (1, 0)
+  when `origin_penalty_mode = :legacy`.
 
 # Examples
 ```julia
-julia> cost = model_fit_cost_function(res, 1.0, 0.0; seasonality_weight=0.85, distance_from_origin_penalty=0.2, ΔT_to_pscale_weight=0.5)
+julia> cost = model_fit_cost_function(res, 1.0, 0.0; seasonality_weight=0.85, distance_from_origin_penalty=0.35, ΔT_to_pscale_weight=0.5)
 ```
 """
-function model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to = :all, is_scaling_factor=Dict("pscale" => true, "ΔT" => true))
-    
+function model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to=:all, is_scaling_factor=Dict("pscale" => true, "ΔT" => false), origin_penalty_mode=:prior, forcing_prior=gemb_forcing_prior)
+
+    origin_penalty_mode in (:legacy, :prior) || error("origin_penalty_mode must be :legacy or :prior, got $origin_penalty_mode")
+
     # remove linear trend to emphasize seasonality
     if calibrate_to != :five_year
         fit = ts_seasonal_model(res; interval=nothing);
@@ -563,20 +583,13 @@ function model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_
         res0 = mean.(res0)
         rmse_cost = sqrt(mean(res0 .^ 2))
     end
-    
+
     # calibrate to annual change only
     if calibrate_to == :annual
         seasonal_min =  mod1(fit.phase_peak_month + 6, 12)
         res = res[date=Near(DateTime(minimum(year.(dims(res, :date))), seasonal_min, 15):Year(1):DateTime(maximum(year.(dims(res, :date))), seasonal_min, 15))]
         rmse_cost = sqrt(mean(res .^ 2))
     end
-
-    # Distance of a scaling factor from its no-op value of 1, measured symmetrically so that
-    # halving and doubling are penalized equally.
-    dp = _distance_from_origin(pscale, is_scaling_factor["pscale"])
-    dT = _distance_from_origin(ΔT, is_scaling_factor["ΔT"])
-
-    origin_penalty = 1 + sqrt((dT * ΔT_to_pscale_weight)^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty
 
     if calibrate_to == :all
         rmse = sqrt(mean(res .^ 2))
@@ -587,7 +600,25 @@ function model_fit_cost_function(res, pscale, ΔT; seasonality_weight, distance_
         cost = (1 - seasonality_weight) * rmse_cost
     end
 
-    return cost * origin_penalty
+    if origin_penalty_mode == :prior
+        (is_scaling_factor["pscale"] && !is_scaling_factor["ΔT"]) ||
+            error("origin_penalty_mode = :prior assumes a multiplicative pscale and an additive ΔT")
+        return cost * (1 + distance_from_origin_penalty * _forcing_prior_distance(pscale, ΔT, forcing_prior))
+    else
+        # Distance of a scaling factor from its no-op value of 1, measured symmetrically so that
+        # halving and doubling are penalized equally.
+        dp = _distance_from_origin(pscale, is_scaling_factor["pscale"])
+        dT = _distance_from_origin(ΔT, is_scaling_factor["ΔT"])
+        return cost * (1 + sqrt((dT * ΔT_to_pscale_weight)^2 + (dp * (1 - ΔT_to_pscale_weight))^2) * distance_from_origin_penalty)
+    end
+end
+
+# Mahalanobis distance of (log pscale, ΔT) from the prior centre, in prior standard deviations.
+function _forcing_prior_distance(pscale, ΔT, prior)
+    z1 = (log(pscale) - log(prior.pscale)) / prior.log_pscale_sd
+    z2 = (ΔT - prior.ΔT) / prior.ΔT_sd
+    ρ = prior.corr
+    return sqrt(max((z1^2 - 2ρ * z1 * z2 + z2^2) / (1 - ρ^2), 0.0))
 end
 
 function _distance_from_origin(scale, is_scaling_factor)

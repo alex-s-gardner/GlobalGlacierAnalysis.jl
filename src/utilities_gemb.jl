@@ -265,11 +265,11 @@ changes for groups of geotiles. Glaciers often span multiple geotiles, so calibr
 mutually exclusive geotile groups rather than individual tiles to ensure consistent parameter estimates
 across connected glacierized regions.
 
-Uses evolutionary coordinate ascent (ECA) optimization to find the `pscale` (precipitation scaling) and
-`ΔT` (air temperature offset, K) that minimize the cost function between modeled GEMB volume changes and
-altimetry observations. The cost function balances temporal agreement, seasonal cycle matching, and
-distance from each parameter's no-op value -- 1 for `pscale`, 0 for `ΔT`, which `is_scaling_factor`
-distinguishes.
+Uses a staged, deterministic grid search (`_gemb_grid_minimize`) to find the `pscale` (precipitation
+scaling) and `ΔT` (air temperature offset, K) that minimize the cost function between modeled GEMB
+volume changes and altimetry observations. The cost function balances temporal agreement, seasonal cycle
+matching, and distance from the empirical forcing prior `gemb_forcing_prior` (`origin_penalty_mode =
+:prior`, the default) or from the no-op values 1 for `pscale` and 0 for `ΔT` (`:legacy`).
 
 # Arguments
 - `dv_altim`: DimArray of volume change from altimetry [Gt] with dimensions (:date, :geotile)
@@ -291,12 +291,12 @@ distinguishes.
 
 # Implementation Details
 The function operates differently depending on the number of unique groups:
-- **Multiple groups**: Uses parallel threaded optimization with ECA algorithm
-- **Single group**: Performs full grid search for diagnostic visualization and comparison with ECA
+- **Multiple groups**: minimizes each group's cost with `_gemb_grid_minimize`, threaded across groups
+- **Single group**: returns the full cost grid for diagnostic plots and prints the grid minimum and the
+  value `_gemb_grid_minimize` returns
 
-Threading is used to accelerate optimization across groups, with each thread having independent
-RNG seeding for reproducibility. Data aggregation is pre-computed outside the parallel loop to
-avoid thread-safety issues with DimensionalData operations.
+The search is deterministic, so results do not depend on thread count or order. Data aggregation is
+pre-computed outside the parallel loop to avoid thread-safety issues with DimensionalData operations.
 
 # Examples
 ```julia
@@ -316,7 +316,9 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
     ΔT_to_pscale_weight = 1,
     seasonality_weight = 85/100,
     calibrate_to=:all,
-    is_scaling_factor=Dict("pscale" => true, "ΔT" => false)
+    is_scaling_factor=Dict("pscale" => true, "ΔT" => false),
+    origin_penalty_mode=:prior,
+    forcing_prior=gemb_forcing_prior
 )
 
     if ΔT_to_pscale_weight > 1 || ΔT_to_pscale_weight < 0
@@ -348,9 +350,7 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
     dpscale = dims(dv_gemb, :pscale)
     dΔT = dims(dv_gemb, :ΔT)
  
-    bounds = boxconstraints(lb=[minimum(dpscale.val), minimum(dΔT.val)].+.01, ub=[maximum(dpscale.val), maximum(dΔT.val)].-.01);
-
-    kwargs2 = (seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight=ΔT_to_pscale_weight, calibrate_to, is_scaling_factor)
+    kwargs2 = (seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight=ΔT_to_pscale_weight, calibrate_to, is_scaling_factor, origin_penalty_mode, forcing_prior)
 
     geotile_groups = copy(geotiles.group);
     geotile_ids = copy(geotiles.id)
@@ -370,7 +370,9 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
             ΔT0 = s0:step_size:e0
             dΔT_search = vcat(-1 ./ ΔT0[ΔT0.<-1], ΔT0[ΔT0.>=1])
         else
-            dΔT_search = minimum(dΔT.val):((maximum(dΔT.val)-minimum(dΔT.val))/20):maximum(dΔT.val)
+            # 0.1 K steps: fine enough to resolve the narrow pscale-ΔT valley of the cost surface before
+            # `_gemb_grid_minimize` refines around the minimum
+            dΔT_search = range(minimum(dΔT.val), maximum(dΔT.val); step=0.1)
         end
 
         dpscale_search = Dim{:pscale}(dpscale_search)
@@ -384,7 +386,7 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
     dv_altim0 = [Float32.(dropdims(sum(dv_altim[geotile=At(geotile_ids[groups_unique[i] .== geotile_groups])], dims=:geotile), dims=:geotile)) for i in eachindex(groups_unique)]
     dv_gemb0  = [Float32.(dropdims(sum(dv_gemb[geotile=At(geotile_ids[groups_unique[i]  .== geotile_groups])], dims=:geotile), dims=:geotile)) for i in eachindex(groups_unique)]
 
-    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!  
+    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     if length(groups_unique) != 1
 
@@ -392,18 +394,8 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
         ΔT0 = zeros(length(groups_unique));
  
         Threads.@threads for i in 1:length(groups_unique)
-
-            #(pscale0[i], ΔT0[i]) = gemb_altim_cost_group(dpscale_search, dΔT_search, dv_altim0, dv_gemb0, kwargs2)
-           
-            # Create closure with thread-local data
-            # Each thread gets its own copy of the data, ensuring thread safety
             f2 = Base.Fix{2}(Base.Fix{3}(Base.Fix{4}(gemb_altim_cost, kwargs2), dv_gemb0[i]), dv_altim0[i])
-
-            # Seed the task-local RNG with a deterministic seed unique to this group
-            # This ensures each thread has independent RNG state, preventing race conditions
-            my_options = Options(f_tol=1e-6, x_tol=1e-10, f_calls_limit=3000, store_convergence=false, seed=i)
-            result = optimize(f2, bounds, ECA(; η_max=1.0, K=6, options=my_options))
-            (pscale0[i], ΔT0[i]) = minimizer(result)
+            (pscale0[i], ΔT0[i]) = _gemb_grid_minimize(f2, val(dpscale_search), val(dΔT_search))
         end
 
         # modify dataframe outside of loop
@@ -419,7 +411,7 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
         i = 1;
         geotiles_in_group = geotile_ids[groups_unique[i] .== geotile_groups]
         f2 = Base.Fix{2}(Base.Fix{3}(Base.Fix{4}(gemb_altim_cost, kwargs2), dv_gemb0[i]), dv_altim0[i])
-       
+
         time_grid_search = @elapsed begin
             cost = fill(NaN, dpscale_search, dΔT_search)
             for pscale in dpscale_search
@@ -466,20 +458,57 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
         ΔT_grid_search = DimPoints(cost)[index_minimum][2]
         println("grid_search: pscale: $(round(pscale_grid_search, digits=2)), ΔT: $(round(ΔT_grid_search, digits=2)), time: $(round(time_grid_search, digits=2))")
 
-        # do an optimization search
-        time_eca_search = @elapsed begin
-            result = optimize(f2, bounds, ECA())
-        end
-        (pscale_eca, ΔT_eca) = minimizer(result)
-        println("eca_search : pscale: $(round(pscale_eca, digits=2)), ΔT: $(round(ΔT_eca, digits=2)), time: $(round(time_eca_search, digits=2))")
+        # the minimizer the multi-group path uses, so this path reports the calibrated values
+        (pscale_fit, ΔT_fit) = _gemb_grid_minimize(f2, val(dpscale_search), val(dΔT_search))
+        println("calibrated : pscale: $(round(pscale_fit, digits=2)), ΔT: $(round(ΔT_fit, digits=2))")
 
-        #f = Makie.lines(dv_altim0)
-        #Makie.lines!(gemb_dv_sample(pscale_best, ΔT_best, dv_gemb0))
-        #display(f)
-
-        #println("pscale_best: $(round(pscale_best, digits=1)), ΔT_best: $(round(ΔT_best, digits=1))")
         return cost, geotiles_in_group
     end
+end
+
+"""
+    _gemb_grid_minimize(f, pscale_grid, ΔT_grid; stride=(4, 5), ncandidates=3, nrefine=11) -> (pscale, ΔT, cost)
+
+Minimize `f([pscale, ΔT])` over `pscale_grid × ΔT_grid` deterministically, in three stages:
+
+1. every `stride`-th point of the grid, covering the whole range;
+2. the full grid within one coarse step of each of the `ncandidates` best coarse points;
+3. an `nrefine × nrefine` grid spanning the grid neighbours of the best point found so far.
+
+A grid search is used because the cost surface often has a long, narrow valley along which `pscale` and
+`ΔT` trade off, and can have a second basin at the edge of the forcing grid; a stochastic search (ECA)
+stalls partway along the valley or settles in the wrong basin, and its result then depends on the
+random seed. Keeping several coarse candidates guards against two separated basins of similar cost.
+"""
+function _gemb_grid_minimize(f, pscale_grid, ΔT_grid; stride=(4, 5), ncandidates=3, nrefine=11)
+    np, nt = length(pscale_grid), length(ΔT_grid)
+    sp, st = stride
+    cost(ip, it) = f([pscale_grid[ip], ΔT_grid[it]])
+
+    # 1. coarse pass; include the last index so the grid edges are always searched
+    ips = unique(vcat(1:sp:np, np)); its = unique(vcat(1:st:nt, nt))
+    coarse = [(cost(ip, it), ip, it) for ip in ips, it in its]
+    any(c -> isfinite(c[1]), coarse) || error("cost is not finite anywhere on the coarse pscale × ΔT grid")
+    candidates = first(sort(vec(coarse); by=first), min(ncandidates, length(coarse)))
+
+    # 2. full-resolution search around each candidate
+    best = (Inf, 0, 0)
+    for (_, ip0, it0) in candidates
+        for ip in max(ip0 - sp, 1):min(ip0 + sp, np), it in max(it0 - st, 1):min(it0 + st, nt)
+            c = cost(ip, it)
+            c < best[1] && (best = (c, ip, it))
+        end
+    end
+
+    # 3. refine between the grid neighbours of the best point
+    (_, ip, it) = best
+    fine = (best[1], pscale_grid[ip], ΔT_grid[it])
+    for p in range(pscale_grid[max(ip - 1, 1)], pscale_grid[min(ip + 1, np)]; length=nrefine),
+        t in range(ΔT_grid[max(it - 1, 1)], ΔT_grid[min(it + 1, nt)]; length=nrefine)
+        c = f([p, t])
+        c < fine[1] && (fine = (c, p, t))
+    end
+    return (fine[2], fine[3], fine[1])
 end
 
 """
@@ -619,7 +648,9 @@ function gemb_calibration(
     distance_from_origin_penalty=2 / 100,
     ΔT_to_pscale_weight=1,
     force_remake_before=nothing,
-    calibrate_to = :all
+    calibrate_to = :all,
+    origin_penalty_mode=:prior,
+    forcing_prior=gemb_forcing_prior
 )
 
     # Load GEMB data
@@ -761,12 +792,12 @@ function gemb_calibration(
             end
 
             # Find optimal fit to GEMB data
-            # There are issues with calibrating the SMB model to individual geotiles since glaciers 
-            # can cross multiple geotiles, therefore we calibrate the model for groups of 
+            # There are issues with calibrating the SMB model to individual geotiles since glaciers
+            # can cross multiple geotiles, therefore we calibrate the model for groups of
             # distinct geotiles.
             if isnothing(single_geotile_test)
-            
-                gembfit = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles[surface_mask]; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to, is_scaling_factor)
+
+                gembfit = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles[surface_mask]; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to, is_scaling_factor, origin_penalty_mode, forcing_prior)
 
                 for geotile_test in dgeotile_test
                     geotile_sanity_check = geotile_test
@@ -794,7 +825,7 @@ function gemb_calibration(
                 gembfit = gembfit[:, Not(:extent)]
                 GeoDataFrames.write(synthesized_gemb_fit, gembfit)
             else
-                cost, geotiles_in_group = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles[surface_mask]; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to, is_scaling_factor)
+                cost, geotiles_in_group = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles[surface_mask]; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to, is_scaling_factor, origin_penalty_mode, forcing_prior)
                 return (cost, dv_altim, geotiles_in_group)
             end
         end

@@ -2,6 +2,7 @@ using Test
 using GlobalGlacierAnalysis
 import GlobalGlacierAnalysis as GGA
 using DimensionalData
+using Dates
 
 @testset "Project configuration" begin
     @testset "gemb_info" begin
@@ -88,5 +89,36 @@ using DimensionalData
         # 30-day spacing, centres half a bin in
         @test all(diff(date_range) .== Day(30))
         @test date_center[1] == date_range[1] + Day(15)
+    end
+
+    @testset "GEMB calibration cost penalty" begin
+        res = DimArray(sin.(2π .* (1:120) ./ 12) .+ 0.1 .* (1:120) ./ 120, Dim{:date}(DateTime(2010, 1, 15):Month(1):DateTime(2019, 12, 15)))
+        kw = (seasonality_weight=0.85, distance_from_origin_penalty=GGA.distance_from_origin_penalty,
+            ΔT_to_pscale_weight=GGA.ΔT_to_pscale_weight)
+        prior = GGA.gemb_forcing_prior
+
+        # both penalties are a factor ≥ 1 that is exactly 1 at their centre
+        bare = GGA.model_fit_cost_function(res, 1.0, 0.0; kw..., origin_penalty_mode=:legacy)
+        @test GGA.model_fit_cost_function(res, prior.pscale, prior.ΔT; kw...) ≈ bare
+        @test GGA.model_fit_cost_function(res, 1.0, 0.0; kw...) > bare
+        @test GGA.model_fit_cost_function(res, prior.pscale, prior.ΔT; kw..., origin_penalty_mode=:legacy) > bare
+
+        # the prior distance is a Mahalanobis distance in (log pscale, ΔT)
+        @test GGA._forcing_prior_distance(prior.pscale * exp(prior.log_pscale_sd), prior.ΔT, (; prior..., corr=0.0)) ≈ 1
+        @test GGA._forcing_prior_distance(prior.pscale, prior.ΔT + prior.ΔT_sd, (; prior..., corr=0.0)) ≈ 1
+
+        @test_throws "origin_penalty_mode must be :legacy or :prior" GGA.model_fit_cost_function(res, 1.0, 0.0; kw..., origin_penalty_mode=:additive)
+        @test_throws "assumes a multiplicative pscale and an additive ΔT" GGA.model_fit_cost_function(res, 1.0, 0.0; kw...,
+            is_scaling_factor=Dict("pscale" => true, "ΔT" => true))
+    end
+
+    @testset "GEMB calibration grid search" begin
+        pscale_grid = exp.(range(log(0.25), log(4), 41))
+        ΔT_grid = collect(-3:0.25:6)
+        f(x) = (log(x[1]) - log(1.7))^2 + 0.1 * (x[2] - 2.3)^2
+        pscale, ΔT, cost = GGA._gemb_grid_minimize(f, pscale_grid, ΔT_grid)
+        @test pscale ≈ 1.7 rtol = 0.01
+        @test ΔT ≈ 2.3 atol = 0.03
+        @test cost < 1e-4
     end
 end
