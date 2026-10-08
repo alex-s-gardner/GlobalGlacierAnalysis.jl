@@ -49,6 +49,19 @@ binned_filling_parameters[2] = (
         ), smooth_h2t_length_scale=400, # 800 m = 1 year in distance for anomaly from variogram analysis =
         model1_nmad_max=10, # this is a sigma-equivelent threshold
     )
+
+    # Sets 5-8 are sets 1-4 with a 2-harmonic residual climatology for the laser altimeters. The
+    # temporal median in `hyps_model_fill!` otherwise removes the part of the seasonal cycle the annual
+    # sine in `model1` cannot represent, which moves the seasonal maximum earlier and the minimum later;
+    # holding the climatology out of the smoothing keeps that shape, and the amplitude normalization
+    # carries it into the other missions.
+    for k in 1:4
+        binned_filling_parameters[k + 4] = merge(binned_filling_parameters[k], (
+            preserve_residual_climatology=Dict("icesat2" => true, "icesat" => true),
+            residual_climatology_harmonics=Dict("icesat2" => 2, "icesat" => 2),
+            transfer_residual_climatology=true,
+        ))
+    end
 end
 
 # define model for curvature correction
@@ -625,21 +638,22 @@ function geotile_binned_fill(;
                     continue
                 end
 
-                if !isnothing(missions2update)
-                    printstyled("\n   -> Filling and aligning binned data for select missions $(missions2update): $(binned_filled_file)"; color=:light_gray)
-                else
-                    printstyled("\n   -> Filling and aligning binned data for all missions: $(binned_filled_file)"; color=:light_gray)
-                end
-
                 dh1 = deepcopy(dh11)
                 nobs1 = deepcopy(nobs11)
 
                 param_filling = binned_filling_parameters[fill_param]
-                
-                if !isnothing(missions2update) && isfile(binned_filled_file)
-                    missions2update = missions2update
+
+                # `missions2update` selects the missions to fill, with the rest grafted from an
+                # existing filled file. Filling every mission is the only option when that file is
+                # absent. Keep `missions2update` itself untouched -- it applies to every parameter
+                # set in the loop, not just this one.
+                reuse_previous = !isnothing(missions2update) && isfile(binned_filled_file)
+                missions2fill = reuse_previous ? String.(missions2update) : collect(keys(dh1))
+
+                if reuse_previous
+                    printstyled("\n   -> Filling and aligning binned data for select missions $(missions2fill): $(binned_filled_file)"; color=:light_gray)
                 else
-                    missions2update = keys(dh1)
+                    printstyled("\n   -> Filling and aligning binned data for all missions: $(binned_filled_file)"; color=:light_gray)
                 end
 
                 # align geotile dataframe with DimArrays
@@ -682,10 +696,10 @@ function geotile_binned_fill(;
                 end
 
                 # replace non-updated missions with previous results
-                if !isnothing(missions2update)
+                if reuse_previous
                     (dh_hyps, nobs_hyps, model_param) = FileIO.load(binned_filled_file, ("dh_hyps", "nobs_hyps", "model_param"))
 
-                    for k in setdiff(keys(dh1), missions2update)
+                    for k in setdiff(keys(dh1), missions2fill)
                         dh1[k] = dh_hyps[k]
                         nobs1[k] = nobs_hyps[k]
                         params_fill[k] = model_param[k]
@@ -733,7 +747,7 @@ function geotile_binned_fill(;
 
                 # correct for any erronious trends found over land
                 begin
-                    hyps_remove_land_surface_trend!(dh1; missions2update, remove_land_surface_trend)
+                    hyps_remove_land_surface_trend!(dh1; missions2update=missions2fill, remove_land_surface_trend)
 
                     if plots_show || plots_save
                         plot_stage(dh1, "land surface trend corrected height anomalies")
@@ -742,9 +756,12 @@ function geotile_binned_fill(;
 
                 # interpolate height anomalies
                 begin
-                    hyps_model_fill!(dh1, nobs1, params_fill; missions2update, bincount_min=param_filling.bincount_min,
+                    hyps_model_fill!(dh1, nobs1, params_fill; missions2update=missions2fill, bincount_min=param_filling.bincount_min,
                         model1_nmad_max=param_filling.model1_nmad_max, smooth_n=param_filling.smooth_n,
-                        smooth_h2t_length_scale=param_filling.smooth_h2t_length_scale, show_times=false, )
+                        smooth_h2t_length_scale=param_filling.smooth_h2t_length_scale,
+                        preserve_residual_climatology=get(param_filling, :preserve_residual_climatology, false),
+                        residual_climatology_harmonics=get(param_filling, :residual_climatology_harmonics, 2),
+                        show_times=false, )
 
                     if plots_show || plots_save
                         plot_stage(dh1, "interpolated height anomalies")
@@ -754,8 +771,9 @@ function geotile_binned_fill(;
                 # apply seasonal amplitude normalization
                 if amplitude_correct
 
-                    for mission in setdiff(missions2update, [mission_reference_for_amplitude_normalization])
-                        hyps_amplitude_normalize!(dh1[mission], params_fill[mission], params_fill[mission_reference_for_amplitude_normalization])
+                    for mission in setdiff(missions2fill, [mission_reference_for_amplitude_normalization])
+                        hyps_amplitude_normalize!(dh1[mission], params_fill[mission], params_fill[mission_reference_for_amplitude_normalization];
+                            transfer_residual_climatology=get(param_filling, :transfer_residual_climatology, false))
                     end
 
                     if plots_show || plots_save
@@ -772,14 +790,14 @@ function geotile_binned_fill(;
                     # to limit the degree of extrapoaltion mission latitudinal limits are used
                     
                     # NOTE: if valid data extends beyond elevation range of surface_mask then extents of valid output data can differ.. this is not a problem
-                    dh1 = hyps_fill_empty!(dh1, params_fill, geotile_extent, area_km2; missions2update)
+                    dh1 = hyps_fill_empty!(dh1, params_fill, geotile_extent, area_km2; missions2update=missions2fill)
 
                     # NOTE: extraploation of data is done after `amplitude_correct` as you 
                     # can get exteem values in poorly measured geotiles if the model is used 
                     # to extraplate the data (partifularly dh as a function of elevation)... 
                     # this should be investigated in future versions... possibly checking if 
                     #a model is appropiate for extrapolation 
-                    dh1 = hyps_fill_updown!(dh1, area_km2; missions2update)
+                    dh1 = hyps_fill_updown!(dh1, area_km2; missions2update=missions2fill)
 
                     if plots_show || plots_save
                         plot_stage(dh1, "extrapolated height anomalies")
@@ -788,7 +806,7 @@ function geotile_binned_fill(;
                 
                 # align height nomalies to reference missions
                 begin
-                    dh1, params_fill = hyps_align_dh!(dh1, nobs1, params_fill, area_km2; missions2align2, missions2update)
+                    dh1, params_fill = hyps_align_dh!(dh1, nobs1, params_fill, area_km2; missions2align2, missions2update=missions2fill)
 
                     if plots_show || plots_save
                         plot_stage(dh1, "adjusted height anomalies")
@@ -797,7 +815,7 @@ function geotile_binned_fill(;
 
                 # fill geotiles with model
                 begin
-                    dh1, nobs1 = replace_with_model!(dh1, nobs1, geotiles2replace; missions2replace=intersect(missions2replace_with_model, missions2update), missions2align2)
+                    dh1, nobs1 = replace_with_model!(dh1, nobs1, geotiles2replace; missions2replace=intersect(missions2replace_with_model, missions2fill), missions2align2)
 
                     if plots_show || plots_save
                         plot_stage(dh1, "model-filled height anomalies")

@@ -249,7 +249,7 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
 
     missions = mission_proper_name.(collect(keys(dh)))
     dheight = dims(dh[first(keys(dh))], :height)
-    mscale = val(dheight)[2] - val(dheight)[1]
+    ΔT = val(dheight)[2] - val(dheight)[1]
     ddate = dims(dh[first(keys(dh))], :date)
     
     valid = falses(size(dh[first(keys(dh))]))
@@ -314,8 +314,8 @@ function plot_elevation_time_multimission(dh; colorrange=(-20, 20), linkaxes=tru
         xlims!(ax[i], xlims)
     end
 
-    height_min = max(0.0, (floor(height_min / mscale) * mscale) - mscale)
-    height_max = ceil(height_max / mscale) * mscale
+    height_min = max(0.0, (floor(height_min / ΔT) * ΔT) - ΔT)
+    height_max = ceil(height_max / ΔT) * ΔT
 
     for (i, mission) in enumerate(mission_order)
         ylims!(ax[i], (height_min, height_max))
@@ -348,7 +348,7 @@ function plot_hypsometry!(ax, area_km2)
     ax.title="glacier area-elevation distribution"
 
     dheight = dims(area_km2, :height)
-    mscale = val(dheight)[2] - val(dheight)[1]
+    ΔT = val(dheight)[2] - val(dheight)[1]
 
     pts0 = Point2f.(collect(area_km2), parent(val(dheight)))
     pts = similar(pts0, (length(pts0) * 2)+2)
@@ -368,7 +368,7 @@ function plot_hypsometry!(ax, area_km2)
     end
 
     poly!(ax, pts, color=:skyblue2, strokecolor=:black, strokewidth=1)
-    xlims!(ax, (0, ceil(maximum(area_km2)*1.05 / mscale) * mscale))
+    xlims!(ax, (0, ceil(maximum(area_km2)*1.05 / ΔT) * ΔT))
     ax.ygridvisible = false
     ax.xgridvisible = false
     ax.yticklabelsvisible = false
@@ -939,11 +939,11 @@ function plot_model_fit(gemb, discharge, dv_altim, cost, geotiles_in_group; colo
 
     index_minimum = argmin(cost)
     pscale_best = DimPoints(cost)[index_minimum][1]
-    mscale_best = DimPoints(cost)[index_minimum][2]
+    ΔT_best = DimPoints(cost)[index_minimum][2]
 
-    best_smb = gemb_dv_sample(pscale_best, mscale_best, gemb0[:smb]);
-    best_fac = gemb_dv_sample(pscale_best, mscale_best, gemb0[:fac]);
-    best_fit = gemb_dv_sample(pscale_best, mscale_best, gemb0[:dv]);
+    best_smb = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:smb]);
+    best_fac = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:fac]);
+    best_fit = gemb_dv_sample(pscale_best, ΔT_best, gemb0[:dv]);
 
     
     fit_gemb  = ts_seasonal_model(best_fit; interval=nothing)
@@ -1039,7 +1039,7 @@ function plot_best_fit!(ax, best_smb, best_fac, best_discharge, best_fit, dv0; c
     ax.ytickformat=values -> ["$(round(Int,value))m" for value in values]
     #ax.xticks = xlims[1]:xtickspacing:xlims[2]
     #xlims!(ax, xlims)
-    #title="best fit for $single_geotile_test [pscale = $pscale0, mscale = $mscale0, mad = $(round(cost_metric_minimum; digits=2))]"
+    #title="best fit for $single_geotile_test [pscale = $pscale0, ΔT = $ΔT0, mad = $(round(cost_metric_minimum; digits=2))]"
 
     CairoMakie.lines!(ax, decyear, parent(dv0); label="observed", color=clrs[1])
     CairoMakie.lines!(ax, decyear, parent(best_fac); label="FAC", color=clrs[2])
@@ -1054,11 +1054,11 @@ end
 """
     plot_cost_metric!(ax, cost_metric; colormap=:thermal)
 
-Plot a contour map of the cost metric as a function of precipitation scale (pscale) and mscale.
+Plot a contour map of the cost metric as a function of precipitation scale (pscale) and ΔT.
 
 # Arguments
 - `ax`: A CairoMakie Axis object to plot on.
-- `cost_metric`: 2D array (or NamedDimsArray) of cost metric values, with dimensions :pscale and :mscale.
+- `cost_metric`: 2D array (or NamedDimsArray) of cost metric values, with dimensions :pscale and :ΔT.
 
 # Keyword Arguments
 - `colormap`: Colormap to use for the contour plot (default: `:thermal`).
@@ -1066,20 +1066,23 @@ Plot a contour map of the cost metric as a function of precipitation scale (psca
 # Returns
 - `(ax, crange)`: The modified axis object and the color range tuple used for the plot.
 
-This function creates a contour plot of the cost metric over the parameter space of precipitation scale and mscale.
+This function creates a contour plot of the cost metric over the parameter space of precipitation scale and ΔT.
 It highlights the minimum cost location with a marker and label, and adds a colorbar for reference.
 """
 function plot_cost_metric!(ax, cost_metric; colormap=:thermal, step=1/35)
 
     dpscale = dims(cost_metric, :pscale)
-    dmscale = dims(cost_metric, :mscale)
+    dΔT = dims(cost_metric, :ΔT)
 
     ax.xlabel = "precipitation scaling"
-    ax.ylabel = "melt scaling"
+    ax.ylabel = "temperature offset [K]"
 
+    # `pscale` is multiplicative, so it is drawn on the symmetric 1/n..n axis `scale_linear_ticks`
+    # builds. `ΔT` is an additive offset in kelvin and is already linear: transforming it would put
+    # 0 K at the axis value that means "no scaling" and compress the negative half.
     (x, xticks, xticklabels) = scale_linear_ticks(dpscale.val)
-    (y, yticks, yticklabels) = scale_linear_ticks(dmscale.val)
-   
+    y = collect(dΔT.val)
+
     # normalize cost metric to 0-1
     cost_metric .-= minimum(cost_metric[.!isinf.(cost_metric)])
     cost_metric ./= maximum(cost_metric[.!isinf.(cost_metric)])
@@ -1091,14 +1094,13 @@ function plot_cost_metric!(ax, cost_metric; colormap=:thermal, step=1/35)
     contour!(ax, x, y, cost_metric.data; colorrange=crange, levels=0:step:maximum(cost_metric), colormap)
 
     ax.xticks = (xticks, xticklabels)
-    ax.yticks = (yticks, yticklabels)
 
     index_minimum = argmin(cost_metric)
     pscale_best = DimPoints(cost_metric)[index_minimum][1]
-    mscale_best = DimPoints(cost_metric)[index_minimum][2]
+    ΔT_best = DimPoints(cost_metric)[index_minimum][2]
 
     x_best = scale2linear(pscale_best)
-    y_best = scale2linear(mscale_best)
+    y_best = ΔT_best
     scatter!(ax, x_best, y_best; color=:black, markersize=15, marker=:xcross)
 
     return ax, crange
@@ -1467,7 +1469,7 @@ end
 Plot area-normalized height change ensemble results from GEMB model diagnostics.
 
 # Arguments
-- `gemb_dv`: Dictionary or NamedTuple of GEMB diagnostic variables, each as a DimArray with `:pscale` and `:mscale` dimensions.
+- `gemb_dv`: Dictionary or NamedTuple of GEMB diagnostic variables, each as a DimArray with `:pscale` and `:ΔT` dimensions.
 - `area_km2`: DimArray or array representing the area (in km²) for normalization.
 - `geotile`: (Optional) String identifier for the geotile being plotted (used in plot titles).
 - `title_prefix`: (Optional) String prefix for plot titles.
@@ -1475,14 +1477,15 @@ Plot area-normalized height change ensemble results from GEMB model diagnostics.
 # Returns
 - `figures`: Dictionary mapping each variable name to its corresponding Makie figure.
 
-Each figure shows the area-normalized height change for all parameter scale (`pscale`) and height change (`mscale`) ensemble members, with a legend indicating the parameter combinations.
+Each figure shows the area-normalized height change for every combination of precipitation scaling
+(`pscale`) and air temperature offset (`ΔT`, in K), with a legend indicating the parameter pair.
 """
 function plot_dh_gemb_ensemble(gemb_dv, area_km2; geotile = "", title_prefix="")
     area_total = sum(parent(area_km2))
     vars2plot = keys(gemb_dv)
     dpscale = dims(gemb_dv[first(vars2plot)], :pscale)
-    dmscale = dims(gemb_dv[first(vars2plot)], :mscale)
-    clrs = Makie.resample_cmap(:thermal, length(dpscale) * length(dmscale) + 1)
+    dΔT = dims(gemb_dv[first(vars2plot)], :ΔT)
+    clrs = Makie.resample_cmap(:thermal, length(dpscale) * length(dΔT) + 1)
     figures = Dict()
 
     for var0 in vars2plot
@@ -1493,10 +1496,10 @@ function plot_dh_gemb_ensemble(gemb_dv, area_km2; geotile = "", title_prefix="")
 
         cnt = 1
         for pscale in dpscale
-            for mscale in dmscale
-                dh = gemb_dv[var0][pscale=At(pscale), mscale=At(mscale)] ./ area_total
+            for ΔT in dΔT
+                dh = gemb_dv[var0][pscale=At(pscale), ΔT=At(ΔT)] ./ area_total
                 height_range, = validrange(.!isnan.(dh))
-                lines!(ax, dh[height_range]; label="p:$(pscale) Δh:$(mscale)", color=clrs[cnt])
+                lines!(ax, dh[height_range]; label="p:$(pscale) ΔT:$(ΔT)K", color=clrs[cnt])
                 cnt += 1
             end
         end
@@ -1634,26 +1637,27 @@ function plot_point_location_river_flux(land_flux, glacier_flux, snow_flux; date
 end
 
 
-function plot_ref_pscale_mscale_summary(path2runs_synthesized, binned_synthesized_dv_file_ref; rgi2plot=[99], seasonality_weight=seasonality_weight, distance_from_origin_penalty=distance_from_origin_penalty, mscale_to_pscale_weight=mscale_to_pscale_weight, show_title=true, bin_width=0.25)
+function plot_ref_pscale_ΔT_summary(path2runs_synthesized, binned_synthesized_dv_file_ref; rgi2plot=[99], seasonality_weight=seasonality_weight, distance_from_origin_penalty=distance_from_origin_penalty, ΔT_to_pscale_weight=ΔT_to_pscale_weight, show_title=true, bin_width=0.25)
 
     ensemble_reference_file = replace(binned_synthesized_dv_file_ref, "_gembfit_dv.jld2" => ".jld2")
 
     region_fits = ensemble_summary(path2runs_synthesized, ensemble_reference_file;)
     gemb_fit = GeoDataFrames.read(replace(ensemble_reference_file, ".jld2" => "_gembfit.arrow"))
 
-    title1 = "W_s: $(seasonality_weight), W_d: $(distance_from_origin_penalty), W_m2p: $(mscale_to_pscale_weight)"
+    title1 = "W_s: $(seasonality_weight), W_d: $(distance_from_origin_penalty), W_m2p: $(ΔT_to_pscale_weight)"
 
+    # `pscale` is multiplicative and is binned on the symmetric 1/n..n axis. `ΔT` is an additive offset
+    # in kelvin, so it is binned in kelvin directly -- transforming it would place 0 K where the scale
+    # axis means "no scaling" and compress the negative half against the positive one.
     (pscale_linear, pscale_ticks, pscale_ticklabels) = scale_linear_ticks(gemb_fit[:, :pscale])
-    (mscale_linear, mscale_ticks, mscale_ticklabels) = scale_linear_ticks(gemb_fit[:, :pscale])
 
     e0 = ceil(Int, maximum(abs.(pscale_linear)))
-
     pscale_linear_bins = (-e0-bin_width):bin_width:(e0+bin_width)
     pscale_linear_bin_centers = (pscale_linear_bins[1:end-1] .+ pscale_linear_bins[2:end]) ./ 2
 
-    e0 = ceil(Int, maximum(abs.(mscale_linear)))
-    mscale_linear_bins = (-e0-bin_width):bin_width:(e0+bin_width)
-    mscale_linear_bin_centers = (mscale_linear_bins[1:end-1] .+ mscale_linear_bins[2:end]) ./ 2
+    e0 = ceil(Int, maximum(abs.(gemb_fit[:, :ΔT])))
+    ΔT_bins = (-e0-bin_width):bin_width:(e0+bin_width)
+    ΔT_bin_centers = (ΔT_bins[1:end-1] .+ ΔT_bins[2:end]) ./ 2
 
 
     f = Vector{Any}(undef, length(rgi2plot))
@@ -1682,11 +1686,11 @@ function plot_ref_pscale_mscale_summary(path2runs_synthesized, binned_synthesize
         end
 
         ax = Makie.Axis(f[i][1, 1]; xlabel="precipitation scaling", ylabel="count", xticks=(pscale_ticks, pscale_ticklabels))
-        barplot!(ax, mscale_linear_bin_centers, h.weights;)
+        barplot!(ax, pscale_linear_bin_centers, h.weights;)
 
-        h = StatsBase.fit(Histogram, scale2linear.(gemb_fit[index, :mscale]), mscale_linear_bins)
-        ax = Makie.Axis(f[i][1, 2]; xlabel="melt scaling", ylabel="count", xticks=(mscale_ticks, mscale_ticklabels))
-        barplot!(ax, mscale_linear_bin_centers, h.weights;)
+        h = StatsBase.fit(Histogram, gemb_fit[index, :ΔT], ΔT_bins)
+        ax = Makie.Axis(f[i][1, 2]; xlabel="temperature offset [K]", ylabel="count")
+        barplot!(ax, ΔT_bin_centers, h.weights;)
     end
 
     return f

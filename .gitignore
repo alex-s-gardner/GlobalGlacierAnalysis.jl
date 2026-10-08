@@ -5,3 +5,6 @@ src/junk.jl
 
 # Separate clone, not part of this package
 genai_api/
+
+# Scratch figures for local inspection
+figs_scratch/

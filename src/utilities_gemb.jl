@@ -255,47 +255,48 @@ end
 """
     gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
                          distance_from_origin_penalty=0.20,
-                         mscale_to_pscale_weight=1,
+                         ΔT_to_pscale_weight=1,
                          seasonality_weight=0.85,
                          calibrate_to=:all,
-                         is_scaling_factor=Dict("pscale"=>true, "mscale"=>true))
+                         is_scaling_factor=Dict("pscale"=>true, "ΔT"=>true))
 
-Calibrate GEMB (Glacier Energy and Mass Balance) model precipitation and melt scaling factors
-to altimetry-derived volume changes for groups of geotiles. Glaciers often span multiple geotiles,
-so calibration is performed on mutually exclusive geotile groups rather than individual tiles to
-ensure consistent parameter estimates across connected glacierized regions.
+Calibrate the GEMB (Glacier Energy and Mass Balance) forcing parameters to altimetry-derived volume
+changes for groups of geotiles. Glaciers often span multiple geotiles, so calibration is performed on
+mutually exclusive geotile groups rather than individual tiles to ensure consistent parameter estimates
+across connected glacierized regions.
 
-Uses evolutionary coordinate ascent (ECA) optimization to find optimal `pscale` (precipitation
-scaling) and `mscale` (melt scaling) parameters that minimize the cost function between modeled
-GEMB volume changes and altimetry observations. The cost function balances temporal agreement,
-seasonal cycle matching, and distance from nominal (1.0) scaling factors.
+Uses a staged, deterministic grid search (`_gemb_grid_minimize`) to find the `pscale` (precipitation
+scaling) and `ΔT` (air temperature offset, K) that minimize the cost function between modeled GEMB
+volume changes and altimetry observations. The cost function balances temporal agreement, seasonal cycle
+matching, and distance from the empirical forcing prior `gemb_forcing_prior` (`origin_penalty_mode =
+:prior`, the default) or from the no-op values 1 for `pscale` and 0 for `ΔT` (`:legacy`).
 
 # Arguments
 - `dv_altim`: DimArray of volume change from altimetry [Gt] with dimensions (:date, :geotile)
-- `dv_gemb`: DimArray of GEMB modeled volume change [Gt] with dimensions (:date, :geotile, :pscale, :mscale)
+- `dv_gemb`: DimArray of GEMB modeled volume change [Gt] with dimensions (:date, :geotile, :pscale, :ΔT)
 - `geotiles0`: DataFrame containing geotile metadata with columns :id, :group, :rgi, :extent, :area_km2
   - The :group column identifies mutually exclusive geotile groups for joint calibration
 
 # Keyword Arguments
-- `distance_from_origin_penalty=0.20`: Weight (0-1) for penalty on deviation from pscale=1, mscale=1
-- `mscale_to_pscale_weight=1`: Weight (0-1) balancing mscale vs pscale in optimization (1=equal weight)
+- `distance_from_origin_penalty=0.20`: Weight (0-1) for penalty on deviation from pscale=1, ΔT=0
+- `ΔT_to_pscale_weight=1`: Weight (0-1) balancing ΔT vs pscale in optimization (1=equal weight)
 - `seasonality_weight=0.85`: Weight (0-1) for matching seasonal cycle vs absolute volume change
 - `calibrate_to=:all`: Which component to calibrate to (:all, :seasonal, :trend, etc.)
-- `is_scaling_factor`: Dict indicating whether pscale/mscale are multiplicative (true) or additive (false)
+- `is_scaling_factor`: Dict indicating whether pscale/ΔT are multiplicative (true) or additive (false)
 
 # Returns
-- **Normal mode (multiple groups)**: DataFrame with columns [:id, :extent, :group, :pscale, :mscale, :rgi]
+- **Normal mode (multiple groups)**: DataFrame with columns [:id, :extent, :group, :pscale, :ΔT, :rgi]
   - One row per geotile with optimized scaling factors (shared within each group)
 - **Debug mode (single group)**: Tuple of (cost grid, geotile_ids) for examining optimization landscape
 
 # Implementation Details
 The function operates differently depending on the number of unique groups:
-- **Multiple groups**: Uses parallel threaded optimization with ECA algorithm
-- **Single group**: Performs full grid search for diagnostic visualization and comparison with ECA
+- **Multiple groups**: minimizes each group's cost with `_gemb_grid_minimize`, threaded across groups
+- **Single group**: returns the full cost grid for diagnostic plots and prints the grid minimum and the
+  value `_gemb_grid_minimize` returns
 
-Threading is used to accelerate optimization across groups, with each thread having independent
-RNG seeding for reproducibility. Data aggregation is pre-computed outside the parallel loop to
-avoid thread-safety issues with DimensionalData operations.
+The search is deterministic, so results do not depend on thread count or order. Data aggregation is
+pre-computed outside the parallel loop to avoid thread-safety issues with DimensionalData operations.
 
 # Examples
 ```julia
@@ -312,14 +313,16 @@ See also: `gemb_altim_cost`, `gemb_dv_sample`, `gemb_fit_to_altimetry`
 """
 function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
     distance_from_origin_penalty = 20/100,
-    mscale_to_pscale_weight = 1,
+    ΔT_to_pscale_weight = 1,
     seasonality_weight = 85/100,
     calibrate_to=:all,
-    is_scaling_factor=Dict("pscale" => true, "mscale" => true)
+    is_scaling_factor=Dict("pscale" => true, "ΔT" => false),
+    origin_penalty_mode=:prior,
+    forcing_prior=gemb_forcing_prior
 )
 
-    if mscale_to_pscale_weight > 1 || mscale_to_pscale_weight < 0
-        error("mscale_to_pscale_weight must be between 0 and 1")
+    if ΔT_to_pscale_weight > 1 || ΔT_to_pscale_weight < 0
+        error("ΔT_to_pscale_weight must be between 0 and 1")
     end
 
     if seasonality_weight > 1 || seasonality_weight < 0
@@ -340,14 +343,14 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
     
 
     geotiles[!, :pscale] .= 1.0
-    geotiles[!, :mscale] .= 1.0
-  
-    dpscale = dims(dv_gemb, :pscale)
-    dmscale = dims(dv_gemb, :mscale)
- 
-    bounds = boxconstraints(lb=[minimum(dpscale.val), minimum(dmscale.val)].+.01, ub=[maximum(dpscale.val), maximum(dmscale.val)].-.01);
+    # 0.0 is the no-op for a temperature offset, as 1.0 is for a scaling factor. Overwritten below for
+    # every geotile whose group is fitted; it only survives where the fit is skipped.
+    geotiles[!, :ΔT] .= 0.0
 
-    kwargs2 = (seasonality_weight, distance_from_origin_penalty, mscale_to_pscale_weight=mscale_to_pscale_weight, calibrate_to, is_scaling_factor)
+    dpscale = dims(dv_gemb, :pscale)
+    dΔT = dims(dv_gemb, :ΔT)
+ 
+    kwargs2 = (seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight=ΔT_to_pscale_weight, calibrate_to, is_scaling_factor, origin_penalty_mode, forcing_prior)
 
     geotile_groups = copy(geotiles.group);
     geotile_ids = copy(geotiles.id)
@@ -361,17 +364,19 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
         pscale0 = s0:step_size:e0
         dpscale_search = vcat(-1 ./ pscale0[pscale0.<-1], pscale0[pscale0.>=1])
 
-        if all(dmscale .> 0)
-            s0 = -1 / minimum(dmscale.val)
-            e0 = maximum(dmscale.val)
-            mscale0 = s0:step_size:e0
-            dmscale_search = vcat(-1 ./ mscale0[mscale0.<-1], mscale0[mscale0.>=1])
+        if is_scaling_factor["ΔT"]
+            s0 = -1 / minimum(dΔT.val)
+            e0 = maximum(dΔT.val)
+            ΔT0 = s0:step_size:e0
+            dΔT_search = vcat(-1 ./ ΔT0[ΔT0.<-1], ΔT0[ΔT0.>=1])
         else
-            dmscale_search = minimum(dmscale.val):((maximum(dmscale.val)-minimum(dmscale.val))/20):maximum(dmscale.val)
+            # 0.1 K steps: fine enough to resolve the narrow pscale-ΔT valley of the cost surface before
+            # `_gemb_grid_minimize` refines around the minimum
+            dΔT_search = range(minimum(dΔT.val), maximum(dΔT.val); step=0.1)
         end
 
         dpscale_search = Dim{:pscale}(dpscale_search)
-        dmscale_search = Dim{:mscale}(dmscale_search)
+        dΔT_search = Dim{:ΔT}(dΔT_search)
     end
     # loop for each group
     # NOTE: do not do a groupby on geotiles as you need to keep the original geotiles order
@@ -381,47 +386,37 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
     dv_altim0 = [Float32.(dropdims(sum(dv_altim[geotile=At(geotile_ids[groups_unique[i] .== geotile_groups])], dims=:geotile), dims=:geotile)) for i in eachindex(groups_unique)]
     dv_gemb0  = [Float32.(dropdims(sum(dv_gemb[geotile=At(geotile_ids[groups_unique[i]  .== geotile_groups])], dims=:geotile), dims=:geotile)) for i in eachindex(groups_unique)]
 
-    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!  
+    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     if length(groups_unique) != 1
 
         pscale0 = zeros(length(groups_unique));
-        mscale0 = zeros(length(groups_unique));
+        ΔT0 = zeros(length(groups_unique));
  
         Threads.@threads for i in 1:length(groups_unique)
-
-            #(pscale0[i], mscale0[i]) = gemb_altim_cost_group(dpscale_search, dmscale_search, dv_altim0, dv_gemb0, kwargs2)
-           
-            # Create closure with thread-local data
-            # Each thread gets its own copy of the data, ensuring thread safety
             f2 = Base.Fix{2}(Base.Fix{3}(Base.Fix{4}(gemb_altim_cost, kwargs2), dv_gemb0[i]), dv_altim0[i])
-
-            # Seed the task-local RNG with a deterministic seed unique to this group
-            # This ensures each thread has independent RNG state, preventing race conditions
-            my_options = Options(f_tol=1e-6, x_tol=1e-10, f_calls_limit=3000, store_convergence=false, seed=i)
-            result = optimize(f2, bounds, ECA(; η_max=1.0, K=6, options=my_options))
-            (pscale0[i], mscale0[i]) = minimizer(result)
+            (pscale0[i], ΔT0[i]) = _gemb_grid_minimize(f2, val(dpscale_search), val(dΔT_search))
         end
 
         # modify dataframe outside of loop
         for i in eachindex(groups_unique)
             gindex = groups_unique[i] .== geotile_groups;
             geotiles[gindex, :pscale] .= pscale0[i]
-            geotiles[gindex, :mscale] .= mscale0[i]
+            geotiles[gindex, :ΔT] .= ΔT0[i]
         end
 
-        return geotiles[:, [:id, :extent, :group, :pscale, :mscale, :rgi]]
+        return geotiles[:, [:id, :extent, :group, :pscale, :ΔT, :rgi]]
 
     else
         i = 1;
         geotiles_in_group = geotile_ids[groups_unique[i] .== geotile_groups]
         f2 = Base.Fix{2}(Base.Fix{3}(Base.Fix{4}(gemb_altim_cost, kwargs2), dv_gemb0[i]), dv_altim0[i])
-       
+
         time_grid_search = @elapsed begin
-            cost = fill(NaN, dpscale_search, dmscale_search)
+            cost = fill(NaN, dpscale_search, dΔT_search)
             for pscale in dpscale_search
-                for  mscale in dmscale_search
-                    cost[pscale=At(pscale), mscale=At(mscale)] = f2([pscale, mscale])
+                for  ΔT in dΔT_search
+                    cost[pscale=At(pscale), ΔT=At(ΔT)] = f2([pscale, ΔT])
                 end
             end
         end
@@ -434,15 +429,15 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
         
             cost0 = Inf;
             time_grid_search = @elapsed begin
-                cost = fill(NaN, dpscale_search, dmscale_search)
+                cost = fill(NaN, dpscale_search, dΔT_search)
                 for pscale in dpscale_search
-                    for  mscale in dmscale_search
-                        cost1 = f2([pscale, mscale])
+                    for  ΔT in dΔT_search
+                        cost1 = f2([pscale, ΔT])
 
                         if cost0 > cost1
                             cost0 = cost1
                 
-                            gemb2X = gemb_dv_sample(pscale, mscale, dv_gemb0[i])
+                            gemb2X = gemb_dv_sample(pscale, ΔT, dv_gemb0[i])
                             gemb2X = gemb2X .- mean(gemb2X[date=center_on_dates])
                             lines!(ax, gemb2X; label = "cost: $(round(cost0, digits=1))")
                         end
@@ -460,23 +455,60 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
     
         index_minimum = argmin(cost)
         pscale_grid_search = DimPoints(cost)[index_minimum][1]
-        mscale_grid_search = DimPoints(cost)[index_minimum][2]
-        println("grid_search: pscale: $(round(pscale_grid_search, digits=2)), mscale: $(round(mscale_grid_search, digits=2)), time: $(round(time_grid_search, digits=2))")
+        ΔT_grid_search = DimPoints(cost)[index_minimum][2]
+        println("grid_search: pscale: $(round(pscale_grid_search, digits=2)), ΔT: $(round(ΔT_grid_search, digits=2)), time: $(round(time_grid_search, digits=2))")
 
-        # do an optimization search
-        time_eca_search = @elapsed begin
-            result = optimize(f2, bounds, ECA())
-        end
-        (pscale_eca, mscale_eca) = minimizer(result)
-        println("eca_search : pscale: $(round(pscale_eca, digits=2)), mscale: $(round(mscale_eca, digits=2)), time: $(round(time_eca_search, digits=2))")
+        # the minimizer the multi-group path uses, so this path reports the calibrated values
+        (pscale_fit, ΔT_fit) = _gemb_grid_minimize(f2, val(dpscale_search), val(dΔT_search))
+        println("calibrated : pscale: $(round(pscale_fit, digits=2)), ΔT: $(round(ΔT_fit, digits=2))")
 
-        #f = Makie.lines(dv_altim0)
-        #Makie.lines!(gemb_dv_sample(pscale_best, mscale_best, dv_gemb0))
-        #display(f)
-
-        #println("pscale_best: $(round(pscale_best, digits=1)), mscale_best: $(round(mscale_best, digits=1))")
         return cost, geotiles_in_group
     end
+end
+
+"""
+    _gemb_grid_minimize(f, pscale_grid, ΔT_grid; stride=(4, 5), ncandidates=3, nrefine=11) -> (pscale, ΔT, cost)
+
+Minimize `f([pscale, ΔT])` over `pscale_grid × ΔT_grid` deterministically, in three stages:
+
+1. every `stride`-th point of the grid, covering the whole range;
+2. the full grid within one coarse step of each of the `ncandidates` best coarse points;
+3. an `nrefine × nrefine` grid spanning the grid neighbours of the best point found so far.
+
+A grid search is used because the cost surface often has a long, narrow valley along which `pscale` and
+`ΔT` trade off, and can have a second basin at the edge of the forcing grid; a stochastic search (ECA)
+stalls partway along the valley or settles in the wrong basin, and its result then depends on the
+random seed. Keeping several coarse candidates guards against two separated basins of similar cost.
+"""
+function _gemb_grid_minimize(f, pscale_grid, ΔT_grid; stride=(4, 5), ncandidates=3, nrefine=11)
+    np, nt = length(pscale_grid), length(ΔT_grid)
+    sp, st = stride
+    cost(ip, it) = f([pscale_grid[ip], ΔT_grid[it]])
+
+    # 1. coarse pass; include the last index so the grid edges are always searched
+    ips = unique(vcat(1:sp:np, np)); its = unique(vcat(1:st:nt, nt))
+    coarse = [(cost(ip, it), ip, it) for ip in ips, it in its]
+    any(c -> isfinite(c[1]), coarse) || error("cost is not finite anywhere on the coarse pscale × ΔT grid")
+    candidates = first(sort(vec(coarse); by=first), min(ncandidates, length(coarse)))
+
+    # 2. full-resolution search around each candidate
+    best = (Inf, 0, 0)
+    for (_, ip0, it0) in candidates
+        for ip in max(ip0 - sp, 1):min(ip0 + sp, np), it in max(it0 - st, 1):min(it0 + st, nt)
+            c = cost(ip, it)
+            c < best[1] && (best = (c, ip, it))
+        end
+    end
+
+    # 3. refine between the grid neighbours of the best point
+    (_, ip, it) = best
+    fine = (best[1], pscale_grid[ip], ΔT_grid[it])
+    for p in range(pscale_grid[max(ip - 1, 1)], pscale_grid[min(ip + 1, np)]; length=nrefine),
+        t in range(ΔT_grid[max(it - 1, 1)], ΔT_grid[min(it + 1, nt)]; length=nrefine)
+        c = f([p, t])
+        c < fine[1] && (fine = (c, p, t))
+    end
+    return (fine[2], fine[3], fine[1])
 end
 
 """
@@ -485,7 +517,7 @@ end
 Interpolate and extrapolate values across a new set of precipitation scale factors.
 
 # Arguments
-- `var0`: Input dimensional array with dimensions (:date, :height, :pscale, :mscale)
+- `var0`: Input dimensional array with dimensions (:date, :height, :pscale, :ΔT)
 - `dpscale_new`: New precipitation scale factor dimension to interpolate/extrapolate to
 - `allow_negative`: Whether to allow negative values in the output (default: false)
 
@@ -501,7 +533,7 @@ function add_pscale_classes(var0, dpscale_new; allow_negative=false)
     ddate = dims(var0, :date)
     dheight = dims(var0, :height)
     dpscale = dims(var0, :pscale)
-    dmscale = dims(var0, :mscale)
+    dΔT = dims(var0, :ΔT)
 
     interpolate_index = (dpscale_new .>= minimum(dpscale)) .& (dpscale_new .<= maximum(dpscale))
     extrapolate_lower_index = .!interpolate_index
@@ -518,7 +550,7 @@ function add_pscale_classes(var0, dpscale_new; allow_negative=false)
 
     M = hcat(ones(length(x)), x)
 
-    gemb_new = fill(NaN, (ddate, dheight, dpscale_new, dmscale))
+    gemb_new = fill(NaN, (ddate, dheight, dpscale_new, dΔT))
 
     valid_range, = validrange(.!isnan.(var0[:, 1, 1, 1]))
 
@@ -530,10 +562,10 @@ function add_pscale_classes(var0, dpscale_new; allow_negative=false)
         for height in dheight
             #height = 1050
 
-            for mscale in dmscale
-                #mscale
+            for ΔT in dΔT
+                #ΔT
 
-                y = var0[At(date), At(height), :, At(mscale)]
+                y = var0[At(date), At(height), :, At(ΔT)]
 
                 # this can be removed after code rerun
                 y[:] = y[x_sort_perm]
@@ -580,7 +612,7 @@ function add_pscale_classes(var0, dpscale_new; allow_negative=false)
                     y_new[:] .= 0
                 end
 
-                gemb_new[At(date), At(height), :, At(mscale)] = y_new
+                gemb_new[At(date), At(height), :, At(ΔT)] = y_new
             end
         end
     end
@@ -614,9 +646,11 @@ function gemb_calibration(
     single_geotile_test=nothing,
     seasonality_weight=95/100,
     distance_from_origin_penalty=2 / 100,
-    mscale_to_pscale_weight=1,
+    ΔT_to_pscale_weight=1,
     force_remake_before=nothing,
-    calibrate_to = :all
+    calibrate_to = :all,
+    origin_penalty_mode=:prior,
+    forcing_prior=gemb_forcing_prior
 )
 
     # Load GEMB data
@@ -629,33 +663,62 @@ function gemb_calibration(
     end
 
     dgeotile = dims(dv_gemb, :geotile)
-    dmscale = dims(dv_gemb, :mscale)
-    dpscale = dims(dv_gemb, :pscale)
     params = binned_filled_fileparts.(path2runs)
     surface_masks = unique(getindex.(params, :surface_mask))
 
-    # having issues with pscale and mscale seeming somewhat random... I'm thinking that it's realated to something that is no Thread safe
+    # Windows on the fitted pscale of two reference geotiles, wide enough to pass every member of the
+    # ensemble and tight enough to catch a fit that has come out wildly wrong. They are not physical
+    # bounds: the precipitation bias of the GEMB forcing sets where pscale lands, so they have to be
+    # re-checked against the printed values whenever the forcing changes.
+    #
+    # `lat[+58+60]lon[-138-136]` needs the looser window because its fitted ΔT saturates at the top of
+    # the forcing grid. The cost surface is then degenerate along ΔT, which leaves pscale only weakly
+    # constrained, so it scatters between local minima across ensemble members rather than tracking one
+    # value. A geotile whose ΔT sits at a grid bound cannot be held to a narrow pscale.
     dgeotile_test = Dim{:geotile}([geotiles_golden_test[1], "lat[+58+60]lon[-138-136]"])
-    pscale_range_test = DimStack(DimArray([1.8, 1.5], dgeotile_test; name="min"), DimArray([3.0, 2.5], dgeotile_test; name="max"))
+    pscale_range_test = DimStack(DimArray([1.3, 1.0], dgeotile_test; name="min"), DimArray([3.0, 2.9], dgeotile_test; name="max"))
 
     # Process each surface mask to load aligned geotiles and calculate hypsometry
     geotiles = Dict()
     area_km2 = Dict()
 
-    if all(dmscale .> 0)
-        mscale_is_scaling = true;
-    else
-        mscale_is_scaling = false;
+    # `ΔT` is an additive air-temperature offset (no-op 0) and `pscale` is a multiplicative
+    # precipitation scaling (no-op 1); neither is inferred from the sign of the data they happen to
+    # be run with. A grid of `ΔT` values that were all positive, or a `pscale` grid that included 0,
+    # would otherwise flip these from the sign check that used to live here.
+    is_scaling_factor = Dict("pscale" => true, "ΔT" => false)
+
+    # Restrict dv_gemb to what the altimetry and GEMB share, in both geotile and date, before anything
+    # is built on its axes. GEMB spans every geotile holding ice under its own mask, which includes
+    # sub-km2 slivers the binning drops, so the altimetry is the smaller set and decides.
+    begin
+        dh = FileIO.load(first(path2runs), "dh_hyps")
+        dgeotile_altim = dims(dh, :geotile)
+
+        geotiles2extract = [id for id in val(dgeotile) if in(id, val(dgeotile_altim))]
+        isempty(geotiles2extract) &&
+            error("GEMB and the altimetry share no geotiles: $(first(path2runs))")
+        if length(geotiles2extract) < length(dgeotile)
+            dropped = setdiff(val(dgeotile), geotiles2extract)
+            printstyled("    -> $(length(dropped)) of $(length(dgeotile)) GEMB geotiles are absent from the altimetry and take no part in the fit: $(join(first(sort(dropped), 8), ", "))\n"; color=:light_yellow)
+            dv_gemb = dv_gemb[geotile=At(geotiles2extract)]
+            dgeotile = dims(dv_gemb, :geotile)
+        end
+
+        ddate = dims(dh, :date)
+        ddate_gemb = dims(dv_gemb, :date)
+        index = .!isnan.(dv_gemb[geotile=1, pscale=1, ΔT=1])
+        ex_gemb = extrema(ddate_gemb[index])
+        index = .!isnan.(dh[geotile=1, height=1])
+        ex_dv = extrema(ddate[vec(index)])
+        ex = max(ex_gemb[1], ex_dv[1]), min(ex_gemb[2], ex_dv[2])
+        index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
+        index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
+        sum(index_dv) == sum(index_gemb) ? nothing : error("index_dv and index_gemb do not have the same length: $(ex)")
+        dates2extract = ddate[index_dv].val
+
+        dv_gemb = dv_gemb[date=At(ddate_gemb[index_gemb].val)]
     end
-
-    if all(dpscale .> 0)
-        pscale_is_scaling = true;
-    else
-        pscale_is_scaling = false;
-    end
-
-    is_scaling_factor = Dict("pscale" => pscale_is_scaling, "mscale" => mscale_is_scaling)
-
 
     for surface_mask in surface_masks # takes 7 seconds
 
@@ -696,31 +759,12 @@ function gemb_calibration(
         add_single_rgi_column!(geotiles[surface_mask])
     end
 
-    # align dv_altim and dv_gemb
-    begin
-        synthesized_gemb_fit = replace(path2runs[1], ".jld2" => "_gembfit.arrow")
-        dh = FileIO.load(first(path2runs), "dh_hyps")
-        ddate = dims(dh, :date)
-        ddate_gemb = dims(dv_gemb, :date)
-        index = .!isnan.(dv_gemb[geotile=1, pscale=1, mscale=1])
-        ex_gemb = extrema(ddate_gemb[index])
-        index = .!isnan.(dh[geotile=1, height=1])
-        ex_dv = extrema(ddate[vec(index)])
-        ex = max(ex_gemb[1], ex_dv[1]), min(ex_gemb[2], ex_dv[2])
-        index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
-        index_gemb = (ddate_gemb .>= ex[1]) .& (ddate_gemb .<= ex[2])
-        sum(index_dv) == sum(index_gemb) ? nothing : error("index_dv and index_gemb do not have the same length: $(ex)")
-        dates2extract = ddate[index_dv].val
-
-        dv_gemb = dv_gemb[date=At(ddate_gemb[index_gemb].val)]
-    end
-
     # I'm getting an "geotile volume change contains all NaNs" when run using Threads.. no clue why
     @showprogress desc = "Calibrating GEMB model to altimetry data" for binned_synthesized_file in path2runs
 
         synthesized_gemb_fit = replace(binned_synthesized_file, ".jld2" => "_gembfit.arrow")
 
-        if isfile(synthesized_gemb_fit) && (isnothing(force_remake_before) || Dates.unix2datetime(mtime(synthesized_gemb_fit)) > force_remake_before) && isnothing(single_geotile_test)
+        if file_is_current(synthesized_gemb_fit, force_remake_before) && isnothing(single_geotile_test)
             printstyled("    -> Skipping $(synthesized_gemb_fit) because it was created after force_remake_before:$force_remake_before\n"; color=:light_green)
             continue
         else
@@ -730,8 +774,16 @@ function gemb_calibration(
 
             dh = FileIO.load(binned_synthesized_file, "dh_hyps")
 
-            # Convert elevation change to volume change
-            dv_altim = dh2dv_geotile(dh[date=At(dates2extract)], area_km2[surface_mask])
+            # Every run is fitted on the one geotile axis established above, so a run that does not
+            # cover it would otherwise fail inside `At` with no indication of which file or which
+            # geotile is at fault.
+            absent = setdiff(val(dgeotile), val(dims(dh, :geotile)))
+            isempty(absent) ||
+                error("$(binned_synthesized_file) is missing $(length(absent)) of the $(length(dgeotile)) " *
+                      "geotiles the fit is built on: $(join(first(sort(absent), 8), ", "))")
+
+            # Convert elevation change to volume change, over the geotiles the altimetry and GEMB share.
+            dv_altim = dh2dv_geotile(dh[date=At(dates2extract), geotile=At(collect(dgeotile))], area_km2[surface_mask])
 
             all_nans = dropdims(all(isnan.(dv_altim), dims=:date), dims=:date)
 
@@ -740,31 +792,31 @@ function gemb_calibration(
             end
 
             # Find optimal fit to GEMB data
-            # There are issues with calibrating the SMB model to individual geotiles since glaciers 
-            # can cross multiple geotiles, therefore we calibrate the model for groups of 
+            # There are issues with calibrating the SMB model to individual geotiles since glaciers
+            # can cross multiple geotiles, therefore we calibrate the model for groups of
             # distinct geotiles.
             if isnothing(single_geotile_test)
-            
-                gembfit = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles[surface_mask]; seasonality_weight, distance_from_origin_penalty, mscale_to_pscale_weight, calibrate_to, is_scaling_factor)
 
-                # having issues with pscale and mscale seeming somewhat random... I'm thinking that it's realated to something that is no Thread safe
-                dgeotile_test = Dim{:geotile}([geotiles_golden_test[1], "lat[+58+60]lon[-138-136]"])
-                pscale_range_test = DimStack(DimArray([1.8, 1.5], dgeotile_test; name="min"), DimArray([3.0, 2.5], dgeotile_test; name="max"))
+                gembfit = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles[surface_mask]; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to, is_scaling_factor, origin_penalty_mode, forcing_prior)
 
                 for geotile_test in dgeotile_test
                     geotile_sanity_check = geotile_test
                     gt_index = findfirst(gembfit.id .== geotile_sanity_check)
                     geotile_row = gembfit[gt_index, :]
                     pscale = round(geotile_row["pscale"], digits=2)
-                    mscale = round(geotile_row["mscale"], digits=2)
+                    ΔT = round(geotile_row["ΔT"], digits=2)
                     dv_altim_mean = dv_altim[geotile=At(geotile_row.id)]
                     dv_altim_mean = mean(dv_altim_mean[.!isnan.(dv_altim_mean)])
                     dv_gemb_mean = dv_gemb[geotile=At(geotile_row.id)]
                     dv_gemb_mean = mean(dv_gemb_mean[.!isnan.(dv_gemb_mean)])
 
-                    println("\n$(geotile_sanity_check): pscale = $pscale, mscale = $mscale, dv_altim_mean = $(round(dv_altim_mean, digits=2)), dv_gemb_mean = $(round(dv_gemb_mean, digits=2)), file = $(binned_synthesized_file)")
-                    if !(pscale_range_test[:min][geotile=At(geotile_test)] < pscale < pscale_range_test[:max][geotile=At(geotile_test)])
-                        error("pscale for $geotile_sanity_check is out of bounds: $pscale")
+                    println("\n$(geotile_sanity_check): pscale = $pscale, ΔT = $ΔT, dv_altim_mean = $(round(dv_altim_mean, digits=2)), dv_gemb_mean = $(round(dv_gemb_mean, digits=2)), file = $(binned_synthesized_file)")
+                    pscale_min = pscale_range_test[:min][geotile=At(geotile_test)]
+                    pscale_max = pscale_range_test[:max][geotile=At(geotile_test)]
+                    if !(pscale_min < pscale < pscale_max)
+                        error("pscale for $geotile_sanity_check is $pscale, outside the expected " *
+                              "$pscale_min-$pscale_max: either the fit is wrong or the GEMB forcing " *
+                              "has changed enough to move it, in which case widen pscale_range_test")
                     end
                 end
 
@@ -773,7 +825,7 @@ function gemb_calibration(
                 gembfit = gembfit[:, Not(:extent)]
                 GeoDataFrames.write(synthesized_gemb_fit, gembfit)
             else
-                cost, geotiles_in_group = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles[surface_mask]; seasonality_weight, distance_from_origin_penalty, mscale_to_pscale_weight, calibrate_to, is_scaling_factor)
+                cost, geotiles_in_group = gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles[surface_mask]; seasonality_weight, distance_from_origin_penalty, ΔT_to_pscale_weight, calibrate_to, is_scaling_factor, origin_penalty_mode, forcing_prior)
                 return (cost, dv_altim, geotiles_in_group)
             end
         end
@@ -1035,12 +1087,12 @@ Compute volume change (ΔV) for GEMB output, interpolated to new precipitation s
 - `dpscale_new`: Array of new precipitation scaling factors to interpolate to.
 
 # Returns
-- `Dict` mapping each variable to a 3D array of volume change (date × pscale × mscale
+- `Dict` mapping each variable to a 3D array of volume change (date × pscale × ΔT
 """
 function dv_gemb(gemb, area_km2, dpscale_new)
     k = first(keys(gemb))
     dpscale = dims(gemb[k], :pscale)
-    dmscale = dims(gemb[k], :mscale)
+    dΔT = dims(gemb[k], :ΔT)
     ddate = dims(gemb[k], :date)
 
     # Ensure all old pscales are present in new pscales
@@ -1051,17 +1103,17 @@ function dv_gemb(gemb, area_km2, dpscale_new)
     # Initialize output dictionary
     dv_gemb = Dict()
     for k in keys(gemb)
-        dv_gemb[k] = fill(NaN, (ddate, dpscale_new, dmscale))
+        dv_gemb[k] = fill(NaN, (ddate, dpscale_new, dΔT))
     end
 
     Threads.@threads for k in collect(keys(gemb))
         valid = .!isnan.(gemb[k])
-        (date_range, height_range, pscale_range, mscale_range) = validrange(valid)
+        (date_range, height_range, pscale_range, ΔT_range) = validrange(valid)
         for date in ddate[date_range]
-            for mscale in dmscale[mscale_range]
-                dv = @d dropdims(sum(gemb[k][date=At(date), mscale=At(mscale)][height_range, :] .* area_km2[height_range] ./ 1000, dims=:height), dims=:height)
+            for ΔT in dΔT[ΔT_range]
+                dv = @d dropdims(sum(gemb[k][date=At(date), ΔT=At(ΔT)][height_range, :] .* area_km2[height_range] ./ 1000, dims=:height), dims=:height)
                 dv_interp = DataInterpolations.LinearInterpolation(dv, val(dpscale))
-                dv_gemb[k][date=At(date), mscale=At(mscale)] = dv_interp(val(dpscale_new))
+                dv_gemb[k][date=At(date), ΔT=At(ΔT)] = dv_interp(val(dpscale_new))
             end
         end
     end
@@ -1077,7 +1129,7 @@ Load GEMB geotile ensemble data for a given run ID. Returns a dictionary of vari
 # Arguments
 - `gemb_run_id`: Identifier for the GEMB run.
 - `dpscale_expanded_increment`: Step size for increasing the resolution or range of `pscale`.
-- `dmscale_expanded_increment`: Step size for increasing the resolution or range of `mscale`.
+- `dΔT_expanded_increment`: Step size for increasing the resolution or range of `ΔT`.
 - `vars2load`: Array of variable names to load (default: common mass balance variables). If `nothing`, loads all variables.
 
 # Returns
@@ -1093,6 +1145,16 @@ function gemb_ensemble_dv(; gemb_run_id=4)
     gembinfo = gemb_info(; gemb_run_id)
     gemb_geotile_filename_dv = replace(gembinfo.filename_gemb_combined, ".jld2" => "_geotile_dv.jld2")
     dv_gemb = FileIO.load(gemb_geotile_filename_dv, "gemb_dv")
+
+    # Ensembles built by `process_gemb_geotiles` carry a melt-multiplier axis named `:mscale`; the
+    # synthesis now indexes a temperature-offset axis named `:ΔT`. The two are not interchangeable --
+    # one is centred on 1 and the other on 0 -- so say so here rather than let the first `dims(_, :ΔT)`
+    # downstream fail with no indication of which file is at fault.
+    if hasdim(dv_gemb, :mscale)
+        error("$(gemb_geotile_filename_dv) has an :mscale (melt multiplier) forcing axis, which this " *
+              "synthesis path no longer reads. Rebuild it with gemb_tiles_binning.jl, which produces " *
+              "the :ΔT (air temperature offset) axis.")
+    end
 
     # `gemb_add_derived_vars!` builds a new object via `merge` rather than mutating in place, so
     # its return value has to be captured. Discarding it left :smb, :runoff and :dv absent, and
@@ -1135,14 +1197,14 @@ function gemb_add_derived_vars!(dv_gemb)
 end
 
 """
-    gemb_dv_sample(pscale, mscale, dv_gemb)
+    gemb_dv_sample(pscale, ΔT, dv_gemb)
 
-Sample GEMB volume change at a single (pscale, mscale) by linear interpolation.
+Sample GEMB volume change at a single (pscale, ΔT) by linear interpolation.
 
 # Arguments
 - `pscale`: Precipitation scaling factor
-- `mscale`: Elevation offset (m)
-- `dv_gemb`: DimArray with dimensions (date, pscale, mscale)
+- `ΔT`: Air temperature offset applied to the GEMB forcing (K)
+- `dv_gemb`: DimArray with dimensions (date, pscale, ΔT)
 
 # Returns
 - DimArray of volume change with dimension :date only.
@@ -1152,28 +1214,28 @@ Sample GEMB volume change at a single (pscale, mscale) by linear interpolation.
 julia> dv_sampled = gemb_dv_sample(1.0, 0.0, dv_gemb)
 ```
 """
-function gemb_dv_sample(pscale, mscale, dv_gemb)
+function gemb_dv_sample(pscale, ΔT, dv_gemb)
 
     ddate = dims(dv_gemb, :date)
     dpscale = dims(dv_gemb, :pscale)
-    dmscale = dims(dv_gemb, :mscale)
+    dΔT = dims(dv_gemb, :ΔT)
 
-    itp = Interpolations.interpolate((eachindex(ddate), dpscale.val, dmscale.val), dv_gemb.data, (NoInterp(), Gridded(Linear()), Gridded(Linear())))
-    gemb_dv_out = DimArray(itp.(eachindex(ddate), Ref(pscale), Ref(mscale)),ddate)
+    itp = Interpolations.interpolate((eachindex(ddate), dpscale.val, dΔT.val), dv_gemb.data, (NoInterp(), Gridded(Linear()), Gridded(Linear())))
+    gemb_dv_out = DimArray(itp.(eachindex(ddate), Ref(pscale), Ref(ΔT)),ddate)
 
     return gemb_dv_out  
 end
 
 """
-    gemb_dv_sample!(gemb_dv_out::DimArray, pscale, mscale, dv_gemb::DimArray)
+    gemb_dv_sample!(gemb_dv_out::DimArray, pscale, ΔT, dv_gemb::DimArray)
 
-Sample GEMB volume change at (pscale, mscale) into a pre-allocated DimArray (in-place).
+Sample GEMB volume change at (pscale, ΔT) into a pre-allocated DimArray (in-place).
 
 # Arguments
 - `gemb_dv_out`: Pre-allocated DimArray with :date dimension (modified in-place)
 - `pscale`: Precipitation scaling factor
-- `mscale`: Elevation offset (m)
-- `dv_gemb`: DimArray with dimensions (date, pscale, mscale)
+- `ΔT`: Air temperature offset applied to the GEMB forcing (K)
+- `dv_gemb`: DimArray with dimensions (date, pscale, ΔT)
 
 # Returns
 - The modified gemb_dv_out.
@@ -1183,28 +1245,28 @@ Sample GEMB volume change at (pscale, mscale) into a pre-allocated DimArray (in-
 julia> gemb_dv_sample!(gemb_dv_out, 1.0, 0.0, dv_gemb)
 ```
 """
-function gemb_dv_sample!(gemb_dv_out::DimArray, pscale, mscale, dv_gemb::DimArray)
+function gemb_dv_sample!(gemb_dv_out::DimArray, pscale, ΔT, dv_gemb::DimArray)
 
     ddate = dims(dv_gemb, :date)
     dpscale = dims(dv_gemb, :pscale)
-    dmscale = dims(dv_gemb, :mscale)
+    dΔT = dims(dv_gemb, :ΔT)
 
-    itp = Interpolations.interpolate((eachindex(ddate), dpscale.val, dmscale.val), dv_gemb.data, (NoInterp(), Gridded(Linear()), Gridded(Linear())))
-    gemb_dv_out[:] .= itp.(eachindex(ddate), Ref(pscale), Ref(mscale))
+    itp = Interpolations.interpolate((eachindex(ddate), dpscale.val, dΔT.val), dv_gemb.data, (NoInterp(), Gridded(Linear()), Gridded(Linear())))
+    gemb_dv_out[:] .= itp.(eachindex(ddate), Ref(pscale), Ref(ΔT))
 
     return gemb_dv_out
 end
 
 """
-    gemb_dv_sample!(gemb_dv_out, pscale_index, mscale_index, dv_gemb)
+    gemb_dv_sample!(gemb_dv_out, pscale_index, ΔT_index, dv_gemb)
 
-Sample GEMB volume change at (pscale_index, mscale_index) into a pre-allocated array (in-place).
+Sample GEMB volume change at (pscale_index, ΔT_index) into a pre-allocated array (in-place).
 
 # Arguments
 - `gemb_dv_out`: Pre-allocated output array (modified in-place)
 - `pscale_index`: Index into pscale dimension
-- `mscale_index`: Index into mscale dimension
-- `dv_gemb`: 3D array (date × pscale × mscale)
+- `ΔT_index`: Index into ΔT dimension
+- `dv_gemb`: 3D array (date × pscale × ΔT)
 
 # Returns
 - The modified gemb_dv_out.
@@ -1214,10 +1276,10 @@ Sample GEMB volume change at (pscale_index, mscale_index) into a pre-allocated a
 julia> gemb_dv_sample!(gemb_dv_out, 1, 1, dv_gemb)
 ```
 """
-function gemb_dv_sample!(gemb_dv_out, pscale_index, mscale_index, dv_gemb)
+function gemb_dv_sample!(gemb_dv_out, pscale_index, ΔT_index, dv_gemb)
 
     itp = Interpolations.interpolate((axes(dv_gemb, 1), axes(dv_gemb, 2), axes(dv_gemb, 3)), dv_gemb, (NoInterp(), Gridded(Linear()), Gridded(Linear())))
-    gemb_dv_out[:] .= itp.(axes(dv_gemb, 1), pscale_index, mscale_index)
+    gemb_dv_out[:] .= itp.(axes(dv_gemb, 1), pscale_index, ΔT_index)
 
     return gemb_dv_out
 end
@@ -1227,34 +1289,34 @@ end
 
 
 """
-    gemb_dv_interpolate(dv_gemb, dpscale_expanded_increment, dmscale_expanded_increment)
+    gemb_dv_interpolate(dv_gemb, dpscale_expanded_increment, dΔT_expanded_increment)
 
-Interpolate a GEMB DimStack of volume change (`dv_gemb`) across extended precipitation scaling (`pscale`) and temperature perturbation (`mscale`) classes.
+Interpolate a GEMB DimStack of volume change (`dv_gemb`) across extended precipitation scaling (`pscale`) and temperature perturbation (`ΔT`) classes.
 
 # Arguments
-- `dv_gemb`: DimStack or dictionary containing GEMB volume change data, with dimensions including :geotile, :date, :pscale, and :mscale.
+- `dv_gemb`: DimStack or dictionary containing GEMB volume change data, with dimensions including :geotile, :date, :pscale, and :ΔT.
 - `dpscale_expanded_increment`: Step size for increasing the resolution or range of `pscale`.
-- `dmscale_expanded_increment`: Step size for increasing the resolution or range of `mscale`.
+- `dΔT_expanded_increment`: Step size for increasing the resolution or range of `ΔT`.
 
 # Returns
-- `gemb_dv_new`: Interpolated `DimStack` structure with expanded/adjusted :pscale and :mscale dimensions.
+- `gemb_dv_new`: Interpolated `DimStack` structure with expanded/adjusted :pscale and :ΔT dimensions.
 
 # Description
-- This function first determines the expanded/desired ranges for `pscale` and `mscale` using the provided increments.
+- This function first determines the expanded/desired ranges for `pscale` and `ΔT` using the provided increments.
 - It then initializes a new DimStack with NaN-filled arrays matching the desired output dimensions.
-- For each variable in `dv_gemb`, a linear gridded interpolation is constructed across its original (`pscale`, `mscale`) grid for each geotile and date, and evaluated at the new grid, storing the results in `gemb_dv_new`.
+- For each variable in `dv_gemb`, a linear gridded interpolation is constructed across its original (`pscale`, `ΔT`) grid for each geotile and date, and evaluated at the new grid, storing the results in `gemb_dv_new`.
 
 # Examples
 ```julia
-julia> gemb_dv_new = gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dmscale_expanded_increment=0.5)
+julia> gemb_dv_new = gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dΔT_expanded_increment=0.5)
 ```
 """
-function gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dmscale_expanded_increment=0.5)
+function gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dΔT_expanded_increment=0.5)
 
     dgeotile = dims(dv_gemb, :geotile)
     ddate = dims(dv_gemb, :date)
     dpscale = dims(dv_gemb, :pscale)
-    dmscale = dims(dv_gemb, :mscale)
+    dΔT = dims(dv_gemb, :ΔT)
 
     pscale_start = minimum(dpscale)
     pscale_start < 1 ? pscale_start = -1 / pscale_start : pscale_start
@@ -1267,16 +1329,16 @@ function gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dmscale_e
     pscale_new[pscale_new.<0] = -1 ./ pscale_new[pscale_new.<1]
     dpscale_new = Dim{:pscale}(pscale_new)
 
-    mscale_start = minimum(dmscale)
-    mscale_start = ceil(mscale_start, digits=0)
-    mscale_end = maximum(dmscale)
-    mscale_end = floor(mscale_end, digits=0)
-    mscale_new = mscale_start:dmscale_expanded_increment:mscale_end
-    dmscale_new = Dim{:mscale}(mscale_new)
+    ΔT_start = minimum(dΔT)
+    ΔT_start = ceil(ΔT_start, digits=0)
+    ΔT_end = maximum(dΔT)
+    ΔT_end = floor(ΔT_end, digits=0)
+    ΔT_new = ΔT_start:dΔT_expanded_increment:ΔT_end
+    dΔT_new = Dim{:ΔT}(ΔT_new)
 
-    gemb_dv_new = DimStack([DimArray(fill(NaN, (dgeotile, ddate, dpscale_new, dmscale_new); name=Symbol(k))) for k in keys(dv_gemb)]...)
+    gemb_dv_new = DimStack([DimArray(fill(NaN, (dgeotile, ddate, dpscale_new, dΔT_new); name=Symbol(k))) for k in keys(dv_gemb)]...)
 
-    index_date_valid = dropdims(any(.!isnan.(dv_gemb[first(keys(dv_gemb))][pscale=At(1), mscale=At(0)]), dims=:geotile), dims=:geotile)
+    index_date_valid = dropdims(any(.!isnan.(dv_gemb[first(keys(dv_gemb))][pscale=At(1), ΔT=At(0)]), dims=:geotile), dims=:geotile)
     index_date_range, = validrange(index_date_valid)
     daterange = ddate[first(index_date_range)] .. ddate[last(index_date_range)]
 
@@ -1289,7 +1351,7 @@ function gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dmscale_e
             cmap_bar = Makie.resample_cmap(:thermal, (length(dpscale)))
             cnt = 1
             for pscale in dpscale
-                lines!(dv_gemb[k][date=daterange, geotile=At(geotile_id), pscale=At(pscale), mscale=At(0)]; color=cmap_bar[cnt], label="pscale: $(pscale)")
+                lines!(dv_gemb[k][date=daterange, geotile=At(geotile_id), pscale=At(pscale), ΔT=At(0)]; color=cmap_bar[cnt], label="pscale: $(pscale)")
                 cnt += 1
             end
             axislegend(ax, position=:lt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false)
@@ -1297,12 +1359,12 @@ function gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dmscale_e
 
             f = _publication_figure(; columns=1, rows=2)
             ax = CairoMakie.Axis(f[1, 1], title="$geotile_id: $(k)")
-            cmap_bar = Makie.resample_cmap(:thermal, (length(dmscale)))
+            cmap_bar = Makie.resample_cmap(:thermal, (length(dΔT)))
             cnt = 1
 
 
-            for mscale in dmscale
-                lines!(dv_gemb[k][date=daterange, geotile=At(geotile_id), pscale=At(1), mscale=At(mscale)]; color=cmap_bar[cnt], label="mscale: $(mscale)")
+            for ΔT in dΔT
+                lines!(dv_gemb[k][date=daterange, geotile=At(geotile_id), pscale=At(1), ΔT=At(ΔT)]; color=cmap_bar[cnt], label="ΔT: $(ΔT)")
                 cnt += 1
             end
 
@@ -1316,14 +1378,14 @@ function gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dmscale_e
             cmap_bar = Makie.resample_cmap(:thermal, (length(dpscale)))
             cnt = 1
             for date in dates2plot
-                lines!(dv_gemb[k][date=Near(date), geotile=At(geotile_id), mscale=At(0)]; color=cmap_bar[cnt], label="date: $(date)")
+                lines!(dv_gemb[k][date=Near(date), geotile=At(geotile_id), ΔT=At(0)]; color=cmap_bar[cnt], label="date: $(date)")
                 cnt += 1
             end
             axislegend(ax, position=:lt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false)
             display(f)
 
             f = _publication_figure(; columns=1, rows=2)
-            ax = CairoMakie.Axis(f[1, 1], title="$geotile_id: $(k) as a function of mscale")
+            ax = CairoMakie.Axis(f[1, 1], title="$geotile_id: $(k) as a function of ΔT")
             cmap_bar = Makie.resample_cmap(:thermal, (length(dpscale)))
             cnt = 1
             for date in dates2plot
@@ -1335,12 +1397,12 @@ function gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dmscale_e
         end
     end
 
-    # linearly interpolate between pscale and mscale... maybe this should be done in fitting function?
+    # linearly interpolate between pscale and ΔT... maybe this should be done in fitting function?
     Threads.@threads for k in keys(dv_gemb)
         for date in index_date_range
             for gtidx = eachindex(dgeotile)
-                itp = Interpolations.interpolate((dpscale.val, dmscale.val), dv_gemb[k][date=date, geotile=gtidx].data, Gridded(Linear()))
-                gemb_dv_new[k][geotile=gtidx, date=date] = itp(dpscale_new.val, dmscale_new.val)
+                itp = Interpolations.interpolate((dpscale.val, dΔT.val), dv_gemb[k][date=date, geotile=gtidx].data, Gridded(Linear()))
+                gemb_dv_new[k][geotile=gtidx, date=date] = itp(dpscale_new.val, dΔT_new.val)
             end
         end
     end
@@ -1354,7 +1416,7 @@ function gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dmscale_e
             cmap_bar = Makie.resample_cmap(:thermal, (length(dpscale_new)))
             cnt = 1
             for pscale in dpscale_new
-                lines!(gemb_dv_new[k][date=daterange, geotile=At(geotile_id), pscale=At(pscale), mscale=At(0)]; color=cmap_bar[cnt], label="pscale: $(pscale)")
+                lines!(gemb_dv_new[k][date=daterange, geotile=At(geotile_id), pscale=At(pscale), ΔT=At(0)]; color=cmap_bar[cnt], label="pscale: $(pscale)")
                 cnt += 1
             end
             axislegend(ax, position=:lt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false)
@@ -1362,12 +1424,12 @@ function gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dmscale_e
 
             f = _publication_figure(; columns=1, rows=2)
             ax = CairoMakie.Axis(f[1, 1], title="$geotile_id: $(k)")
-            cmap_bar = Makie.resample_cmap(:thermal, (length(dmscale_new)))
+            cmap_bar = Makie.resample_cmap(:thermal, (length(dΔT_new)))
             cnt = 1
 
 
-            for mscale in dmscale_new
-                lines!(gemb_dv_new[k][date=daterange, geotile=At(geotile_id), pscale=At(1), mscale=At(mscale)]; color=cmap_bar[cnt], label="mscale: $(mscale)")
+            for ΔT in dΔT_new
+                lines!(gemb_dv_new[k][date=daterange, geotile=At(geotile_id), pscale=At(1), ΔT=At(ΔT)]; color=cmap_bar[cnt], label="ΔT: $(ΔT)")
                 cnt += 1
             end
             axislegend(ax, position=:lt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false)
@@ -1380,14 +1442,14 @@ function gemb_dv_interpolate(dv_gemb; dpscale_expanded_increment=0.25, dmscale_e
             cmap_bar = Makie.resample_cmap(:thermal, (length(dpscale)))
             cnt = 1
             for date in dates2plot
-                lines!(gemb_dv_new[k][date=Near(date), geotile=At(geotile_id), mscale=At(0)]; color=cmap_bar[cnt], label="date: $(date)")
+                lines!(gemb_dv_new[k][date=Near(date), geotile=At(geotile_id), ΔT=At(0)]; color=cmap_bar[cnt], label="date: $(date)")
                 cnt += 1
             end
             axislegend(ax, position=:lt, patchsize=(20.0f0, 1.0f0), padding=(5.0f0, 5.0f0, 5.0f0, 5.0f0), labelsize=12, rowgap=1) # orientation=:horizontal, framevisible=false)
             display(f)
 
             f = _publication_figure(; columns=1, rows=2)
-            ax = CairoMakie.Axis(f[1, 1], title="$geotile_id: $(k) as a function of mscale")
+            ax = CairoMakie.Axis(f[1, 1], title="$geotile_id: $(k) as a function of ΔT")
             cmap_bar = Makie.resample_cmap(:thermal, (length(dpscale)))
             cnt = 1
             for date in dates2plot
@@ -1426,7 +1488,7 @@ This function processes GEMB model output by:
 
 
 # Returns
-- `dv_gemb::DimStack`: DimStack containing processed GEMB data with dimensions (:geotile, :date, :pscale, :mscale)
+- `dv_gemb::DimStack`: DimStack containing processed GEMB data with dimensions (:geotile, :date, :pscale, :ΔT)
 """
 function process_gemb_geotiles(
     gemb,
@@ -1972,63 +2034,66 @@ function process_gemb_geotiles(
 end
 
 """
-    gemb_altim_cost_group(dpscale_search, dmscale_search, dv_altim, dv_gemb, kwargs2)
+    gemb_altim_cost_group(dpscale_search, dΔT_search, dv_altim, dv_gemb, kwargs2)
 
-Find best (pscale, mscale) for one geotile group by grid search over cost function.
+Find best (pscale, ΔT) for one geotile group by grid search over cost function.
 
 # Arguments
 - `dpscale_search`: Iterable of pscale values to try
-- `dmscale_search`: Iterable of mscale values to try
+- `dΔT_search`: Iterable of ΔT values to try
 - `dv_altim`: Altimetry-derived volume change for the group
 - `dv_gemb`: GEMB volume change array for the group
 - `kwargs2`: Named tuple of kwargs for model_fit_cost_function
 
 # Returns
-- Tuple (pscale_best, mscale_best).
+- Tuple (pscale_best, ΔT_best).
 
 # Examples
 ```julia
-julia> pscale_best, mscale_best = gemb_altim_cost_group(dpscale_search, dmscale_search, dv_altim, dv_gemb, kwargs2)
+julia> pscale_best, ΔT_best = gemb_altim_cost_group(dpscale_search, dΔT_search, dv_altim, dv_gemb, kwargs2)
 ```
 """
-function gemb_altim_cost_group(dpscale_search, dmscale_search, dv_altim, dv_gemb, kwargs2)
+function gemb_altim_cost_group(dpscale_search, dΔT_search, dv_altim, dv_gemb, kwargs2)
     
-    f2 = Base.Fix{1}(Base.Fix{2}(Base.Fix{4}(Base.Fix{5}(Base.Fix{6}(gemb_altim_cost!, kwargs2), dv_gemb), dv_altim), deepcopy(dv_altim)), deepcopy(dv_altim))
+    # `gemb_altim_cost(x, dv_altim, dv_gemb, kwargs)` takes four arguments, so fixing 4, 3 and 2 leaves
+    # the parameter vector as the only free one. Same construction as the live call in
+    # `gemb_bestfit_grouped`.
+    f2 = Base.Fix{2}(Base.Fix{3}(Base.Fix{4}(gemb_altim_cost, kwargs2), dv_gemb), dv_altim)
 
     # getting very unstable results with ECA, so using grid search instead
     # messing with ECA parameters can lead to getting stuck in a local minimum
     #result = optimize(f2, bounds, ECA())
-    #(pscale_best, mscale_best) = minimizer(result)
+    #(pscale_best, ΔT_best) = minimizer(result)
 
     #pscale0[i] = pscale_best
-    #mscale0[i] = mscale_best
+    #ΔT0[i] = ΔT_best
 
     cost = Inf;
-    mscale_best = 1.0;
+    ΔT_best = 0.0;   # no-op temperature offset, as pscale_best = 1.0 is the no-op scaling
     pscale_best = 1.0;
 
     # this can not be threaded
     for pscale in dpscale_search
-        for  mscale in dmscale_search
-            cost0 = f2([pscale, mscale])
+        for  ΔT in dΔT_search
+            cost0 = f2([pscale, ΔT])
             if cost0 < cost
                 cost = cost0
-                mscale_best = mscale
+                ΔT_best = ΔT
                 pscale_best = pscale
             end
         end
     end
 
-    return pscale_best, mscale_best
+    return pscale_best, ΔT_best
 end
 
 """
     gemb_altim_cost_group!(cost, dv_altim, dv_gemb, kwargs2)
 
-Fill a cost array over (pscale, mscale) for one geotile group (in-place).
+Fill a cost array over (pscale, ΔT) for one geotile group (in-place).
 
 # Arguments
-- `cost`: DimArray with dimensions (pscale, mscale), filled in-place
+- `cost`: DimArray with dimensions (pscale, ΔT), filled in-place
 - `dv_altim`: Altimetry-derived volume change for the group
 - `dv_gemb`: GEMB volume change array for the group
 - `kwargs2`: Named tuple of kwargs for model_fit_cost_function
@@ -2043,20 +2108,23 @@ julia> gemb_altim_cost_group!(cost, dv_altim, dv_gemb, kwargs2)
 """
 function gemb_altim_cost_group!(cost, dv_altim, dv_gemb, kwargs2)
     
-    f2 = Base.Fix{1}(Base.Fix{2}(Base.Fix{4}(Base.Fix{5}(Base.Fix{6}(gemb_altim_cost!, kwargs2), dv_gemb), dv_altim), deepcopy(dv_altim)), deepcopy(dv_altim))
+    # `gemb_altim_cost(x, dv_altim, dv_gemb, kwargs)` takes four arguments, so fixing 4, 3 and 2 leaves
+    # the parameter vector as the only free one. Same construction as the live call in
+    # `gemb_bestfit_grouped`.
+    f2 = Base.Fix{2}(Base.Fix{3}(Base.Fix{4}(gemb_altim_cost, kwargs2), dv_gemb), dv_altim)
 
     # getting very unstable results with ECA, so using grid search instead
     # messing with ECA parameters can lead to getting stuck in a local minimum
     #result = optimize(f2, bounds, ECA())
-    #(pscale_best, mscale_best) = minimizer(result)
+    #(pscale_best, ΔT_best) = minimizer(result)
 
     #pscale0[i] = pscale_best
-    #mscale0[i] = mscale_best
+    #ΔT0[i] = ΔT_best
 
 
     for pscale in dims(cost, :pscale)
-        for  mscale in dims(cost, :mscale)
-            cost[pscale=At(pscale), mscale=At(mscale)] = f2([pscale, mscale])
+        for  ΔT in dims(cost, :ΔT)
+            cost[pscale=At(pscale), ΔT=At(ΔT)] = f2([pscale, ΔT])
         end
     end
 

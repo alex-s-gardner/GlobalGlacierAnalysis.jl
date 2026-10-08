@@ -33,7 +33,7 @@ discharge = GGA.global_discharge_filled(;
     discharge2smb_max_latitude=-60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
     pscale=1,
-    mscale=1,
+    ΔT=0,
     geotile_width=2,
     force_remake_before=DateTime("2025-01-31T14:00") + GGA.local2utc,
     force_remake_before_hypsometry=nothing
@@ -110,7 +110,7 @@ component_labels = Dict(
 # To convert to m w.e. rate:
 # 1. diff gives km³/month
 # 2. Divide by area (km²) to get km/month = 1000 m/month
-# 3. Convert ice to water equivalent: multiply by ρ_ice/ρ_water = 910/1000 = 0.91
+# 3. Convert ice to water equivalent: multiply by ρ_ice/ρ_water = δice/1000
 mie2cubickm = geotile_row[:mie2cubickm]  # Conversion factor: area_km2 / 1000
 area_km2 = mie2cubickm * 1000  # Geotile glacier area in km²
 
@@ -139,9 +139,9 @@ for varname in component_names
     # values are in km³ i.e. (cumulative)
     # diff gives km³ i.e./month
     # Divide by mie2cubickm to get m i.e./month
-    # Multiply by 0.91 to convert ice to water equivalent
+    # Multiply by δice/1000 to convert ice to water equivalent
     rates_km3_per_month = diff(values)  # km³ i.e./month
-    rates = rates_km3_per_month ./ mie2cubickm .* 0.91  # m w.e./month
+    rates = rates_km3_per_month ./ mie2cubickm .* (GGA.δice / 1000)  # m w.e./month
 
     # Use midpoint times for the rates
     time_years_mid = (time_years[1:end-1] .+ time_years[2:end]) ./ 2
@@ -220,18 +220,18 @@ if all(v -> Symbol(v) in propertynames(geotiles_df), required_vars)
 
     # Calculate rates for dv
     dv_rates_km3 = diff(dv_values)
-    dv_rates = dv_rates_km3 ./ mie2cubickm .* 0.91
+    dv_rates = dv_rates_km3 ./ mie2cubickm .* (GGA.δice / 1000)
 
     # Calculate rates for dv_altim
     dv_altim_rates_km3 = diff(dv_altim_values)
-    dv_altim_rates = dv_altim_rates_km3 ./ mie2cubickm .* 0.91
+    dv_altim_rates = dv_altim_rates_km3 ./ mie2cubickm .* (GGA.δice / 1000)
     time_years_altim_mid = (time_years_altim[1:end-1] .+ time_years_altim[2:end]) ./ 2
 
     # Calculate rates for components
-    acc_rates = diff(acc_values) ./ mie2cubickm .* 0.91
-    runoff_rates = diff(runoff_values) ./ mie2cubickm .* 0.91
-    ec_rates = diff(ec_values) ./ mie2cubickm .* 0.91
-    fac_rates = diff(fac_values) ./ mie2cubickm .* 0.91
+    acc_rates = diff(acc_values) ./ mie2cubickm .* (GGA.δice / 1000)
+    runoff_rates = diff(runoff_values) ./ mie2cubickm .* (GGA.δice / 1000)
+    ec_rates = diff(ec_values) ./ mie2cubickm .* (GGA.δice / 1000)
+    fac_rates = diff(fac_values) ./ mie2cubickm .* (GGA.δice / 1000)
 
     # Calculate the sum: acc - runoff - ec + fac
     calculated_dv = acc_rates .- runoff_rates .- ec_rates .+ fac_rates
@@ -323,8 +323,8 @@ if all(v -> Symbol(v) in propertynames(geotiles_df), [:acc, :rain])
     rain_values = geotile_row[:rain]
 
     # Calculate rates in m w.e./month
-    acc_rates = diff(acc_values) ./ mie2cubickm .* 0.91
-    rain_rates = diff(rain_values) ./ mie2cubickm .* 0.91
+    acc_rates = diff(acc_values) ./ mie2cubickm .* (GGA.δice / 1000)
+    rain_rates = diff(rain_values) ./ mie2cubickm .* (GGA.δice / 1000)
     acc_minus_rain_rates = acc_rates .- rain_rates
 
     time_years_mid = (time_years[1:end-1] .+ time_years[2:end]) ./ 2

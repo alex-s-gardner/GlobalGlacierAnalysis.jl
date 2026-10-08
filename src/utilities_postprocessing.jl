@@ -64,6 +64,11 @@ Aggregate glacier model run data by RGI (Randolph Glacier Inventory) regions.
 This function loads data from multiple model runs, aggregates variables by RGI regions,
 and creates special aggregations for HMA (regions 13-15) and global (regions 1-19).
 
+Geotiles with no altimetry at all (`dv_altim` NaN at every date) are left out of every sum: they have no
+calibrated fit and carry NaN `dv`, `dm` and `discharge`, which would otherwise make their whole region
+NaN. They are the sub-km² ice fragments GEMB covers but the binning drops; an error is thrown if those
+left out of any run hold 1 km² of glacier or more, and they are listed once per call.
+
 # Arguments
 - `path2runs`: Vector of paths to model run files
 - `vars2sum`: List of variable names to aggregate (default includes common glacier variables)
@@ -93,12 +98,21 @@ function runs2rgi(path2runs; vars2sum=["dv_altim", "runoff", "fac", "smb", "rain
         regional_sum[varname] = fill(NaN, drun, drgi, ddate)
     end
 
-    Threads.@threads for binned_synthesized_file in path2runs
-    #for binned_synthesized_file in path2runs
-        #binned_synthesized_file = path2reference
+    unobserved = [String[] for _ in path2runs]
 
+    Threads.@threads for i in eachindex(path2runs)
+        binned_synthesized_file = path2runs[i]
         binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
         geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
+
+        no_altim = [all(isnan, x) for x in geotiles0.dv_altim]
+        if any(no_altim)
+            area = sum(sum.(geotiles0.area_km2[no_altim]))
+            area < 1 || error("$(binned_synthesized_dv_file): geotiles without altimetry hold $(round(area; digits=2)) km² " *
+                              "of glacier, too much to leave out of the regional sums: $(geotiles0.id[no_altim])")
+            unobserved[i] = geotiles0.id[no_altim]
+            geotiles0 = geotiles0[.!no_altim, :]
+        end
 
         # group by rgi and sum
         geotiles_reg = groupby(geotiles0, :rgiid)
@@ -123,6 +137,10 @@ function runs2rgi(path2runs; vars2sum=["dv_altim", "runoff", "fac", "smb", "rain
             regional_sum[varname][At(binned_synthesized_file), At(regions0.rgiid), :] = reduce(hcat, regions0[!, varname])'
         end
     end
+
+    left_out = unique(reduce(vcat, unobserved))
+    isempty(left_out) || printstyled("    -> runs2rgi: $(length(left_out)) geotiles without altimetry left out of the regional sums " *
+        "in $(count(!isempty, unobserved)) of $(length(path2runs)) runs: $(join(left_out, ", "))\n"; color=:light_yellow)
 
     return regional_sum
 end
@@ -338,11 +356,17 @@ function region_fit_ref_and_err(region_fit, path2reference; error_quantile=0.95,
 end
 
 
+"""
+    region_min_frac_error!(region_fits; fractional_error_min, varnames, parameters) -> region_fits
+
+Raise the error of each of `varnames` × `parameters` to at least `fractional_error_min` times the
+magnitude of its value: the error becomes `max(ensemble error, fractional_error_min × |value|)`. Modifies
+and returns `region_fits` (dimensions `varname`, `rgi`, `parameter`, `error`).
+"""
 function region_min_frac_error!(region_fits; fractional_error_min, varnames, parameters)
     err = region_fits[varname=At(varnames), parameter = At(parameters), error = At(true)]
     err_frac = abs.(region_fits[varname=At(varnames), parameter = At(parameters), error = At(false)] .* fractional_error_min)
-    err = max.(err_frac, err)
-    region_fits[varname=At(varnames), parameter = At(parameters), error = At(true)] = err_frac
+    region_fits[varname=At(varnames), parameter = At(parameters), error = At(true)] = max.(err_frac, err)
     return region_fits
 end
 
@@ -1253,7 +1277,7 @@ function glacier_summary_file(
 
     glacier_summary_file = pathlocal[:glacier_summary]
 
-    if isfile(glacier_summary_file) && (isnothing(force_remake_before) || (Dates.unix2datetime(mtime(glacier_summary_file)) > force_remake_before))
+    if file_is_current(glacier_summary_file, force_remake_before)
         printstyled("    -> Skipping $(glacier_summary_file) because it was created after force_remake_before:$force_remake_before\n"; color=:light_green)
         return
     end
@@ -1395,7 +1419,7 @@ julia> # Writes Arrow and GeoPackage files to the project output directory
 function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="Gardner2025_geotiles_rates", datelimits=(DateTime(2000, 3, 1), DateTime(2025, 1, 1)))
     # export trends and amplitudes for reference_run
 
-    # data is in units of km3 assuming an ice density of 910 kg/m3
+    # data is in units of km3 of ice equivalent at `δice`
     geotiles0 = FileIO.load(binned_synthesized_dv_file, "geotiles")
 
     altim_cols = names(geotiles0)[occursin.("_altim", names(geotiles0))]
@@ -1405,7 +1429,7 @@ function gembfit_dv2gpkg(binned_synthesized_dv_file; outfile_prefix="Gardner2025
     rain_cols = occursin.("rain", names(geotiles0))
     geotiles0 = geotiles0[:, .!rain_cols];
 
-    vars_no_write = setdiff(names(geotiles0), ["id", "geometry", "group", "pscale", "mscale", "area_km2", "rgiid"])
+    vars_no_write = setdiff(names(geotiles0), ["id", "geometry", "group", "pscale", "ΔT", "area_km2", "rgiid"])
     geotiles0[!, :area_km2] = sum.(geotiles0[:, :area_km2])
 
     # Fit temporal trends to all variables with dates in metadata

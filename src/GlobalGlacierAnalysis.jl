@@ -104,6 +104,7 @@ module GlobalGlacierAnalysis
    include("utilities_sliderule.jl")
    include("utilities_hugonnet.jl")
    include("utilities_gemb.jl")
+   include("utilities_gemb_tiles.jl")
    include("utilities_main.jl")
    include("utilities_binning.jl")
    include("utilities_binning_lowlevel.jl")

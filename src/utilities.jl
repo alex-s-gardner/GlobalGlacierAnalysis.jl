@@ -34,6 +34,28 @@ function setpaths(geotile_width, mission, product, version)
 end
 
 """
+    file_is_current(path, force_remake_before) -> Bool
+
+Whether `path` can be reused instead of rebuilt: `true` when the file exists and either
+`force_remake_before` is `nothing` or the file was written after that date.
+
+A missing file is never current, so this is safe to call before knowing whether
+`force_remake_before` was supplied. Callers combine it with their own conditions — a
+single-geotile test or a mission update forces a rebuild whatever the file's age.
+
+# Examples
+```julia
+julia> file_is_current("/no/such/file", nothing)
+false
+```
+"""
+function file_is_current(path, force_remake_before)
+    isfile(path) || return false
+    isnothing(force_remake_before) && return true
+    return Dates.unix2datetime(mtime(path)) > force_remake_before
+end
+
+"""
     geotile_extent(lat, lon, width)
 
 Calculate the bounding box of a geotile centered at given coordinates.
@@ -1722,9 +1744,7 @@ function geotile_hypsometry(geotiles, surface_mask; dem_id=:cop30_v2, force_rema
     geotile_hyps_file = replace(path2surface_mask, "." * split(path2surface_mask, ".")[end] => "geotile_hyps.jld2")
 
     # Only process if output file doesn't exist or force_remake is true
-    if isfile(geotile_hyps_file) && isnothing(force_remake_before)
-        surface_mask_geom = FileIO.load(geotile_hyps_file, surface_mask)
-    elseif isfile(geotile_hyps_file) && Dates.unix2datetime(mtime(geotile_hyps_file)) > force_remake_before
+    if file_is_current(geotile_hyps_file, force_remake_before)
         surface_mask_geom = FileIO.load(geotile_hyps_file, surface_mask)
     else
 

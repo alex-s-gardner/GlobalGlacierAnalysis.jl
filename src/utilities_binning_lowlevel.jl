@@ -230,6 +230,13 @@ Fill gaps in elevation change data using a spatiotemporal model.
 - `model1_nmad_max`: Maximum MAD normalization threshold for outlier filtering (default: 5)
 - `smooth_n`: Number of nearest neighbors for smoothing (default: 9)
 - `smooth_h2t_length_scale`: Scaling factor for height relative to time (default: 800)
+- `preserve_residual_climatology`: Bool, or a per-mission lookup like `smooth_n`. When `true`, each
+  elevation bin's mean seasonal residual (a fit of the first `residual_climatology_harmonics` annual
+  harmonics) is subtracted before smoothing and added back after, so the smoothing removes noise but
+  not the mean seasonal shape the annual sine in `model1` cannot represent. `false` (default) smooths
+  the full residual.
+- `residual_climatology_harmonics`: Int ≥ 1, or a per-mission lookup (default: 2). Number of annual
+  harmonics in the residual climatology. Only used when `preserve_residual_climatology` is `true`.
 - `variogram_range_ratio`: Whether to calculate and return variogram range ratios (default: false)
 - `show_times`: Whether to display timing information (default: false)
 
@@ -244,7 +251,7 @@ This function fills gaps in elevation change data by:
 3. Smoothing residuals using k-nearest neighbors
 4. Filling gaps with model predictions plus smoothed residuals
 """
-function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5, smooth_n=9, smooth_h2t_length_scale=800, show_times=false, missions2update=nothing)
+function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5, smooth_n=9, smooth_h2t_length_scale=800, preserve_residual_climatology=false, residual_climatology_harmonics=2, show_times=false, missions2update=nothing)
 
     if smooth_h2t_length_scale < 1
         error("smooth_h2t_length_scale is $smooth_h2t_length_scale, must be >= 1 and is typically in the range 1 to 2000, usually 800")
@@ -254,6 +261,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
     # lookup: `binned_filling_parameters` supplies `Dict("icesat" => 9, ...)`, while the defaults
     # above are scalars. Both must keep working.
     per_mission(x, mission) = x isa Union{AbstractDict,NamedTuple} ? x[mission] : x
+    per_mission_or(x, mission, default) = x isa AbstractDict ? get(x, mission, default) : x
 
     t = decimalyear.(dims(dh1[first(keys(dh1))], :date))
     t = repeat(t, 1, length(dims(dh1[first(keys(dh1))], :height)))
@@ -273,6 +281,15 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
         # resolve the per-mission knobs once, rather than at each use inside the threaded loop
         bincount_min_m = per_mission(bincount_min, mission)
         smooth_n_m = per_mission(smooth_n, mission)
+        # missions absent from a lookup for these options leave the option off
+        preserve_residual_climatology_m = per_mission_or(preserve_residual_climatology, mission, false)::Bool
+        residual_climatology_harmonics_m = per_mission_or(residual_climatology_harmonics, mission, 2)::Int
+        residual_climatology_harmonics_m >= 1 ||
+            error("residual_climatology_harmonics must be >= 1, got $residual_climatology_harmonics_m")
+        if preserve_residual_climatology_m && !hasproperty(params[mission], :residual_clim)
+            params[mission][!, :residual_clim] = Vector{Any}(fill(nothing, nrow(params[mission])))
+        end
+        dheight_mission = collect(val(dims(dh1[mission], :height)))
 
         valid_all_mission = .!isnan.(dh1[mission])
         if !any(valid_all_mission)
@@ -401,19 +418,43 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
             show_times && printstyled("filter 2 $mission: $(round(t5 - t4; digits=2))s\n", color=:yellow)
 
 
+            # Mean seasonal shape of the residual in each elevation bin: a least-squares fit of the
+            # first `nh` annual harmonics. It is held out of the smoothing and added back, so the
+            # temporal median below removes month-to-month noise without also removing the part of the
+            # seasonal cycle that the single annual sine in `model1` cannot represent. A bin with fewer
+            # than 3 samples in any calendar month gets no climatology and its full residual is smoothed.
+            residual_clim = zeros(size(dh0))
+            if preserve_residual_climatology_m
+                vm = Array(valid0)
+                anom_mat = fill(NaN, size(dh0)); anom_mat[vm] = dh0_anom
+                phase_bin = residual_climatology_phase_bin.(t0)
+                nh = residual_climatology_harmonics_m
+                clim_heights = Float64[]; clim_coef = Vector{Float64}[]
+                for j in axes(anom_mat, 2)
+                    covered = all(k -> count(vm[:, j] .& (phase_bin[:, j] .== k)) >= 3, 1:12)
+                    covered || continue
+                    v = vm[:, j]
+                    coef = residual_climatology_design(t0[v, j], nh) \ anom_mat[v, j]
+                    residual_clim[:, j] = residual_climatology_eval(nh, coef, t0[:, j])
+                    push!(clim_heights, dheight_mission[crange][j]); push!(clim_coef, coef)
+                end
+                df.residual_clim = (; heights=clim_heights, nh, coef=clim_coef)
+            end
+            anom2smooth = dh0_anom .- residual_clim[Array(valid0)]
+
             #### THIS CODE BLOCK TAKES THE MOST TIME ####
             # take the median of the x closest neighbors
             if sum(valid0) < smooth_n_m
                 anom_smooth = zeros(length(dh0))
             else
 
-                # scale height distance relative to time (i.e. length-scale) 
+                # scale height distance relative to time (i.e. length-scale)
                 pts = hcat(t0[valid0], h0[valid0] / smooth_h2t_length_scale)'
 
                 kdtree = KDTree(pts)
                 idxs, _ = knn(kdtree, pts, smooth_n_m)
 
-                anom0 = map(ind -> median(dh0_anom[ind]), idxs)
+                anom0 = map(ind -> median(anom2smooth[ind]), idxs)
 
                 # extrema(anom0)
                 # interpolate anomalies using weighted distance (Shepard(2))
@@ -421,7 +462,7 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
                 pts = hcat(t0[:], h0[:] / smooth_h2t_length_scale)'
                 anom_smooth = vec(ScatteredInterpolation.evaluate(itp, pts))
             end
-
+            anom_smooth .+= vec(residual_clim)
 
             # fill out valid range (no extraploation beyond (rrange,crange) of geotile with the model only
             dh1[mission][At(geotile), rrange, crange] = model1(hcat(t0[:], h0[:]), fit1.param) .+ dh0_median .+ anom_smooth
@@ -433,6 +474,14 @@ function hyps_model_fill!(dh1, nobs1, params; bincount_min=5, model1_nmad_max=5,
 
     return dh1, nobs1, params
 end
+
+# Residual climatology of one elevation bin, as stored by `hyps_model_fill!` in
+# `params[mission].residual_clim`: `coef` holds the cos/sin coefficients of the first `nh` annual
+# harmonics. `t` is in decimal years; an integer offset does not change the result.
+# `residual_climatology_phase_bin` gives the calendar month, used to check seasonal coverage.
+residual_climatology_phase_bin(t) = clamp(floor(Int, mod(t, 1) * 12) + 1, 1, 12)
+residual_climatology_design(t, nh) = reduce(hcat, [f.(2π * n .* t) for n in 1:nh for f in (cos, sin)])
+residual_climatology_eval(nh, coef, t) = residual_climatology_design(t, nh) * coef
 
 """
     hyps_remove_land_surface_trend!(dh1; missions2update=nothing, remove_land_surface_trend=nothing)
@@ -485,21 +534,26 @@ end
 
 
 """
-    hyps_amplitude_normalize!(dh1, params, params_reference)
+    hyps_amplitude_normalize!(dh1, params, params_reference; transfer_residual_climatology=false)
 
 Normalize seasonal amplitude of elevation change data between missions.
 
 # Arguments
 - `dh1`: Dictionary of elevation change DimArrays indexed by mission
-- `params`: Dictionary of parameter DataFrames indexed by mission  
+- `params`: Dictionary of parameter DataFrames indexed by mission
 - `params_reference`: Dictionary of parameter DataFrames for reference mission
+- `transfer_residual_climatology`: When `true`, each mission's seasonal model also includes the
+  residual climatology `hyps_model_fill!` stored in `residual_clim` (when it was built with
+  `preserve_residual_climatology`), so the reference mission's full seasonal shape, not only its annual
+  sine, replaces the mission's own. Elevation bins without a stored climatology use the sine alone.
+  `false` (default) transfers the sine only.
 
 # Description
 For each mission, calculates the difference in seasonal components between
 the mission's model and the reference mission's model. Adds this difference to normalize
 the seasonal amplitude of the target mission's data to match the reference mission.
 """
-function hyps_amplitude_normalize!(dh1, params, params_reference)
+function hyps_amplitude_normalize!(dh1, params, params_reference; transfer_residual_climatology=false)
 
     t = decimalyear.(dims(dh1, :date))
     t = repeat(t, 1, length(dims(dh1, :height)))
@@ -538,6 +592,20 @@ function hyps_amplitude_normalize!(dh1, params, params_reference)
         model_ref = DimArray(reshape(model1_seasonal(hcat(t0[:], h0[:]), p_ref), size(dh0)), dims(dh0))
 
         delta = model_ref .- model0
+
+        if transfer_residual_climatology
+            tt = decimalyear.(collect(val(dims(dh0, :date))))
+            hts = collect(val(dims(dh0, :height)))
+            for (row, sgn) in ((dfr, 1.0), (df0, -1.0))
+                rc = hasproperty(row, :residual_clim) ? row.residual_clim : nothing
+                isnothing(rc) && continue
+                for (j, z) in enumerate(hts)
+                    i = findfirst(==(z), rc.heights)
+                    isnothing(i) && continue
+                    parent(delta)[:, j] .+= sgn .* residual_climatology_eval(rc.nh, rc.coef[i], tt)
+                end
+            end
+        end
 
         if !any(isnan.(delta)) # there seem to be rare cases where model1_seasonal returns nans.
             dh1[At(geotile), rrange, crange] = dh0 .+ delta
@@ -1018,9 +1086,9 @@ end
 
 """
     geotile_bin2d(
-        df; 
+        df;
         var2bin="dh",
-        dims_edges=("decyear" => 1990:(30/365):2026, "height_reference" => 0.:100.:10000.),
+        dims_edges=("decyear" => project_decyear_bins(), "height_reference" => 0.:100.:10000.),
         binfunction::T = binningfun_define(binning_method)
     ) where {T <: Function} -> Tuple{Union{Nothing, DimArray}, Union{Nothing, DimArray}}
 
@@ -1044,7 +1112,7 @@ and returns both the binned values and observation counts as DimArrays.
 function geotile_bin2d(
     df;
     var2bin="dh",
-    dims_edges=("decyear" => 1990:(30/365):2026, "height_reference" => 0.:100.:10000.),
+    dims_edges=("decyear" => project_decyear_bins(), "height_reference" => 0.0:100.0:10000.0),
     binfunction::T=binningfun_define(binning_method)
 ) where {T<:Function}
 
