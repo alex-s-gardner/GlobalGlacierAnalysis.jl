@@ -109,6 +109,54 @@ include("../fixtures/synthetic_missions.jl")
         end
     end
 
+    @testset "Residual climatology survives the fill smoothing" begin
+        # A semiannual component that the annual sine in `model1` cannot represent. The temporal
+        # median smoothing removes most of it; holding the residual climatology out restores it.
+        n_dates, n_heights = 72, 8
+        Random.seed!(1)
+        dates, heights, baseline_dh = generate_hypsometric_synthetic(; n_dates, n_heights,
+            trend=-0.6, seasonal_amplitude=0.3, vertical_gradient=-0.0005, noise_sigma=0.05,
+            start_date=DateTime(2018, 1, 15))
+        t = GGA.decimalyear.(dates)
+        semiannual_amplitude = 0.4
+        truth = baseline_dh .+ semiannual_amplitude .* cos.(4π .* t .+ 0.7)
+
+        function fill_semiannual(preserve_residual_climatology)
+            dh = DimArray(reshape(copy(truth), 1, n_dates, n_heights),
+                (DD.Dim{:geotile}(["lat[+45+47]lon[-123-121]"]), DD.Dim{:date}(dates), DD.Dim{:height}(heights)))
+            nobs = DimArray(fill(50, 1, n_dates, n_heights), dims(dh))
+            dh_dict = Dict("icesat2" => dh)
+            params = synthetic_fill_params(dh_dict)
+            GGA.hyps_model_fill!(dh_dict, Dict("icesat2" => nobs), params; bincount_min=3, smooth_n=5,
+                smooth_h2t_length_scale=400.0, preserve_residual_climatology, missions2update=["icesat2"])
+            filled = parent(dh_dict["icesat2"])[1, :, :]
+            M = hcat(cos.(4π .* t), sin.(4π .* t))
+            amplitude = [hypot((M \ filled[:, j])...) for j in axes(filled, 2)]
+            return (; filled, amplitude, params=params["icesat2"])
+        end
+
+        smoothed = fill_semiannual(false)
+        preserved = fill_semiannual(true)
+
+        @test all(smoothed.amplitude .< 0.5 * semiannual_amplitude)
+        @test all(abs.(preserved.amplitude .- semiannual_amplitude) .< 0.1)
+        @test sqrt(mean((preserved.filled .- truth) .^ 2)) < 0.5 * sqrt(mean((smoothed.filled .- truth) .^ 2))
+
+        # every elevation bin has full monthly coverage, so each gets a 2-harmonic climatology
+        clim = only(preserved.params.residual_clim)
+        @test clim.nh == 2
+        @test length(clim.heights) == n_heights
+        @test all(length.(clim.coef) .== 4)
+
+        @test_throws "residual_climatology_harmonics must be >= 1" GGA.hyps_model_fill!(
+            Dict("icesat2" => DimArray(reshape(copy(truth), 1, n_dates, n_heights),
+                (DD.Dim{:geotile}(["g"]), DD.Dim{:date}(dates), DD.Dim{:height}(heights)))),
+            Dict("icesat2" => DimArray(fill(50, 1, n_dates, n_heights),
+                (DD.Dim{:geotile}(["g"]), DD.Dim{:date}(dates), DD.Dim{:height}(heights)))),
+            Dict("icesat2" => smoothed.params); preserve_residual_climatology=true,
+            residual_climatology_harmonics=0)
+    end
+
     @testset "Multi-mission alignment - hyps_align_dh!" begin
         # Generate synthetic multi-mission data with known offsets
         n_dates = 24

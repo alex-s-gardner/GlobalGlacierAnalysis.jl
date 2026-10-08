@@ -49,6 +49,19 @@ binned_filling_parameters[2] = (
         ), smooth_h2t_length_scale=400, # 800 m = 1 year in distance for anomaly from variogram analysis =
         model1_nmad_max=10, # this is a sigma-equivelent threshold
     )
+
+    # Sets 5-8 are sets 1-4 with a 2-harmonic residual climatology for the laser altimeters. The
+    # temporal median in `hyps_model_fill!` otherwise removes the part of the seasonal cycle the annual
+    # sine in `model1` cannot represent, which moves the seasonal maximum earlier and the minimum later;
+    # holding the climatology out of the smoothing keeps that shape, and the amplitude normalization
+    # carries it into the other missions.
+    for k in 1:4
+        binned_filling_parameters[k + 4] = merge(binned_filling_parameters[k], (
+            preserve_residual_climatology=Dict("icesat2" => true, "icesat" => true),
+            residual_climatology_harmonics=Dict("icesat2" => 2, "icesat" => 2),
+            transfer_residual_climatology=true,
+        ))
+    end
 end
 
 # define model for curvature correction
@@ -745,7 +758,10 @@ function geotile_binned_fill(;
                 begin
                     hyps_model_fill!(dh1, nobs1, params_fill; missions2update=missions2fill, bincount_min=param_filling.bincount_min,
                         model1_nmad_max=param_filling.model1_nmad_max, smooth_n=param_filling.smooth_n,
-                        smooth_h2t_length_scale=param_filling.smooth_h2t_length_scale, show_times=false, )
+                        smooth_h2t_length_scale=param_filling.smooth_h2t_length_scale,
+                        preserve_residual_climatology=get(param_filling, :preserve_residual_climatology, false),
+                        residual_climatology_harmonics=get(param_filling, :residual_climatology_harmonics, 2),
+                        show_times=false, )
 
                     if plots_show || plots_save
                         plot_stage(dh1, "interpolated height anomalies")
@@ -756,7 +772,8 @@ function geotile_binned_fill(;
                 if amplitude_correct
 
                     for mission in setdiff(missions2fill, [mission_reference_for_amplitude_normalization])
-                        hyps_amplitude_normalize!(dh1[mission], params_fill[mission], params_fill[mission_reference_for_amplitude_normalization])
+                        hyps_amplitude_normalize!(dh1[mission], params_fill[mission], params_fill[mission_reference_for_amplitude_normalization];
+                            transfer_residual_climatology=get(param_filling, :transfer_residual_climatology, false))
                     end
 
                     if plots_show || plots_save
