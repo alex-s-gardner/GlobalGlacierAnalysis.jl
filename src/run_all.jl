@@ -75,7 +75,7 @@ begin
     binning_methods =["nmad3", "nmad5", "median"]
     dem_ids = [:best, :cop30_v2]
     curvature_corrects = [true, false]
-    fill_params = [1, 2, 3, 4]
+    fill_params = [5, 6, 7, 8] # sets 1-4 with the residual seasonal climatology; see binned_filling_parameters
     amplitude_corrects = [true]
     remove_land_surface_trend = GGA.mission_land_trend()
     regions2replace_with_model = ["rgi19"]
@@ -96,7 +96,7 @@ begin
         curvature_corrects=[false, true],
         amplitude_corrects=[true],
         binning_methods=["median", "nmad3", "nmad5"],
-        fill_params=[1, 2, 3, 4],
+        fill_params,
         binned_folders=[GGA.analysis_paths(; geotile_width).binned, replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")],
         include_existing_files_only=true
     )
@@ -255,7 +255,7 @@ GGA.geotile_binned_fill(; project_id,
 # 10. Synthesize geotile data by combining multiple altimetry missions and applying error corrections
 # ~36 min for 192 runs 
 GGA.geotile_synthesize(path2runs_filled;
-    error_file="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error.jld2",
+    error_file="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error_fillsets5to8.jld2",
     mission_error=GGA.binned_mad_mission(binned_file_for_over_land_mission_error),
     missions2update=nothing,
     force_remake_before =DateTime("2026-09-07T01:00:00") + GGA.local2utc,
