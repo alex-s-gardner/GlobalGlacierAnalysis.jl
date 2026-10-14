@@ -938,9 +938,17 @@ end
 
 
 """
+    discharge_global_file(surface_mask) -> String
+
+Path of the per-glacier discharge table (Gt/yr) that [`global_discharge_filled`](@ref) writes for
+`surface_mask`. South of 60°S the table is built from that mask's glaciers.
+"""
+discharge_global_file(surface_mask) = replace(pathlocal[:discharge_global], ".jld2" => "_$(surface_mask).jld2")
+
+"""
     global_discharge_filled(;
         surface_mask="glacier",
-        discharge_global_fn=paths[:discharge_global],
+        discharge_global_fn=discharge_global_file(surface_mask),
         gemb=DimStack(),
         discharge2smb_max_latitude=-60,
         discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
@@ -969,8 +977,11 @@ The routine performs the following steps:
 
 # Arguments
 - `surface_mask`: (String) Geotile/glacier mask type (e.g. "glacier"). Default: "glacier".
-- `discharge_global_fn`: (String) Path to read/write the combined discharge file. Default: `paths[:discharge_global]`
-- `gemb`: The GEMB output dictionary (e.g., as constructed with `gemb_ensemble_dv`). Default: empty `DimStack()`.
+- `discharge_global_fn`: (String) Path to read/write the combined discharge file. Default:
+  `discharge_global_file(surface_mask)`. The file records `surface_mask`, and is rejected if it was
+  written for another.
+- `gemb`: The GEMB output DimStack from `gemb_ensemble_dv(; gemb_run_id, surface_mask)`; it must be built
+  on `surface_mask`.
 - `discharge2smb_max_latitude`: (Float) Only glaciers south of this latitude have discharge estimated via SMB-to-discharge when not observed. Default: -60.
 - `discharge2smb_equilibrium_period`: (Tuple{Date,Date}) Date range for SMB equilibrium (long-term mean). Default: (1979, 2000).
 - `pscale`: (Real) Precipitation scaling factor used for GEMB data extraction. Default: 1.
@@ -981,7 +992,8 @@ The routine performs the following steps:
 
 # Returns
 - DimStack over the GEMB geotiles with one layer per discharge column (`discharge`, `discharge_err`,
-  `frontal_ablation`), in km³ ice equivalent per year (`discharge2geotile(...; mass2volume=true)`).
+  `frontal_ablation`), in km³ ice equivalent per year (`discharge2geotile(...; mass2volume=true)`),
+  with `"surface_mask"` in its metadata.
   The file at `discharge_global_fn` holds the per-glacier table in Gt/yr.
 
 # Details
@@ -1003,7 +1015,7 @@ julia> # DimStack or DataFrame with discharge per geotile
 """
 function global_discharge_filled(;
     surface_mask="glacier",
-    discharge_global_fn=paths[:discharge_global],
+    discharge_global_fn=discharge_global_file(surface_mask),
     gemb = DimStack(),
     discharge2smb_max_latitude=-60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
@@ -1014,7 +1026,15 @@ function global_discharge_filled(;
     force_remake_before_hypsometry=nothing
 )
 
+    surface_mask = String(surface_mask)
+    gemb_mask = gemb_surface_mask(gemb[:smb])
+    gemb_mask == surface_mask ||
+        error("gemb is built on the $(gemb_mask) surface mask, not $(surface_mask)")
+
     if file_is_current(discharge_global_fn, force_remake_before)
+        file_mask = FileIO.load(discharge_global_fn, "surface_mask")
+        file_mask == surface_mask ||
+            error("$(discharge_global_fn) holds discharge for surface mask $(file_mask), not $(surface_mask)")
         discharge = FileIO.load(discharge_global_fn, "discharge")
     else
         # Get geotiles containing glaciers and initialize parameters:
@@ -1088,12 +1108,12 @@ function global_discharge_filled(;
         end
 
         # Save the combined measured and estimated discharge data
-        save(discharge_global_fn, Dict("discharge" => discharge))
+        save(discharge_global_fn, Dict("discharge" => discharge, "surface_mask" => surface_mask))
     end
 
-
     discharge = discharge2geotile(discharge, dims(gemb, :geotile); mass2volume=true)
-    
+    DD.metadata(discharge)["surface_mask"] = surface_mask
+
     return discharge
 end
 
@@ -1114,8 +1134,11 @@ This function processes multiple runs to create calibrated geotile-level dataset
 
 # Arguments
 - `path2runs::Vector{String}`: Vector of file paths to binned synthesized data files.
-- `discharge::DataFrame`: DataFrame containing glacier discharge measurements.
-- `gemb`: GEMB model output (dictionary of variables, e.g., from `gemb_ensemble_dv`).
+- `discharge::AbstractDict`: surface mask (`String` or `Symbol`) => geotile discharge from
+  `global_discharge_filled(; surface_mask, ...)`, in km³ ice equivalent per year.
+- `gemb::AbstractDict`: surface mask => GEMB DimStack from `gemb_ensemble_dv(; gemb_run_id, surface_mask)`,
+  adjusted with `dv_adjust4discharge!`. Each run uses the entries for its own surface mask; a mask
+  without an entry, or an entry built on another mask, throws.
 - `geotile_width::Int`: Width of geotiles in degrees.
 - `force_remake_before::Union{Nothing, DateTime}`: Optional DateTime to force regeneration of files created before this date.
 - `geotile_grouping_min_feature_area_km2::Int=100`: Minimum feature area (km²) for geotile grouping.
@@ -1133,7 +1156,15 @@ julia> geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width=2,
 julia> # Writes _gembfit_dv.jld2 files for each run
 ```
 """
-function geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width, force_remake_before, geotile_grouping_min_feature_area_km2 = 100)
+function geotile_synthesis_gembfit_dv(path2runs, discharge::AbstractDict, gemb::AbstractDict; geotile_width, force_remake_before, geotile_grouping_min_feature_area_km2 = 100)
+    gemb = Dict(mask => g for (mask, _, g) in _select_by_surface_mask(gemb, path2runs; name="gemb"))
+    discharge = Dict(mask => d for (mask, _, d) in _select_by_surface_mask(discharge, path2runs; name="discharge"))
+    for mask in keys(gemb)
+        gemb_surface_mask(gemb[mask][:dv]) == mask ||
+            error("gemb[$(repr(mask))] is built on the $(gemb_surface_mask(gemb[mask][:dv])) surface mask")
+        get(DD.metadata(discharge[mask]), "surface_mask", nothing) == mask ||
+            error("discharge[$(repr(mask))] is for surface mask $(repr(get(DD.metadata(discharge[mask]), "surface_mask", nothing)))")
+    end
    
     # Load elevation change data to get geotile dimensions
 
@@ -1174,7 +1205,7 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge, gemb; geotile_width,
             surface_mask = run_parameters.surface_mask
             gemb_fit = GeoDataFrames.read(replace(binned_synthesized_file, ".jld2" => "_gembfit.arrow"))
 
-            geotiles0 = individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, gemb_fit, discharge, geotiles[surface_mask], area_km2[surface_mask])
+            geotiles0 = individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb[surface_mask], gemb_fit, discharge[surface_mask], geotiles[surface_mask], area_km2[surface_mask])
 
             FileIO.save(binned_synthesized_dv_file, Dict("geotiles" => geotiles0))
         end

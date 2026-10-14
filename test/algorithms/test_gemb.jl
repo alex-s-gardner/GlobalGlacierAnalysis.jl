@@ -436,4 +436,60 @@ include("../fixtures/mock_gemb_files.jl")
         @test fit.ΔT[2] ≈ 1.0 atol = 0.05
         @test fit.pscale[2] ≈ 2.0 atol = 0.05
     end
+    @testset "GEMB is calibrated against the ensemble of each run's own surface mask" begin
+        rundir = joinpath(GGA.pathlocal[:data_dir], "binned", "2deg")
+        run_rgi7 = joinpath(rundir, "glacier_rgi7_dh_best_cc_nmad3_v01_filled_ac_p6_synthesized.jld2")
+        run_rgi6 = joinpath(rundir, "glacier_dh_best_cc_nmad3_v01_filled_ac_p6_synthesized.jld2")
+        run_rgi6b = joinpath(rundir, "glacier_dh_cop30_v2_nmad5_v01_filled_p2_synthesized.jld2")
+
+        dims4 = (Dim{:geotile}(["lat[+60+62]lon[-142-140]"]), Dim{:date}([Date(2000, 1, 15)]),
+                 Dim{:pscale}([1.0]), Dim{:ΔT}([0.0]))
+        tagged(mask) = DimArray(zeros(1, 1, 1, 1), dims4; metadata=Dict("surface_mask" => mask))
+        dv_rgi6, dv_rgi7 = tagged("glacier"), tagged("glacier_rgi7")
+
+        @test GGA.gemb_surface_mask(dv_rgi7) == "glacier_rgi7"
+        @test_throws "does not record the surface mask" GGA.gemb_surface_mask(zeros(dims4))
+
+        # each run is paired with the entry for its own mask; Symbol and String keys both work
+        selected = GGA._select_by_surface_mask(Dict(:glacier => dv_rgi6, "glacier_rgi7" => dv_rgi7),
+                                               [run_rgi7, run_rgi6, run_rgi6b]; name="dv_gemb")
+        @test [m for (m, _, _) in selected] == ["glacier_rgi7", "glacier"]
+        @test selected[1][2] == [run_rgi7]
+        @test selected[1][3] === dv_rgi7
+        @test selected[2][2] == [run_rgi6, run_rgi6b]
+        @test selected[2][3] === dv_rgi6
+
+        # a mask without an entry, an entry built on another mask, or a single ensemble applied to
+        # runs of another mask all throw before any file is read
+        @test_throws "dv_gemb has no entry for surface mask glacier_rgi7" GGA.gemb_calibration(
+            [run_rgi6, run_rgi7], Dict(:glacier => dv_rgi6))
+        @test_throws "dv_gemb is built on the glacier surface mask but path2runs uses glacier_rgi7" GGA.gemb_calibration(
+            [run_rgi7, run_rgi6], Dict(:glacier => dv_rgi6, :glacier_rgi7 => dv_rgi6))
+        @test_throws "dv_gemb is built on the glacier surface mask but path2runs uses glacier_rgi7" GGA.gemb_calibration(
+            [run_rgi7], dv_rgi6)
+        @test_throws "pass a Dict of surface mask => dv_gemb" GGA.gemb_calibration([run_rgi6, run_rgi7], dv_rgi6)
+        @test_throws "gemb has no entry for surface mask glacier_rgi7" GGA.geotile_synthesis_gembfit_dv(
+            [run_rgi7], Dict(:glacier_rgi7 => nothing), Dict(:glacier => nothing); geotile_width=2, force_remake_before=nothing)
+        @test_throws "gemb is built on the glacier_rgi7 surface mask, not glacier" GGA.global_discharge_filled(;
+            surface_mask=:glacier, gemb=DimStack((; smb=dv_rgi7)), discharge_global_fn=tempname())
+    end
+
+    @testset "dv_adjust4discharge! requires discharge of the same surface mask" begin
+        dgeotile = Dim{:geotile}(["lat[+60+62]lon[-142-140]"])
+        ddate = Dim{:date}(Date(2000, 1, 1):Year(1):Date(2003, 1, 1))
+        dv = zeros(dgeotile, ddate, Dim{:pscale}([1.0]), Dim{:ΔT}([0.0]))
+        gemb = DimStack((; dv=DimensionalData.rebuild(dv; metadata=Dict("surface_mask" => "glacier_rgi7"))))
+        discharge = GGA.discharge2geotile(DataFrame(longitude=[-141.0], latitude=[61.0], discharge_gtyr=[2.0]),
+                                          dgeotile; mass2volume=true)
+
+        @test_throws "discharge is for surface mask nothing but gemb is built on glacier_rgi7" GGA.dv_adjust4discharge!(gemb, discharge)
+
+        DimensionalData.metadata(discharge)["surface_mask"] = "glacier"
+        @test_throws "discharge is for surface mask \"glacier\" but gemb is built on glacier_rgi7" GGA.dv_adjust4discharge!(gemb, discharge)
+
+        DimensionalData.metadata(discharge)["surface_mask"] = "glacier_rgi7"
+        GGA.dv_adjust4discharge!(gemb, discharge)
+        Δyear = GGA.decimalyear.(ddate) .- GGA.decimalyear(first(ddate))
+        @test vec(gemb[:dv]) ≈ -2.0 * 1000 / GGA.δice .* Δyear
+    end
 end

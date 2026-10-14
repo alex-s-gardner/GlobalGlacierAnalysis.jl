@@ -115,7 +115,7 @@ begin
     glacier_summary_file = GGA.pathlocal[:glacier_summary]
 
     # path2perglacier = replace(ensemble_reference_file, ".jld2" => "_perglacier.jld2")
-    path2discharge = GGA.pathlocal[:discharge_global]
+    path2discharge = GGA.discharge_global_file(params_ref.surface_mask)
 
    
     path2rgi_regions = GGA.pathlocal[:rgi6_regions_shp]
@@ -205,12 +205,12 @@ begin
 end
 
 
-gemb = GGA.gemb_ensemble_dv(; gemb_run_id);
+gemb = GGA.gemb_ensemble_dv(; gemb_run_id, surface_mask=params_ref.surface_mask);
 
 # 12. Calculate global glacier solid ice discharge, filled Antarctic data with modeled SMB
 discharge = GGA.global_discharge_filled(;
-    surface_mask="glacier", # = parms_ref.surface_mask, # having issues changing this to :glacier_rgi7
-    discharge_global_fn=GGA.pathlocal[:discharge_global],
+    surface_mask=params_ref.surface_mask,
+    discharge_global_fn=GGA.discharge_global_file(params_ref.surface_mask),
     gemb,
     discharge2smb_max_latitude=-60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),

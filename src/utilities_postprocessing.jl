@@ -1514,7 +1514,7 @@ function ensemble_summary(path2runs_synthesized, ensemble_reference_file; dates4
     paths = pathlocal
 
     # load discharge for each RGI [<1s]
-    path2discharge = paths[:discharge_global]
+    path2discharge = discharge_global_file(binned_filled_fileparts(ensemble_reference_file).surface_mask)
     path2rgi_regions = paths[:rgi6_regions_shp]
 
     discharge_rgi0 = discharge_rgi(path2discharge, path2rgi_regions; fractional_error=discharge_fractional_error)
