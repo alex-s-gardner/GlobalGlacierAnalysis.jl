@@ -285,8 +285,10 @@ matching, and distance from the empirical forcing prior `gemb_forcing_prior` (`o
 - `is_scaling_factor`: Dict indicating whether pscale/ΔT are multiplicative (true) or additive (false)
 
 # Returns
-- **Normal mode (multiple groups)**: DataFrame with columns [:id, :extent, :group, :pscale, :ΔT, :rgi]
+- **Normal mode (multiple groups)**: DataFrame with columns [:id, :extent, :group, :pscale, :ΔT, :grid_bound, :rgi]
   - One row per geotile with optimized scaling factors (shared within each group)
+  - `grid_bound` names the bounds of the pscale × ΔT search grid the fit lies on (`""` if none; see
+    `_grid_bounds_hit`). One `@warn` reports the number of groups, geotiles and ice area so pinned.
 - **Debug mode (single group)**: Tuple of (cost grid, geotile_ids) for examining optimization landscape
 
 # Implementation Details
@@ -399,13 +401,26 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
         end
 
         # modify dataframe outside of loop
+        geotiles[!, :grid_bound] .= ""
         for i in eachindex(groups_unique)
             gindex = groups_unique[i] .== geotile_groups;
             geotiles[gindex, :pscale] .= pscale0[i]
             geotiles[gindex, :ΔT] .= ΔT0[i]
+            geotiles[gindex, :grid_bound] .= _grid_bounds_hit(pscale0[i], ΔT0[i], val(dpscale_search), val(dΔT_search))
         end
 
-        return geotiles[:, [:id, :extent, :group, :pscale, :ΔT, :rgi]]
+        pinned = .!isempty.(geotiles.grid_bound)
+        if any(pinned)
+            area_pinned = sum(sum, geotiles.area_km2[pinned])
+            area_total = sum(sum, geotiles.area_km2)
+            bounds = join(("$k: $(count(==(k), geotiles.grid_bound[pinned]))" for k in unique(geotiles.grid_bound[pinned])), "; ")
+            @warn "$(length(unique(geotiles.group[pinned]))) of $(length(groups_unique)) geotile groups " *
+                  "($(count(pinned)) geotiles, $(round(area_pinned; digits=1)) of $(round(area_total; digits=1)) km² of ice) " *
+                  "are fitted at a bound of the pscale × ΔT grid, so their fit is a limit, not a minimum. " *
+                  "Geotiles per bound: $(bounds)"
+        end
+
+        return geotiles[:, [:id, :extent, :group, :pscale, :ΔT, :grid_bound, :rgi]]
 
     else
         i = 1;
@@ -499,6 +514,8 @@ function _gemb_grid_minimize(f, pscale_grid, ΔT_grid; stride=(4, 5), ncandidate
             c < best[1] && (best = (c, ip, it))
         end
     end
+    isfinite(best[1]) ||
+        error("cost is not finite anywhere in the full-resolution search around the $(length(candidates)) best coarse points")
 
     # 3. refine between the grid neighbours of the best point
     (_, ip, it) = best
@@ -509,6 +526,21 @@ function _gemb_grid_minimize(f, pscale_grid, ΔT_grid; stride=(4, 5), ncandidate
         c < fine[1] && (fine = (c, p, t))
     end
     return (fine[2], fine[3], fine[1])
+end
+
+"""
+    _grid_bounds_hit(pscale, ΔT, pscale_grid, ΔT_grid) -> String
+
+Name the bounds of `pscale_grid × ΔT_grid` that a fitted `(pscale, ΔT)` lies on, joined by `","`:
+any of `"pscale_min"`, `"pscale_max"`, `"ΔT_min"`, `"ΔT_max"`, or `""` for an interior fit. A fit on a
+bound means the cost may still fall beyond the grid, so the value is a limit, not a minimum.
+"""
+function _grid_bounds_hit(pscale, ΔT, pscale_grid, ΔT_grid)
+    onbound(x, lo, hi) = isapprox(x, lo; atol=1e-9 * (hi - lo)), isapprox(x, hi; atol=1e-9 * (hi - lo))
+    (plo, phi), (tlo, thi) = extrema(pscale_grid), extrema(ΔT_grid)
+    pmin, pmax = onbound(pscale, plo, phi)
+    tmin, tmax = onbound(ΔT, tlo, thi)
+    return join([name for (name, hit) in ("pscale_min" => pmin, "pscale_max" => pmax, "ΔT_min" => tmin, "ΔT_max" => tmax) if hit], ",")
 end
 
 """

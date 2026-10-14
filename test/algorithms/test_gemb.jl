@@ -11,6 +11,9 @@ import GlobalGlacierAnalysis as GGA
 using Dates
 using Random
 using Statistics
+using DataFrames
+using DimensionalData
+using Logging
 
 # Include test fixtures
 include("../fixtures/mock_gemb_files.jl")
@@ -364,5 +367,73 @@ include("../fixtures/mock_gemb_files.jl")
         # Test: Mass balance: acc - melt + refreeze - ec
         expected_smb = gemb_warm[:acc] .- gemb_warm[:melt] .+ gemb_warm[:refreeze] .- gemb_warm[:ec]
         @test gemb_warm[:smb] ≈ expected_smb rtol=1e-10
+    end
+    @testset "_gemb_grid_minimize: minimum outside the grid is reported as pinned" begin
+        pscale_grid = 1.0:0.05:3.0
+        ΔT_grid = -1.0:0.1:3.0
+        f_outside(x) = (x[1] - 5)^2 + (x[2] - 4)^2
+        (p, t, c) = GGA._gemb_grid_minimize(f_outside, pscale_grid, ΔT_grid)
+        @test p ≈ 3.0
+        @test t ≈ 3.0
+        @test c ≈ f_outside([3.0, 3.0])
+        @test GGA._grid_bounds_hit(p, t, pscale_grid, ΔT_grid) == "pscale_max,ΔT_max"
+
+        f_low(x) = (x[1] - 0.5)^2 + (x[2] - 1.23)^2
+        (p, t, _) = GGA._gemb_grid_minimize(f_low, pscale_grid, ΔT_grid)
+        @test p ≈ 1.0
+        @test t ≈ 1.23 atol = 0.02
+        @test GGA._grid_bounds_hit(p, t, pscale_grid, ΔT_grid) == "pscale_min"
+
+        f_inside(x) = (x[1] - 2.12)^2 + (x[2] - 0.47)^2
+        (p, t, _) = GGA._gemb_grid_minimize(f_inside, pscale_grid, ΔT_grid)
+        @test p ≈ 2.12 atol = 0.01
+        @test t ≈ 0.47 atol = 0.02
+        @test GGA._grid_bounds_hit(p, t, pscale_grid, ΔT_grid) == ""
+    end
+
+    @testset "_gemb_grid_minimize: throws when no refined cost is finite" begin
+        pscale_grid = 1.0:0.05:3.0
+        ΔT_grid = -1.0:0.1:3.0
+        @test_throws "cost is not finite anywhere on the coarse" GGA._gemb_grid_minimize(x -> NaN, pscale_grid, ΔT_grid)
+
+        # finite on the coarse pass only, so stage 2 finds nothing to refine
+        ncoarse = length(unique(vcat(1:4:length(pscale_grid), length(pscale_grid)))) *
+                  length(unique(vcat(1:5:length(ΔT_grid), length(ΔT_grid))))
+        ncalls = Ref(0)
+        f(x) = (ncalls[] += 1) <= ncoarse ? sum(abs2, x) : NaN
+        @test_throws "cost is not finite anywhere in the full-resolution search" GGA._gemb_grid_minimize(f, pscale_grid, ΔT_grid)
+    end
+
+    @testset "gemb_bestfit_grouped warns about and labels fits at a grid bound" begin
+        dgeotile = Dim{:geotile}(["lat[+60+62]lon[-142-140]", "lat[+62+64]lon[-142-140]"])
+        ddate = Dim{:date}(Date(2000, 1, 15):Month(1):Date(2009, 12, 15))
+        dpscale = Dim{:pscale}([1.0, 2.0, 3.0])
+        dΔT = Dim{:ΔT}([-1.0, 0.0, 1.0, 2.0, 3.0])
+        yr = GGA.decimalyear.(ddate) .- GGA.decimalyear(first(ddate))
+
+        # pscale sets the seasonal amplitude and ΔT the trend, so each is identified on its own
+        model(p, t) = -(1 + t) .* yr .+ p .* sin.(2π .* yr)
+        dv_gemb = zeros(dgeotile, ddate, dpscale, dΔT)
+        for g in dgeotile, p in dpscale, t in dΔT
+            dv_gemb[geotile=At(g), pscale=At(p), ΔT=At(t)] = model(p, t)
+        end
+        # the first geotile needs ΔT = 5, beyond the grid; the second sits inside it
+        dv_altim = zeros(dgeotile, ddate)
+        dv_altim[geotile=At(dgeotile[1])] = model(2.0, 5.0)
+        dv_altim[geotile=At(dgeotile[2])] = model(2.0, 1.0)
+
+        geotiles0 = DataFrame(id=collect(dgeotile), group=[1, 2], rgi=[1, 1], extent=[nothing, nothing],
+                              area_km2=[[10.0, 20.0], [5.0, 0.0]])
+
+        # Some workflow functions call the global `Logging.disable_logging(Warn)`, which outlives the
+        # test that triggered it; re-enable warnings before asserting on one.
+        Logging.disable_logging(Logging.BelowMinLevel)
+        fit = @test_logs (:warn, r"1 of 2 geotile groups \(1 geotiles, 30.0 of 35.0 km² of ice\).*ΔT_max: 1") GGA.gemb_bestfit_grouped(
+            dv_altim, dv_gemb, geotiles0; distance_from_origin_penalty=0)
+
+        @test fit.grid_bound == ["ΔT_max", ""]
+        @test fit.ΔT[1] ≈ 3.0
+        @test fit.ΔT[2] ≈ 1.0 atol = 0.05
+        @test fit.pscale[2] ≈ 2.0 atol = 0.05
     end
 end
