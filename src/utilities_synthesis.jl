@@ -947,7 +947,7 @@ end
         force_remake_before_hypsometry=nothing
     )
 
-Compute and return a global glacier discharge DataFrame by merging observed and modeled values.
+Compute global glacier discharge by merging observed and modeled values, and return it per geotile.
 
 This function assembles a best-estimate, comprehensive global discharge dataset by combining:
 1. Measured glacier discharge (from direct observations where available)
@@ -976,7 +976,9 @@ The routine performs the following steps:
 - `force_remake_before_hypsometry`: (Union{Nothing,DateTime}) Like above, but only for internal DEM/hypsometry products.
 
 # Returns
-- DataFrame: Single table with one row per glacier (or region), with columns such as `id`, `discharge_gtyr`, geographic location, and other metadata.
+- DimStack over the GEMB geotiles with one layer per discharge column (`discharge`, `discharge_err`,
+  `frontal_ablation`), in km³ ice equivalent per year (`discharge2geotile(...; mass2volume=true)`).
+  The file at `discharge_global_fn` holds the per-glacier table in Gt/yr.
 
 # Details
 - For glaciers with direct discharge measurements, those values are used.
@@ -991,7 +993,7 @@ julia> # DimStack or DataFrame with discharge per geotile
 ```
 
 # Notes
-- Discharge is in units of Gt/yr.
+- The per-glacier table is in Gt/yr; the returned geotile DimStack is in km³ ice equivalent per year.
 - The function can be forced to remake its output if `force_remake_before` is newer than the last save time.
 - Downscaling to individual glaciers uses area-weighting.
 """
@@ -1291,7 +1293,8 @@ for each geotile, applying per-geotile pscale and ΔT from gemb_fit.
 - `binned_synthesized_file`: Path to binned synthesized altimetry file
 - `gemb`: GEMB model output (e.g. DimStack from gemb_ensemble_dv)
 - `gemb_fit`: DataFrame with per-geotile fit parameters (pscale, ΔT, group)
-- `discharge`: Discharge aggregated to geotiles (e.g. from discharge2geotile)
+- `discharge`: Discharge rate aggregated to geotiles in km³ ice equivalent per year, as returned by
+  `discharge2geotile(...; mass2volume=true)`
 - `geotiles0`: DataFrame of geotiles to process
 - `area_km2`: DimArray of area per geotile and height
 
@@ -1304,6 +1307,10 @@ julia> geotiles0 = individual_geotile_synthesis_gembfit_dv(binned_synthesized_fi
 ```
 """
 function individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, gemb_fit, discharge, geotiles0, area_km2)
+    discharge_units = get(DD.metadata(discharge), "units", nothing)
+    discharge_units == "km3/yr" ||
+        error("discharge must be in km3/yr (discharge2geotile(...; mass2volume=true)), got units = $(repr(discharge_units))")
+
     # Filter to only include geotiles containing glaciers
     volume2mass = δice / 1000
     geotiles0 = deepcopy(geotiles0) # geotiles0 is modified within the function
@@ -1334,8 +1341,8 @@ function individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, 
         area_km20 = sum(area_km2[geotile = At(geotile.id)])
         geotile.mie2cubickm = area_km20 / 1000  # Convert meters ice equivalent to cubic kilometers
 
-        # include discharge average over total glacier area [i.e. save in units of mie]
-        geotile.discharge = discharge[:discharge][geotile = At(geotile.id)] / volume2mass * Δdecyear # Gt to units of mie
+        # `discharge` is a rate in km³ ice equivalent per year; accumulate it from the first GEMB date
+        geotile.discharge = discharge[:discharge][geotile = At(geotile.id)] * Δdecyear
     end
 
     # add discharge date metadata

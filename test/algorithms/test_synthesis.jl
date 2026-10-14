@@ -13,6 +13,7 @@ using Dates
 using DimensionalData
 import DimensionalData as DD
 using Random
+using DataFrames
 
 # Include test fixtures
 include("../fixtures/synthetic_missions.jl")
@@ -425,5 +426,58 @@ include("../fixtures/synthetic_missions.jl")
 
         # Uncertainty should not decrease with only one source
         @test all(sigma_combined .>= sigma_solo .- 1e-10)
+    end
+    @testset "discharge2geotile sums by geotile and converts Gt to km³ ice" begin
+        dgeotile = Dim{:geotile}(["lat[+60+62]lon[-142-140]", "lat[+62+64]lon[-142-140]"])
+        discharge = DataFrame(longitude=[-141.0, -141.5, -140.5, 10.0], latitude=[61.0, 61.5, 63.0, 0.0],
+                              discharge_gtyr=[2.0, 3.0, 7.0, 100.0])
+
+        gt = GGA.discharge2geotile(discharge, dgeotile)
+        @test DD.metadata(gt)["units"] == "Gt/yr"
+        @test gt[:discharge][geotile=At(dgeotile[1])] == 5.0
+        @test gt[:discharge][geotile=At(dgeotile[2])] == 7.0
+
+        km3 = GGA.discharge2geotile(discharge, dgeotile; mass2volume=true)
+        @test DD.metadata(km3)["units"] == "km3/yr"
+        @test km3[:discharge][geotile=At(dgeotile[1])] ≈ 5.0 * 1000 / GGA.δice
+        @test km3[:discharge][geotile=At(dgeotile[2])] ≈ 7.0 * 1000 / GGA.δice
+    end
+
+    @testset "geotile discharge column is D·1000/δice km³ per year, accumulated" begin
+        D = 4.0 # Gt/yr
+        id = "lat[+60+62]lon[-142-140]"
+        dgeotile = Dim{:geotile}([id])
+        ddate = Dim{:date}(Date(2000, 1, 15):Month(1):Date(2001, 12, 15))
+        dheight = Dim{:height}(50.0:100.0:450.0)
+        dpscale = Dim{:pscale}([1.0, 2.0])
+        dΔT = Dim{:ΔT}([0.0, 1.0])
+
+        mktempdir() do temp_dir
+            binned_synthesized_file = joinpath(temp_dir, "synthesized.jld2")
+            GGA.FileIO.save(binned_synthesized_file, Dict("dh_hyps" => zeros(dgeotile, ddate, dheight)))
+
+            area_km2 = DimArray(fill(2.0, 1, length(dheight)), (dgeotile, dheight))
+            gemb = DimStack((; smb=zeros(dgeotile, ddate, dpscale, dΔT), dv=zeros(dgeotile, ddate, dpscale, dΔT),
+                                fac=zeros(dgeotile, ddate, dpscale, dΔT)))
+            gemb_fit = DataFrame(id=[id], pscale=[1.0], ΔT=[0.0], group=[1])
+            geotiles0 = DataFrame(id=[id])
+            for i in 1:19
+                geotiles0[!, "rgi$i"] = [i == 1 ? 1.0 : 0.0]
+            end
+
+            discharge = GGA.discharge2geotile(DataFrame(longitude=[-141.0], latitude=[61.0], discharge_gtyr=[D]),
+                                              dgeotile; mass2volume=true)
+            out = GGA.individual_geotile_synthesis_gembfit_dv(binned_synthesized_file, gemb, gemb_fit,
+                                                             discharge, geotiles0, area_km2)
+
+            Δdecyear = GGA.decimalyear.(ddate) .- GGA.decimalyear(first(ddate))
+            @test out[1, :discharge] ≈ D * 1000 / GGA.δice .* Δdecyear
+            @test colmetadata(out, "discharge", "units") == "km3 [i.e.]"
+
+            # a Gt/yr discharge is rejected rather than read as km³
+            discharge_gt = GGA.discharge2geotile(DataFrame(longitude=[-141.0], latitude=[61.0], discharge_gtyr=[D]), dgeotile)
+            @test_throws "discharge must be in km3/yr" GGA.individual_geotile_synthesis_gembfit_dv(
+                binned_synthesized_file, gemb, gemb_fit, discharge_gt, geotiles0, area_km2)
+        end
     end
 end
