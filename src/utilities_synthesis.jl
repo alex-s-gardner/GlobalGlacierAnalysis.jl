@@ -1027,15 +1027,12 @@ function global_discharge_filled(;
 )
 
     surface_mask = String(surface_mask)
-    gemb_mask = gemb_surface_mask(gemb[:smb])
-    gemb_mask == surface_mask ||
-        error("gemb is built on the $(gemb_mask) surface mask, not $(surface_mask)")
+    _check_surface_mask(gemb[:smb], surface_mask, "gemb")
 
     if file_is_current(discharge_global_fn, force_remake_before)
-        file_mask = FileIO.load(discharge_global_fn, "surface_mask")
+        file_mask, discharge = FileIO.load(discharge_global_fn, "surface_mask", "discharge")
         file_mask == surface_mask ||
             error("$(discharge_global_fn) holds discharge for surface mask $(file_mask), not $(surface_mask)")
-        discharge = FileIO.load(discharge_global_fn, "discharge")
     else
         # Get geotiles containing glaciers and initialize parameters:
         # - Filter to only tiles with glaciers
@@ -1160,10 +1157,8 @@ function geotile_synthesis_gembfit_dv(path2runs, discharge::AbstractDict, gemb::
     gemb = Dict(mask => g for (mask, _, g) in _select_by_surface_mask(gemb, path2runs; name="gemb"))
     discharge = Dict(mask => d for (mask, _, d) in _select_by_surface_mask(discharge, path2runs; name="discharge"))
     for mask in keys(gemb)
-        gemb_surface_mask(gemb[mask][:dv]) == mask ||
-            error("gemb[$(repr(mask))] is built on the $(gemb_surface_mask(gemb[mask][:dv])) surface mask")
-        get(DD.metadata(discharge[mask]), "surface_mask", nothing) == mask ||
-            error("discharge[$(repr(mask))] is for surface mask $(repr(get(DD.metadata(discharge[mask]), "surface_mask", nothing)))")
+        _check_surface_mask(gemb[mask][:dv], mask, "gemb[$(repr(mask))]")
+        _check_surface_mask(discharge[mask], mask, "discharge[$(repr(mask))]")
     end
    
     # Load elevation change data to get geotile dimensions

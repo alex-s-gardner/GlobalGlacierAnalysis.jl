@@ -536,11 +536,14 @@ any of `"pscale_min"`, `"pscale_max"`, `"ΔT_min"`, `"ΔT_max"`, or `""` for an 
 bound means the cost may still fall beyond the grid, so the value is a limit, not a minimum.
 """
 function _grid_bounds_hit(pscale, ΔT, pscale_grid, ΔT_grid)
-    onbound(x, lo, hi) = isapprox(x, lo; atol=1e-9 * (hi - lo)), isapprox(x, hi; atol=1e-9 * (hi - lo))
-    (plo, phi), (tlo, thi) = extrema(pscale_grid), extrema(ΔT_grid)
-    pmin, pmax = onbound(pscale, plo, phi)
-    tmin, tmax = onbound(ΔT, tlo, thi)
-    return join([name for (name, hit) in ("pscale_min" => pmin, "pscale_max" => pmax, "ΔT_min" => tmin, "ΔT_max" => tmax) if hit], ",")
+    hits = String[]
+    for (name, x, grid) in (("pscale", pscale, pscale_grid), ("ΔT", ΔT, ΔT_grid))
+        lo, hi = extrema(grid)
+        atol = 1e-9 * (hi - lo)
+        isapprox(x, lo; atol) && push!(hits, "$(name)_min")
+        isapprox(x, hi; atol) && push!(hits, "$(name)_max")
+    end
+    return join(hits, ",")
 end
 
 """
@@ -1192,6 +1195,18 @@ function gemb_surface_mask(A)
         error("GEMB output does not record the surface mask it was built on; load it with " *
               "gemb_ensemble_dv(; gemb_run_id, surface_mask)")
     return String(surface_mask)
+end
+
+"""
+    _check_surface_mask(A, expected, name)
+
+Throw unless the `"surface_mask"` in `A`'s metadata is `expected`; `name` identifies `A` in the message.
+"""
+function _check_surface_mask(A, expected, name)
+    found = get(DD.metadata(A), "surface_mask", nothing)
+    found == String(expected) ||
+        error("$name is for surface mask $(repr(found)), expected $(repr(String(expected)))")
+    return nothing
 end
 
 """
@@ -2244,10 +2259,7 @@ julia> # gemb[:dv] now has discharge removed
 ```
 """
 function dv_adjust4discharge!(gemb, discharge)
-    gemb_mask = gemb_surface_mask(gemb[:dv])
-    discharge_mask = get(DD.metadata(discharge), "surface_mask", nothing)
-    discharge_mask == gemb_mask ||
-        error("discharge is for surface mask $(repr(discharge_mask)) but gemb is built on $(gemb_mask)")
+    _check_surface_mask(discharge, gemb_surface_mask(gemb[:dv]), "discharge")
 
     decyear = decimalyear.(dims(gemb, :date)) .- decimalyear.(dims(gemb, :date)[1]);
     gemb[:dv][:] = @d gemb[:dv] .- (decyear .* discharge[:discharge]);

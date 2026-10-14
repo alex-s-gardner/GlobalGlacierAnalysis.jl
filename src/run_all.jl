@@ -269,26 +269,26 @@ include("gemb_tiles_binning.jl")
 # predating the current GEMB tile sweep is stale. Step 11 itself has no cutoff -- it always rebuilds.
 force_remake_before_gemb = DateTime("2026-10-04T19:00:00") + GGA.local2utc
 
+# 12. Calculate global glacier solid ice discharge, filled Antarctic data with modeled SMB
 # GEMB, its discharge adjustment and its calibration are per surface mask: each altimetry member is
 # fitted against GEMB area-weighted by its own mask's hypsometry.
-gemb = Dict(String(m) => GGA.gemb_ensemble_dv(; gemb_run_id, surface_mask=m) for m in surface_masks);
-
-# 12. Calculate global glacier solid ice discharge, filled Antarctic data with modeled SMB
-discharge = Dict(m => GGA.global_discharge_filled(;
-    surface_mask=m,
-    discharge_global_fn=GGA.discharge_global_file(m),
-    gemb=gemb[m],
-    discharge2smb_max_latitude = -60,
-    discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
-    pscale=1,
-    ΔT=0,
-    geotile_width=2,
-    force_remake_before=force_remake_before_gemb,
-    force_remake_before_hypsometry=nothing
-) for m in keys(gemb));
-
-for m in keys(gemb)
-    gemb[m] = GGA.dv_adjust4discharge!(gemb[m], discharge[m])
+gemb = Dict{String,Any}()
+discharge = Dict{String,Any}()
+for m in String.(surface_masks)
+    gemb[m] = GGA.gemb_ensemble_dv(; gemb_run_id, surface_mask=m)
+    discharge[m] = GGA.global_discharge_filled(;
+        surface_mask=m,
+        discharge_global_fn=GGA.discharge_global_file(m),
+        gemb=gemb[m],
+        discharge2smb_max_latitude = -60,
+        discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
+        pscale=1,
+        ΔT=0,
+        geotile_width=2,
+        force_remake_before=force_remake_before_gemb,
+        force_remake_before_hypsometry=nothing
+    )
+    GGA.dv_adjust4discharge!(gemb[m], discharge[m])
 end
 
 # 13. Calibrate GEMB (Glacier Energy and Mass Balance) model to altimetry data by finding optimal fits for grouped geotiles 

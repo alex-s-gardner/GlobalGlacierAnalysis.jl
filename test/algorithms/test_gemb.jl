@@ -397,11 +397,13 @@ include("../fixtures/mock_gemb_files.jl")
         @test_throws "cost is not finite anywhere on the coarse" GGA._gemb_grid_minimize(x -> NaN, pscale_grid, ΔT_grid)
 
         # finite on the coarse pass only, so stage 2 finds nothing to refine
-        ncoarse = length(unique(vcat(1:4:length(pscale_grid), length(pscale_grid)))) *
-                  length(unique(vcat(1:5:length(ΔT_grid), length(ΔT_grid))))
+        stride = (4, 5)
+        ncoarse = length(unique(vcat(1:stride[1]:length(pscale_grid), length(pscale_grid)))) *
+                  length(unique(vcat(1:stride[2]:length(ΔT_grid), length(ΔT_grid))))
         ncalls = Ref(0)
         f(x) = (ncalls[] += 1) <= ncoarse ? sum(abs2, x) : NaN
-        @test_throws "cost is not finite anywhere in the full-resolution search" GGA._gemb_grid_minimize(f, pscale_grid, ΔT_grid)
+        @test_throws "cost is not finite anywhere in the full-resolution search" GGA._gemb_grid_minimize(
+            f, pscale_grid, ΔT_grid; stride)
     end
 
     @testset "gemb_bestfit_grouped warns about and labels fits at a grid bound" begin
@@ -470,7 +472,7 @@ include("../fixtures/mock_gemb_files.jl")
         @test_throws "pass a Dict of surface mask => dv_gemb" GGA.gemb_calibration([run_rgi6, run_rgi7], dv_rgi6)
         @test_throws "gemb has no entry for surface mask glacier_rgi7" GGA.geotile_synthesis_gembfit_dv(
             [run_rgi7], Dict(:glacier_rgi7 => nothing), Dict(:glacier => nothing); geotile_width=2, force_remake_before=nothing)
-        @test_throws "gemb is built on the glacier_rgi7 surface mask, not glacier" GGA.global_discharge_filled(;
+        @test_throws "gemb is for surface mask \"glacier_rgi7\", expected \"glacier\"" GGA.global_discharge_filled(;
             surface_mask=:glacier, gemb=DimStack((; smb=dv_rgi7)), discharge_global_fn=tempname())
     end
 
@@ -482,10 +484,10 @@ include("../fixtures/mock_gemb_files.jl")
         discharge = GGA.discharge2geotile(DataFrame(longitude=[-141.0], latitude=[61.0], discharge_gtyr=[2.0]),
                                           dgeotile; mass2volume=true)
 
-        @test_throws "discharge is for surface mask nothing but gemb is built on glacier_rgi7" GGA.dv_adjust4discharge!(gemb, discharge)
+        @test_throws "discharge is for surface mask nothing, expected \"glacier_rgi7\"" GGA.dv_adjust4discharge!(gemb, discharge)
 
         DimensionalData.metadata(discharge)["surface_mask"] = "glacier"
-        @test_throws "discharge is for surface mask \"glacier\" but gemb is built on glacier_rgi7" GGA.dv_adjust4discharge!(gemb, discharge)
+        @test_throws "discharge is for surface mask \"glacier\", expected \"glacier_rgi7\"" GGA.dv_adjust4discharge!(gemb, discharge)
 
         DimensionalData.metadata(discharge)["surface_mask"] = "glacier_rgi7"
         GGA.dv_adjust4discharge!(gemb, discharge)
