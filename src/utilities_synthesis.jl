@@ -756,7 +756,9 @@ end
 Calculate discharge from surface mass balance (SMB) trends for glaciers below a specified latitude.
 
 # Arguments
-- `glaciers`: DataFrame containing glacier data with columns :CenLat, :CenLon, :smb, and :area_km2
+- `glaciers`: DataFrame containing glacier data with columns :CenLat, :CenLon, :smb, and :area_km2.
+  `smb` is a cumulative surface mass balance DimArray over `:date` in metres of ice equivalent (at
+  `δice`); `area_km2` holds the glacier's area in km², summed over its elements.
 - `discharge2smb_max_latitude`: Maximum latitude threshold for calculating discharge (default: -60)
 - `discharge2smb_equilibrium_period`: Time period for equilibrium calculation (default: 1979-2000)
 
@@ -766,7 +768,8 @@ Calculate discharge from surface mass balance (SMB) trends for glaciers below a 
 # Description
 This function estimates glacier discharge by calculating SMB trends during an equilibrium period.
 For glaciers below the specified latitude threshold, it fits a linear trend to the SMB data
-and converts this to discharge in gigatons per year based on glacier area.
+and, assuming the glacier is in balance, takes discharge as that trend times the glacier area,
+converted from km³ ice equivalent to Gt with `δice`.
 
 # Examples
 ```julia
@@ -787,7 +790,8 @@ function discharge2smb(glaciers; discharge2smb_max_latitude=-60, discharge2smb_e
     for (i, glacier) in enumerate(eachrow(glaciers[index_discharge2smb, :]))
         y = glacier.smb[index_date]
         fit = curve_fit(offset_trend, Δdecyear[index_date], y .- mean(y), offset_trend_p)
-        discharge0[i, :discharge_gtyr] = fit.param[2] .* sum(glacier.area_km2) / 1000
+        # m i.e. yr⁻¹ × km² / 1000 = km³ i.e. yr⁻¹; × δice / 1000 = Gt yr⁻¹
+        discharge0[i, :discharge_gtyr] = fit.param[2] * sum(glacier.area_km2) / 1000 * δice / 1000
     end
     return discharge0
 end
@@ -984,7 +988,7 @@ The routine performs the following steps:
 - For glaciers with direct discharge measurements, those values are used.
 - For unmeasured glaciers, discharge is estimated by downscaling GEMB-modeled SMB based on glacier area and converting SMB to discharge with a region-dependent empirical relation.
 - Results are clipped so that discharge cannot be negative.
-- Antarctic discharge sanity check: final total must be 80–110 Gt/yr, otherwise an error is raised.
+- Antarctic discharge sanity check: final total must be 80–115 Gt/yr, otherwise an error is raised.
 
 # Examples
 ```julia
@@ -1055,7 +1059,8 @@ function global_discharge_filled(;
                 if garea[i] == 0
                     continue
                 end
-                surface_mask_hypsometry[ig, "smb"][:] = gt_dv * gweighting[i] ./ garea[i] .* 1000 # convert from km3 to mwe
+                # km³ i.e. over the geotile → m i.e. over this glacier
+                surface_mask_hypsometry[ig, "smb"][:] = gt_dv * gweighting[i] ./ garea[i] .* 1000
             end
         end
 

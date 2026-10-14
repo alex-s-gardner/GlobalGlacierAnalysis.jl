@@ -480,4 +480,22 @@ include("../fixtures/synthetic_missions.jl")
                 binned_synthesized_file, gemb, gemb_fit, discharge_gt, geotiles0, area_km2)
         end
     end
+    @testset "discharge2smb: an SMB trend of s m w.e. yr⁻¹ over A km² gives s·A/1000 Gt yr⁻¹" begin
+        ddate = Dim{:date}(Date(1975, 1, 15):Month(1):Date(2004, 12, 15))
+        Δdecyear = GGA.decimalyear.(ddate) .- GGA.decimalyear(first(ddate))
+
+        s_we = [0.3, 1.2]    # m w.e. yr⁻¹
+        A = [150.0, 40.0]    # km²
+        # `smb` is cumulative, in metres of ice equivalent
+        smb = [DimArray(s * 1000 / GGA.δice .* Δdecyear, ddate) for s in s_we]
+        glaciers = DataFrame(CenLat=[-70.0, -65.0, 61.0], CenLon=[10.0, 20.0, -141.0],
+                             smb=[smb; [DimArray(5.0 .* Δdecyear, ddate)]],
+                             area_km2=[[A[1] / 2, A[1] / 2], [A[2]], [10.0]])
+
+        discharge = GGA.discharge2smb(glaciers)
+
+        @test nrow(discharge) == 2  # the glacier north of 60°S is left to observations
+        @test discharge.latitude == [-70.0, -65.0]
+        @test discharge.discharge_gtyr ≈ s_we .* A ./ 1000 rtol = 1e-6
+    end
 end
