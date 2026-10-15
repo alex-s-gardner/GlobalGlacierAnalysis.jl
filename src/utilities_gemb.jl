@@ -285,8 +285,10 @@ matching, and distance from the empirical forcing prior `gemb_forcing_prior` (`o
 - `is_scaling_factor`: Dict indicating whether pscale/ΔT are multiplicative (true) or additive (false)
 
 # Returns
-- **Normal mode (multiple groups)**: DataFrame with columns [:id, :extent, :group, :pscale, :ΔT, :rgi]
+- **Normal mode (multiple groups)**: DataFrame with columns [:id, :extent, :group, :pscale, :ΔT, :grid_bound, :rgi]
   - One row per geotile with optimized scaling factors (shared within each group)
+  - `grid_bound` names the bounds of the pscale × ΔT search grid the fit lies on (`""` if none; see
+    `_grid_bounds_hit`). One `@warn` reports the number of groups, geotiles and ice area so pinned.
 - **Debug mode (single group)**: Tuple of (cost grid, geotile_ids) for examining optimization landscape
 
 # Implementation Details
@@ -399,13 +401,26 @@ function gemb_bestfit_grouped(dv_altim, dv_gemb, geotiles0;
         end
 
         # modify dataframe outside of loop
+        geotiles[!, :grid_bound] .= ""
         for i in eachindex(groups_unique)
             gindex = groups_unique[i] .== geotile_groups;
             geotiles[gindex, :pscale] .= pscale0[i]
             geotiles[gindex, :ΔT] .= ΔT0[i]
+            geotiles[gindex, :grid_bound] .= _grid_bounds_hit(pscale0[i], ΔT0[i], val(dpscale_search), val(dΔT_search))
         end
 
-        return geotiles[:, [:id, :extent, :group, :pscale, :ΔT, :rgi]]
+        pinned = .!isempty.(geotiles.grid_bound)
+        if any(pinned)
+            area_pinned = sum(sum, geotiles.area_km2[pinned])
+            area_total = sum(sum, geotiles.area_km2)
+            bounds = join(("$k: $(count(==(k), geotiles.grid_bound[pinned]))" for k in unique(geotiles.grid_bound[pinned])), "; ")
+            @warn "$(length(unique(geotiles.group[pinned]))) of $(length(groups_unique)) geotile groups " *
+                  "($(count(pinned)) geotiles, $(round(area_pinned; digits=1)) of $(round(area_total; digits=1)) km² of ice) " *
+                  "are fitted at a bound of the pscale × ΔT grid, so their fit is a limit, not a minimum. " *
+                  "Geotiles per bound: $(bounds)"
+        end
+
+        return geotiles[:, [:id, :extent, :group, :pscale, :ΔT, :grid_bound, :rgi]]
 
     else
         i = 1;
@@ -499,6 +514,8 @@ function _gemb_grid_minimize(f, pscale_grid, ΔT_grid; stride=(4, 5), ncandidate
             c < best[1] && (best = (c, ip, it))
         end
     end
+    isfinite(best[1]) ||
+        error("cost is not finite anywhere in the full-resolution search around the $(length(candidates)) best coarse points")
 
     # 3. refine between the grid neighbours of the best point
     (_, ip, it) = best
@@ -509,6 +526,24 @@ function _gemb_grid_minimize(f, pscale_grid, ΔT_grid; stride=(4, 5), ncandidate
         c < fine[1] && (fine = (c, p, t))
     end
     return (fine[2], fine[3], fine[1])
+end
+
+"""
+    _grid_bounds_hit(pscale, ΔT, pscale_grid, ΔT_grid) -> String
+
+Name the bounds of `pscale_grid × ΔT_grid` that a fitted `(pscale, ΔT)` lies on, joined by `","`:
+any of `"pscale_min"`, `"pscale_max"`, `"ΔT_min"`, `"ΔT_max"`, or `""` for an interior fit. A fit on a
+bound means the cost may still fall beyond the grid, so the value is a limit, not a minimum.
+"""
+function _grid_bounds_hit(pscale, ΔT, pscale_grid, ΔT_grid)
+    hits = String[]
+    for (name, x, grid) in (("pscale", pscale, pscale_grid), ("ΔT", ΔT, ΔT_grid))
+        lo, hi = extrema(grid)
+        atol = 1e-9 * (hi - lo)
+        isapprox(x, lo; atol) && push!(hits, "$(name)_min")
+        isapprox(x, hi; atol) && push!(hits, "$(name)_max")
+    end
+    return join(hits, ",")
 end
 
 """
@@ -653,9 +688,7 @@ function gemb_calibration(
     forcing_prior=gemb_forcing_prior
 )
 
-    # Load GEMB data
-    # Note: GEMB volume change is for a single surface mask - this is a hack since making GEMB dv for multiple surface masks is onerous
-    # However, since GEMB data is calibrated to altimetry that uses different surface masks, this is mostly a non-issue
+    # `dv_gemb` is area-weighted by one surface mask's hypsometry, so every run must use that mask
 
     if !isnothing(single_geotile_test)
         # NOTE: don't prematurely trim data to `single_geotile_test` as fit optimization is done by geotile groups
@@ -665,6 +698,10 @@ function gemb_calibration(
     dgeotile = dims(dv_gemb, :geotile)
     params = binned_filled_fileparts.(path2runs)
     surface_masks = unique(getindex.(params, :surface_mask))
+    gemb_mask = gemb_surface_mask(dv_gemb)
+    surface_masks == [gemb_mask] ||
+        error("dv_gemb is built on the $(gemb_mask) surface mask but path2runs uses $(join(surface_masks, ", ")); " *
+              "pass a Dict of surface mask => dv_gemb to calibrate each run against its own mask")
 
     # Windows on the fitted pscale of two reference geotiles, wide enough to pass every member of the
     # ensemble and tight enough to catch a fit that has come out wildly wrong. They are not physical
@@ -832,6 +869,22 @@ function gemb_calibration(
     end
 end
 
+
+"""
+    gemb_calibration(path2runs, dv_gemb::AbstractDict; kwargs...)
+
+Calibrate each run in `path2runs` against the GEMB ensemble of its own surface mask: `dv_gemb` maps
+surface mask (`String` or `Symbol`) to the `dv` layer of [`gemb_ensemble_dv`](@ref) for that mask.
+Throws if a run's mask has no entry. Keywords are passed to the single-mask method; with
+`single_geotile_test` set, returns that method's result for the first mask.
+"""
+function gemb_calibration(path2runs, dv_gemb::AbstractDict; kwargs...)
+    for (_, runs, dv_gemb_mask) in _select_by_surface_mask(dv_gemb, path2runs; name="dv_gemb")
+        result = gemb_calibration(runs, dv_gemb_mask; kwargs...)
+        isnothing(result) || return result
+    end
+    return nothing
+end
 
 """
     gemb2geotile(gemb, geotile_row; geotile_buffer=1000, min_gemb_coverage=0.75, ddate::Dim{:date})
@@ -1122,29 +1175,84 @@ end
 
 
 """
-    gemb_ensemble_dv(; gemb_run_id, vars2load=["runoff", "fac", "smb", "rain", "acc", "melt", "ec", "refreeze"])
+    gemb_geotile_dv_file(gembinfo, surface_mask) -> String
 
-Load GEMB geotile ensemble data for a given run ID. Returns a dictionary of variables specified in `vars2load` from the corresponding GEMB geotile volume change file. If `vars2load` is `nothing`, loads all variables from the file.
+Path of the GEMB geotile volume-change ensemble built on the hypsometry of `surface_mask`, as written by
+`gemb_tiles_binning.jl` and read by [`gemb_ensemble_dv`](@ref).
+"""
+gemb_geotile_dv_file(gembinfo, surface_mask) =
+    replace(gembinfo.filename_gemb_combined, ".jld2" => "_geotile_dv_$(surface_mask).jld2")
+
+"""
+    gemb_surface_mask(A) -> String
+
+The surface mask whose hypsometry the GEMB output `A` (a DimArray or one layer of the DimStack from
+[`gemb_ensemble_dv`](@ref)) is area-weighted by, read from its metadata. Throws if `A` does not record one.
+"""
+function gemb_surface_mask(A)
+    surface_mask = get(DD.metadata(A), "surface_mask", nothing)
+    isnothing(surface_mask) &&
+        error("GEMB output does not record the surface mask it was built on; load it with " *
+              "gemb_ensemble_dv(; gemb_run_id, surface_mask)")
+    return String(surface_mask)
+end
+
+"""
+    _check_surface_mask(A, expected, name)
+
+Throw unless the `"surface_mask"` in `A`'s metadata is `expected`; `name` identifies `A` in the message.
+"""
+function _check_surface_mask(A, expected, name)
+    found = get(DD.metadata(A), "surface_mask", nothing)
+    found == String(expected) ||
+        error("$name is for surface mask $(repr(found)), expected $(repr(String(expected)))")
+    return nothing
+end
+
+"""
+    _select_by_surface_mask(by_mask::AbstractDict, path2runs; name) -> Vector
+
+Group `path2runs` by the surface mask in each file name and pair every group with its entry in
+`by_mask`, whose keys may be `String`s or `Symbol`s. Returns `(surface_mask, runs, by_mask[surface_mask])`
+tuples, one per mask, in order of first appearance. Throws, naming `name`, if a mask has no entry.
+"""
+function _select_by_surface_mask(by_mask::AbstractDict, path2runs; name)
+    by_mask = Dict(String(k) => v for (k, v) in by_mask)
+    masks = [String(binned_filled_fileparts(f).surface_mask) for f in path2runs]
+    absent = setdiff(unique(masks), keys(by_mask))
+    isempty(absent) ||
+        error("$name has no entry for surface mask $(join(absent, ", ")), used by path2runs; " *
+              "it holds $(join(sort(collect(keys(by_mask))), ", "))")
+    return [(mask, path2runs[masks .== mask], by_mask[mask]) for mask in unique(masks)]
+end
+
+"""
+    gemb_ensemble_dv(; gemb_run_id=4, surface_mask)
+
+Load the GEMB geotile volume-change ensemble of run `gemb_run_id`, area-weighted by the hypsometry of
+`surface_mask`, and add the derived variables (see [`gemb_add_derived_vars!`](@ref)).
 
 # Arguments
 - `gemb_run_id`: Identifier for the GEMB run.
-- `dpscale_expanded_increment`: Step size for increasing the resolution or range of `pscale`.
-- `dΔT_expanded_increment`: Step size for increasing the resolution or range of `ΔT`.
-- `vars2load`: Array of variable names to load (default: common mass balance variables). If `nothing`, loads all variables.
+- `surface_mask`: Surface mask the ensemble was built on, e.g. `:glacier` or `:glacier_rgi7`. Altimetry
+  members are calibrated against the ensemble of their own mask.
 
 # Returns
-- `Dict` containing the requested variables (DimStack or similar per variable).
+- DimStack over (geotile, date, pscale, ΔT) in km³ of ice equivalent. Every layer records
+  `surface_mask` in its metadata (see [`gemb_surface_mask`](@ref)).
 
 # Examples
 ```julia
-julia> dv_gemb = gemb_ensemble_dv(; gemb_run_id=4)
+julia> dv_gemb = gemb_ensemble_dv(; gemb_run_id=8, surface_mask=:glacier_rgi7)
 julia> smb = dv_gemb[:smb]
 ```
 """
-function gemb_ensemble_dv(; gemb_run_id=4)
+function gemb_ensemble_dv(; gemb_run_id=4, surface_mask)
     gembinfo = gemb_info(; gemb_run_id)
-    gemb_geotile_filename_dv = replace(gembinfo.filename_gemb_combined, ".jld2" => "_geotile_dv.jld2")
-    dv_gemb = FileIO.load(gemb_geotile_filename_dv, "gemb_dv")
+    gemb_geotile_filename_dv = gemb_geotile_dv_file(gembinfo, surface_mask)
+    file_surface_mask, dv_gemb = FileIO.load(gemb_geotile_filename_dv, "surface_mask", "gemb_dv")
+    String(file_surface_mask) == String(surface_mask) ||
+        error("$(gemb_geotile_filename_dv) was built on the $(file_surface_mask) surface mask, not $(surface_mask)")
 
     # Ensembles built by `process_gemb_geotiles` carry a melt-multiplier axis named `:mscale`; the
     # synthesis now indexes a temperature-offset axis named `:ΔT`. The two are not interchangeable --
@@ -1161,8 +1269,7 @@ function gemb_ensemble_dv(; gemb_run_id=4)
     # the `dv_gemb[:smb]` usage shown in this function's own docstring would throw a KeyError.
     dv_gemb = gemb_add_derived_vars!(dv_gemb)
 
-    return dv_gemb
-
+    return DD.maplayers(A -> DD.rebuild(A; metadata=Dict("surface_mask" => String(surface_mask))), dv_gemb)
 end
 
 """
@@ -2138,8 +2245,9 @@ end
 Adjust GEMB volume change (dv) for discharge in-place by subtracting cumulative discharge over time.
 
 # Arguments
-- `gemb`: Dictionary or DimStack containing :dv (and :date); :dv is modified in-place
-- `discharge`: Object with :discharge (rate) and :date; discharge rate is applied over decimal years
+- `gemb`: DimStack from `gemb_ensemble_dv` containing :dv (and :date); :dv is modified in-place
+- `discharge`: geotile discharge from `global_discharge_filled`, a rate in km³ ice equivalent per year
+  applied over decimal years. Its `"surface_mask"` metadata must match `gemb`'s, or this throws.
 
 # Returns
 - The modified gemb (gemb[:dv] updated).
@@ -2151,6 +2259,7 @@ julia> # gemb[:dv] now has discharge removed
 ```
 """
 function dv_adjust4discharge!(gemb, discharge)
+    _check_surface_mask(discharge, gemb_surface_mask(gemb[:dv]), "discharge")
 
     decyear = decimalyear.(dims(gemb, :date)) .- decimalyear.(dims(gemb, :date)[1]);
     gemb[:dv][:] = @d gemb[:dv] .- (decyear .* discharge[:discharge]);

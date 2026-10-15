@@ -269,30 +269,34 @@ include("gemb_tiles_binning.jl")
 # predating the current GEMB tile sweep is stale. Step 11 itself has no cutoff -- it always rebuilds.
 force_remake_before_gemb = DateTime("2026-10-04T19:00:00") + GGA.local2utc
 
-gemb = GGA.gemb_ensemble_dv(; gemb_run_id);
-
 # 12. Calculate global glacier solid ice discharge, filled Antarctic data with modeled SMB
-discharge = GGA.global_discharge_filled(;
-    surface_mask="glacier", # = parms_ref.surface_mask, # having issues changing this to :glacier_rgi7
-    discharge_global_fn=GGA.pathlocal[:discharge_global],
-    gemb,
-    discharge2smb_max_latitude = -60,
-    discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
-    pscale=1,
-    ΔT=0,
-    geotile_width=2,
-    force_remake_before=force_remake_before_gemb,
-    force_remake_before_hypsometry=nothing
-);
-
-gemb = GGA.dv_adjust4discharge!(gemb, discharge)
+# GEMB, its discharge adjustment and its calibration are per surface mask: each altimetry member is
+# fitted against GEMB area-weighted by its own mask's hypsometry.
+gemb = Dict{String,Any}()
+discharge = Dict{String,Any}()
+for m in String.(surface_masks)
+    gemb[m] = GGA.gemb_ensemble_dv(; gemb_run_id, surface_mask=m)
+    discharge[m] = GGA.global_discharge_filled(;
+        surface_mask=m,
+        discharge_global_fn=GGA.discharge_global_file(m),
+        gemb=gemb[m],
+        discharge2smb_max_latitude = -60,
+        discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
+        pscale=1,
+        ΔT=0,
+        geotile_width=2,
+        force_remake_before=force_remake_before_gemb,
+        force_remake_before_hypsometry=nothing
+    )
+    GGA.dv_adjust4discharge!(gemb[m], discharge[m])
+end
 
 # 13. Calibrate GEMB (Glacier Energy and Mass Balance) model to altimetry data by finding optimal fits for grouped geotiles 
 # [4 hrs on 128 cores, 150GB of memory]
 
 GGA.gemb_calibration(
     path2runs_synthesized, 
-    gemb[:dv];
+    Dict(m => g[:dv] for (m, g) in gemb);
     geotile_width,
     geotile_grouping_min_feature_area_km2=100, 
     single_geotile_test,

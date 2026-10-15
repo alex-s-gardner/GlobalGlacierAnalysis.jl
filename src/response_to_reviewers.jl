@@ -55,7 +55,7 @@ begin
     glacier_summary_file = GGA.pathlocal[:glacier_summary]
 
     # path2perglacier = replace(ensemble_reference_file, ".jld2" => "_perglacier.jld2")
-    path2discharge = paths[:discharge_global]
+    path2discharge = GGA.discharge_global_file(GGA.binned_filled_fileparts(reference_ensemble_file).surface_mask)
     path2rgi_regions = paths[:rgi6_regions_shp]
 
     path2river_flux = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")

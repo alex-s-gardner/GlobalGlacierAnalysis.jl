@@ -22,13 +22,14 @@ gemb_run_id = 5
 
 # Load GEMB ensemble data
 println("Loading GEMB ensemble data...")
-gemb = GGA.gemb_ensemble_dv(; gemb_run_id)
+surface_mask = GGA.binned_filled_fileparts(GGA.reference_ensemble_file).surface_mask
+gemb = GGA.gemb_ensemble_dv(; gemb_run_id, surface_mask)
 
 # Load discharge data
 println("Loading discharge data...")
 discharge = GGA.global_discharge_filled(;
-    surface_mask="glacier",
-    discharge_global_fn=GGA.pathlocal[:discharge_global],
+    surface_mask,
+    discharge_global_fn=GGA.discharge_global_file(surface_mask),
     gemb,
     discharge2smb_max_latitude=-60,
     discharge2smb_equilibrium_period=(Date(1979), Date(2000)),
