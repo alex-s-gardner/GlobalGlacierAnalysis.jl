@@ -8,6 +8,7 @@ ensemble statistics, and regional summary generation.
 using Test
 using GlobalGlacierAnalysis
 import GlobalGlacierAnalysis as GGA
+import GlacierVolumeChange as GVC
 using DimensionalData
 import DimensionalData as DD
 using Dates
@@ -56,7 +57,7 @@ include("../fixtures/synthetic_timeseries.jl")
         area = DimArray(area_data, (geotile_dim, height_dim))
 
         # Compute volume change per geotile
-        dv = GGA.dh2dv_geotile(dh, area)
+        dv = GVC.dh2dv_geotile(dh, area)
 
         # Aggregate across geotiles (sum)
         dv_regional = sum(dv; dims=:geotile)[1, :]
@@ -356,7 +357,7 @@ include("../fixtures/synthetic_timeseries.jl")
         area = DimArray(area_data, (geotile_dim, height_dim))
 
         # Should be able to compute volume
-        dv = GGA.dh2dv_geotile(dh, area)
+        dv = GVC.dh2dv_geotile(dh, area)
         @test length(dv[1, :]) == 1
         @test !isnan(dv[1, 1])
 

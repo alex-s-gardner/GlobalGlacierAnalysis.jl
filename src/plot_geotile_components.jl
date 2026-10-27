@@ -6,6 +6,7 @@ and plots the mass balance components for a specified geotile.
 """
 
 import GlobalGlacierAnalysis as GGA
+import GlacierVolumeChange as GVC
 using CairoMakie
 using FileIO
 using DataFrames
@@ -35,7 +36,7 @@ discharge = GGA.global_discharge_filled(;
     pscale=1,
     ΔT=0,
     geotile_width=2,
-    force_remake_before=DateTime("2025-01-31T14:00") + GGA.local2utc,
+    force_remake_before=DateTime("2025-01-31T14:00") + GVC.local2utc,
     force_remake_before_hypsometry=nothing
 )
 
@@ -44,7 +45,7 @@ println("Adjusting GEMB for discharge...")
 gemb = GGA.dv_adjust4discharge!(gemb, discharge)
 
 # Get reference ensemble file and construct path to synthesized data
-reference_ensemble_file = GGA.reference_ensemble_file
+reference_ensemble_file = GVC.reference_ensemble_file
 binned_synthesized_file = replace(reference_ensemble_file, "aligned.jld2" => "synthesized.jld2")
 binned_synthesized_dv_file = replace(binned_synthesized_file, ".jld2" => "_gembfit_dv.jld2")
 

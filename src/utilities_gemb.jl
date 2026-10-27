@@ -678,9 +678,8 @@ function gemb_calibration(
     dgeotile_test = Dim{:geotile}([geotiles_golden_test[1], "lat[+58+60]lon[-138-136]"])
     pscale_range_test = DimStack(DimArray([1.3, 1.0], dgeotile_test; name="min"), DimArray([3.0, 2.9], dgeotile_test; name="max"))
 
-    # Process each surface mask to load aligned geotiles and calculate hypsometry
+    # Process each surface mask to load aligned geotiles
     geotiles = Dict()
-    area_km2 = Dict()
 
     # `ΔT` is an additive air-temperature offset (no-op 0) and `pscale` is a multiplicative
     # precipitation scaling (no-op 1); neither is inferred from the sign of the data they happen to
@@ -692,8 +691,8 @@ function gemb_calibration(
     # is built on its axes. GEMB spans every geotile holding ice under its own mask, which includes
     # sub-km2 slivers the binning drops, so the altimetry is the smaller set and decides.
     begin
-        dh = FileIO.load(first(path2runs), "dh_hyps")
-        dgeotile_altim = dims(dh, :geotile)
+        dv_altim0 = GVC.read_volume(GVC.volume_product_path(first(path2runs))).dv
+        dgeotile_altim = dims(dv_altim0, :geotile)
 
         geotiles2extract = [id for id in val(dgeotile) if in(id, val(dgeotile_altim))]
         isempty(geotiles2extract) &&
@@ -705,11 +704,11 @@ function gemb_calibration(
             dgeotile = dims(dv_gemb, :geotile)
         end
 
-        ddate = dims(dh, :date)
+        ddate = dims(dv_altim0, :date)
         ddate_gemb = dims(dv_gemb, :date)
         index = .!isnan.(dv_gemb[geotile=1, pscale=1, ΔT=1])
         ex_gemb = extrema(ddate_gemb[index])
-        index = .!isnan.(dh[geotile=1, height=1])
+        index = .!isnan.(GVC.read_volume_height(GVC.volume_product_path(first(path2runs))).dh[geotile=1, height=1])
         ex_dv = extrema(ddate[vec(index)])
         ex = max(ex_gemb[1], ex_dv[1]), min(ex_gemb[2], ex_dv[2])
         index_dv = (ddate .>= ex[1]) .& (ddate .<= ex[2])
@@ -729,8 +728,6 @@ function gemb_calibration(
             only_geotiles_w_area_gt_0=true,
             geotile_order=collect(dgeotile)
         )
-
-        area_km2[surface_mask] = _geotile_area_km2(; surface_mask, geotile_width)[geotile=At(val(dgeotile))]
 
         # Add in groups
         geotiles_groups = geotile_grouping(; surface_mask, min_area_km2=geotile_grouping_min_feature_area_km2, geotile_width, force_remake_before)
@@ -772,18 +769,18 @@ function gemb_calibration(
             run_parameters = binned_filled_fileparts(synthesized_gemb_fit)
             surface_mask = run_parameters.surface_mask
 
-            dh = FileIO.load(binned_synthesized_file, "dh_hyps")
+            dv_member = GVC.read_volume(GVC.volume_product_path(binned_synthesized_file)).dv
 
             # Every run is fitted on the one geotile axis established above, so a run that does not
             # cover it would otherwise fail inside `At` with no indication of which file or which
             # geotile is at fault.
-            absent = setdiff(val(dgeotile), val(dims(dh, :geotile)))
+            absent = setdiff(val(dgeotile), val(dims(dv_member, :geotile)))
             isempty(absent) ||
                 error("$(binned_synthesized_file) is missing $(length(absent)) of the $(length(dgeotile)) " *
                       "geotiles the fit is built on: $(join(first(sort(absent), 8), ", "))")
 
-            # Convert elevation change to volume change, over the geotiles the altimetry and GEMB share.
-            dv_altim = dh2dv_geotile(dh[date=At(dates2extract), geotile=At(collect(dgeotile))], area_km2[surface_mask])
+            # Volume change over the geotiles and dates the altimetry and GEMB share.
+            dv_altim = dv_member[date=At(dates2extract), geotile=At(collect(dgeotile))]
 
             all_nans = dropdims(all(isnan.(dv_altim), dims=:date), dims=:date)
 

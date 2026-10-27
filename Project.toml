@@ -38,6 +38,7 @@ Geodesy = "0ef565a4-170c-5f04-8de2-149903a85f3d"
 GeometryBasics = "5c1252a2-5f33-56bf-86c9-59e7332b4326"
 GeometryOps = "3251bfac-6a57-4b6d-aa61-ac1fef2975ab"
 GeometryOpsCore = "05efe853-fabf-41c8-927e-7063c8b9f013"
+GlacierVolumeChange = "99da4dd9-8083-42f4-906a-80e8c0fb2f8e"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 ImageFiltering = "6a3955dd-da59-5b1f-98d4-e7296123deb5"
 Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
@@ -74,6 +75,12 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 Stencils = "264155e8-78a8-466a-aa59-c9b28c34d21a"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
+[sources]
+BinStatistics = {rev = "main", url = "https://github.com/alex-s-gardner/BinStatistics.jl"}
+FastGeoProjections = {rev = "main", url = "https://github.com/alex-s-gardner/FastGeoProjections.jl"}
+GeoTiles = {rev = "main", url = "https://github.com/alex-s-gardner/GeoTiles.jl"}
+GlacierVolumeChange = {rev = "main", url = "https://github.com/alex-s-gardner/GlacierVolumeChange.jl"}
+
 [compat]
 ArchGDAL = "0.10"
 Arrow = "2.8"
@@ -82,11 +89,12 @@ Colors = "0.12"
 DataFrames = "1.8"
 DecisionTree = "0.12.4"
 DimensionalData = "0.29"
-FastGeoProjections = "0.0.2"
+FastGeoProjections = "0.2"
 GeoArrays = "0.9"
 GeoInterface = "1.4"
 GeoJSON = "0.8"
 GeometryBasics = "0.5"
+GlacierVolumeChange = "0.1"
 GeometryOps = "0.1"
 GeometryOpsCore = "0.1"
 ImageFiltering = "0.7"
@@ -105,5 +113,5 @@ RangeExtractor = "0.1"
 Rasters = "0.14"
 Shapefile = "0.13"
 SortTileRecursiveTree = "0.1"
-SpaceAltimetry = "0.5.0"
+SpaceAltimetry = "0.5.1"
 julia = "1.12"

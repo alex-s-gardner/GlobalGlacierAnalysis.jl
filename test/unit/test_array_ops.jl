@@ -1,6 +1,7 @@
 using Test
 using GlobalGlacierAnalysis
 import GlobalGlacierAnalysis as GGA
+import GlacierVolumeChange as GVC
 
 @testset "Array Operations" begin
     # `validrange` returns one range per dimension, as a Tuple -- so a 1D input yields a 1-tuple
@@ -50,28 +51,28 @@ import GlobalGlacierAnalysis as GGA
     # back all-false rather than empty.
     @testset "validgaps" begin
         # Gap in middle
-        gaps = GGA.validgaps(BitVector([true, false, false, true, true]))
+        gaps = GVC.validgaps(BitVector([true, false, false, true, true]))
         @test gaps == BitVector([false, true, true, false, false])
         @test count(gaps) == 2
 
         # No gaps (all true)
-        gaps_none = GGA.validgaps(BitVector([true, true, true, true]))
+        gaps_none = GVC.validgaps(BitVector([true, true, true, true]))
         @test length(gaps_none) == 4
         @test !any(gaps_none)
 
         # Leading false values are boundary, not a gap
-        @test !any(GGA.validgaps(BitVector([false, false, true, true, true])))
+        @test !any(GVC.validgaps(BitVector([false, false, true, true, true])))
 
         # Trailing false values are boundary, not a gap
-        @test !any(GGA.validgaps(BitVector([true, true, true, false, false])))
+        @test !any(GVC.validgaps(BitVector([true, true, true, false, false])))
 
         # Multiple gaps
-        gaps_multi = GGA.validgaps(BitVector([true, false, true, false, false, true]))
+        gaps_multi = GVC.validgaps(BitVector([true, false, true, false, false, true]))
         @test gaps_multi == BitVector([false, true, false, true, true, false])
         @test count(gaps_multi) == 3
 
         # No valid points at all -> nothing is a gap
-        @test !any(GGA.validgaps(falses(5)))
+        @test !any(GVC.validgaps(falses(5)))
     end
 
     @testset "true_block_size" begin

@@ -17,6 +17,7 @@ Output files: Gardner2025_glacier_{resolution}deg.nc
 # Import required modules and packages for analysis and plotting
 begin
     import GlobalGlacierAnalysis as GGA
+    import GlacierVolumeChange as GVC
     using Unitful                # Physical units support
     Unitful.register(GGA.MyUnits) # Register custom units from GGA
     using Dates                  # Date and time handling
@@ -40,7 +41,7 @@ end
 # Synthesis parameters of input data
 for geotile_width_out in [0.5, 2]
 begin
-    path2runs_filled, params = GGA.binned_filled_filepaths(;
+    path2runs_filled, params = GVC.binned_filled_filepaths(;
         project_id,
         surface_masks=["glacier", "glacier_rgi7"],
         dem_ids=["best", "cop30_v2"],
@@ -48,13 +49,13 @@ begin
         amplitude_corrects=[true],
         binning_methods=["median", "nmad3", "nmad5"],
         fill_params=[1, 2, 3, 4],
-        binned_folders=[GGA.analysis_paths(; geotile_width).binned, replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")],
+        binned_folders=[GVC.analysis_paths(; geotile_width).binned, replace(GVC.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")],
         include_existing_files_only=true
     )
 
     path2runs_synthesized = replace.(path2runs_filled, "aligned.jld2" => "synthesized.jld2")
 
-    reference_ensemble_file = GGA.reference_ensemble_file
+    reference_ensemble_file = GVC.reference_ensemble_file
         
     binned_synthesized_dv_files = replace.(path2runs_synthesized, ".jld2" => "_gembfit_dv.jld2")
     binned_synthesized_dv_file_ref = replace.(reference_ensemble_file, "_aligned.jld2" => "_synthesized_gembfit_dv.jld2")
@@ -81,7 +82,7 @@ end
 begin
     # create global raster for mask coverage calculation
     out_var = :glacier_frac
-    geotiles_out = GGA.geotiles_w_mask(geotile_width_out)
+    geotiles_out = GVC.geotiles_w_mask(geotile_width_out)
 
     lond = X(DimensionalData.Dimensions.Lookups.Sampled(-180+geotile_width_out/2:geotile_width_out:180-geotile_width_out/2, sampling=DimensionalData.Dimensions.Lookups.Intervals(DimensionalData.Dimensions.Lookups.Center()); metadata =  Dict("long_name" => "longitude", "units" => "degrees")))
     latd = Y(DimensionalData.Dimensions.Lookups.Sampled(-90+geotile_width_out/2:geotile_width_out:90-geotile_width_out/2, sampling=DimensionalData.Dimensions.Lookups.Intervals(DimensionalData.Dimensions.Lookups.Center()); metadata = Dict("long_name" => "latitude", "units" => "degrees")))

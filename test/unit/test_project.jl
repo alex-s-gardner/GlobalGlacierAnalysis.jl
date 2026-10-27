@@ -1,6 +1,7 @@
 using Test
 using GlobalGlacierAnalysis
 import GlobalGlacierAnalysis as GGA
+import GlacierVolumeChange as GVC
 using DimensionalData
 using Dates
 
@@ -57,8 +58,8 @@ using Dates
     end
 
     @testset "project_paths covers every product" begin
-        products = GGA.project_products(project_id=:v01)
-        paths = GGA.project_paths(project_id=:v01)
+        products = GVC.project_products(project_id=:v01)
+        paths = GVC.project_paths(project_id=:v01)
         @test keys(paths) == keys(products)
         for mission in keys(products)
             @test occursin(string(products[mission].name), paths[mission].geotile)
@@ -66,8 +67,8 @@ using Dates
     end
 
     @testset "date bins" begin
-        date_range, date_center = GGA.project_date_bins()
-        decyear = GGA.project_decyear_bins()
+        date_range, date_center = GVC.project_date_bins()
+        decyear = GVC.project_decyear_bins()
 
         # One bin per centre, in both representations. Observations are grouped by the decimal-year
         # edges while the result is labelled with `date_center`, so a mismatch here would misalign

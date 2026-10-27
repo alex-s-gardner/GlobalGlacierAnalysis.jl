@@ -13,6 +13,7 @@
 
 begin
     import GlobalGlacierAnalysis as GGA
+    import GlacierVolumeChange as GVC
     using Dates
     using FileIO
     using ProgressMeter
@@ -48,7 +49,7 @@ begin
     gembinfo = GGA.gemb_info(; gemb_run_id);
  
     # define date and hight binning ranges 
-    date_range, date_center = GGA.project_date_bins()
+    date_range, date_center = GVC.project_date_bins()
 
     # expand daterange to 1940 but make sure to match exisiting project ranges 
     date_end_new = Date(1970,1,1)

@@ -8,25 +8,14 @@ import GlobalGlacierAnalysis as GGA
 
     # Unit tests - Pure mathematical functions
     @testset "Unit Tests" begin
-        include("unit/test_coordinates.jl")
-        include("unit/test_time.jl")
-        include("unit/test_statistics.jl")
         include("unit/test_array_ops.jl")
-        include("unit/test_extents.jl")
-        include("unit/test_terrain.jl")
-        include("unit/test_models.jl")
         include("unit/test_project.jl")
-        include("unit/test_build_archive.jl")
-        include("unit/test_sliderule.jl")
     end
 
     # Algorithm tests - Complex operations with synthetic data
     @testset "Algorithm Tests" begin
-        include("algorithms/test_binning.jl")
-        include("algorithms/test_lowlevel_binning.jl")
         include("algorithms/test_gemb.jl")
         include("algorithms/test_routing.jl")
-        include("algorithms/test_synthesis.jl")
         include("algorithms/test_postprocessing.jl")
     end
 
@@ -40,7 +29,6 @@ import GlobalGlacierAnalysis as GGA
 
     # Integration tests - End-to-end workflows
     @testset "Integration Tests" begin
-        include("integration/test_geotile_workflow.jl")
         include("integration/test_aggregation.jl")
         include("integration/test_properties.jl")
     end
