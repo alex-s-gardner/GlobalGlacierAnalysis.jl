@@ -19,6 +19,7 @@
 
 begin
     import GlobalGlacierAnalysis as GGA
+    import GlacierVolumeChange as GVC
     using DataFrames
     using Dates
     using FileIO
@@ -39,7 +40,7 @@ begin
 
     # Date bins: the project's 30-day spacing, extended back to 1970 while keeping the existing edges
     # so no bin already in use moves.
-    date_range, _ = GGA.project_date_bins()
+    date_range, _ = GVC.project_date_bins()
     Δd = 30
     date_range = reverse(last(date_range):-Day(Δd):Date(1970, 1, 1))
     date_center = date_range[1:end-1] .+ Day(Δd / 2)

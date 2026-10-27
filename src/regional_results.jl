@@ -47,11 +47,12 @@ begin
     using DataInterpolations
     using Unitful
     import GlobalGlacierAnalysis as GGA
+    import GlacierVolumeChange as GVC
 
     Unitful.register(GGA.MyUnits)
     using GlobalGlacierAnalysis.MyUnits
 
-    reference_ensemble_file = GGA.reference_ensemble_file;
+    reference_ensemble_file = GVC.reference_ensemble_file;
     ensemble_reference_file = replace(reference_ensemble_file, "_aligned.jld2" => "_synthesized.jld2")
     
     # to include in uncertainty
@@ -80,7 +81,7 @@ begin
 
     path2river_flux = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
-    path2runs_filled, params = GGA.binned_filled_filepaths(;
+    path2runs_filled, params = GVC.binned_filled_filepaths(;
         project_id=:v01,
         surface_masks=["glacier", "glacier_rgi7"],
         dem_ids=["best", "cop30_v2"],
@@ -88,7 +89,7 @@ begin
         amplitude_corrects=[true],
         binning_methods=["median", "nmad3", "nmad5"],
         fill_params=[1, 2, 3, 4],
-        binned_folders=[GGA.analysis_paths(; geotile_width=2).binned, replace(GGA.analysis_paths(; geotile_width=2).binned, "binned" => "binned_unfiltered")],
+        binned_folders=[GVC.analysis_paths(; geotile_width=2).binned, replace(GVC.analysis_paths(; geotile_width=2).binned, "binned" => "binned_unfiltered")],
         include_existing_files_only=true
     )
     path2runs_synthesized = replace.(path2runs_filled, "aligned.jld2" => "synthesized.jld2")

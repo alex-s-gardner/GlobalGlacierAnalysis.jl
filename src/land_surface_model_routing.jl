@@ -15,6 +15,7 @@
 
 begin
     import GlobalGlacierAnalysis as GGA
+    import GlacierVolumeChange as GVC
     using NCDatasets
     using Rasters
     using Arrow
@@ -77,9 +78,9 @@ if download_lsm_files
 
         # `-i` must stay last: it takes a filename argument, so any flag placed after it is
         # swallowed and that flag's value is parsed as a URI.
-        # `GGA.aria2c_cmd` wraps the Aria2_jll binary rather than whatever `aria2c` is on PATH, and
+        # `GVC.aria2c_cmd` wraps the Aria2_jll binary rather than whatever `aria2c` is on PATH, and
         # works around the OpenSSL `legacy` provider failure it documents.
-        cmd = GGA.aria2c_cmd(`--max-tries=10 --retry-wait=1 -c -k 1M -j 16 -x $downloadstreams -s $downloadstreams -d $gldas_folder -i $file_urls`)
+        cmd = GVC.aria2c_cmd(`--max-tries=10 --retry-wait=1 -c -k 1M -j 16 -x $downloadstreams -s $downloadstreams -d $gldas_folder -i $file_urls`)
 
         println(cmd)
         run(cmd)

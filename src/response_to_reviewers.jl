@@ -3,6 +3,7 @@ begin
     using CSV
     using DataFrames
     import GlobalGlacierAnalysis as GGA
+    import GlacierVolumeChange as GVC
     using DimensionalData
     using Dates
     using CairoMakie
@@ -49,7 +50,7 @@ begin
 
     discharge_fractional_error = 0.15
 
-    reference_ensemble_file = GGA.reference_ensemble_file
+    reference_ensemble_file = GVC.reference_ensemble_file
     ensemble_reference_file = replace(reference_ensemble_file, "_aligned.jld2" => "_synthesized.jld2")
 
     glacier_summary_file = GGA.pathlocal[:glacier_summary]
@@ -61,7 +62,7 @@ begin
     path2river_flux = joinpath(paths[:river], "riv_pfaf_MERIT_Hydro_v07_Basins_v01_glacier.arrow")
 
 
-    path2runs_filled, params = GGA.binned_filled_filepaths(;
+    path2runs_filled, params = GVC.binned_filled_filepaths(;
         project_id=:v01,
         surface_masks=["glacier", "glacier_rgi7"],
         dem_ids=["best", "cop30_v2"],
@@ -69,7 +70,7 @@ begin
         amplitude_corrects=[true],
         binning_methods=["median", "nmad3", "nmad5"],
         fill_params=[1, 2, 3, 4],
-        binned_folders=[GGA.analysis_paths(; geotile_width=2).binned, replace(GGA.analysis_paths(; geotile_width=2).binned, "binned" => "binned_unfiltered")],
+        binned_folders=[GVC.analysis_paths(; geotile_width=2).binned, replace(GVC.analysis_paths(; geotile_width=2).binned, "binned" => "binned_unfiltered")],
         include_existing_files_only=true
     )
     path2runs_synthesized = replace.(path2runs_filled, "aligned.jld2" => "synthesized.jld2")
@@ -145,7 +146,7 @@ for (basin_name, basin_ids) in table_basins
         # Store the raw time series
         basin_timeseries[basin_name][var] = foo
 
-        foo_fit = GGA.curve_fit(GGA.offset_trend_seasonal, decyear[time_index] .- mean(decyear[time_index]), foo, GGA.p3)
+        foo_fit = GGA.curve_fit(GVC.offset_trend_seasonal, decyear[time_index] .- mean(decyear[time_index]), foo, GGA.p3)
         trend_values[var] = foo_fit.param[2]
 
         println("  $var: $(round(foo_fit.param[2], digits=1)) Gt/yr")

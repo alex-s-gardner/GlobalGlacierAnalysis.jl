@@ -11,18 +11,14 @@ module GlobalGlacierAnalysis
    # import geographic packages
    using Proj
    using GeoArrays
-   # SpaceLiDAR was renamed SpaceAltimetry. Registered 0.5.0 cannot be loaded alongside Makie:
-   # its Project.toml declares the extension as `SpaceAltimetryMakieExt` while the file kept its
-   # pre-rename name `ext/SpaceLiDARMakieExt.jl`, so loading it with CairoMakie present fails with
-   # "Missing source file for SpaceAltimetryMakieExt". The Manifest therefore points at a local
-   # checkout on branch `fix-makie-ext-filename`, which renames that one file and changes nothing
-   # else; drop the `develop` once the fix lands upstream (evetion/SpaceAltimetry.jl).
-   #
-   # `SpaceAltimetry` still exports `SpaceLiDAR` as an alias of itself, so `SpaceLiDAR.`-qualified
-   # calls in this package keep working.
+   # SpaceAltimetry 0.5.1 or later: 0.5.0 names its Makie extension file wrongly and fails to load
+   # alongside CairoMakie. It exports `SpaceLiDAR` as an alias of itself, so `SpaceLiDAR.`-qualified
+   # calls resolve to it.
    using SpaceAltimetry
    using Geodesy
-   using FastGeoProjections
+   # `import`, not `using`: FastGeoProjections exports `transform`, which would make the
+   # DataFrames `transform` ambiguous.
+   import FastGeoProjections
    using Rasters
    using Shapefile
    using LibGEOS
@@ -94,89 +90,30 @@ module GlobalGlacierAnalysis
    import GeometryOpsCore as GOC
    import SortTileRecursiveTree
 
+   # Glacier volume change comes from GlacierVolumeChange.jl: GGA reads each ensemble member's volume
+   # product (`GVC.read_volume`) and uses its geotile, time and fitting helpers listed here.
+   import GlacierVolumeChange as GVC
+   using GlacierVolumeChange:
+      _geotile_area_km2, _publication_figure, allfiles, binned_filled_fileparts, centroid,
+      decimalyear, decimalyear2datetime, extent2rectangle, file_is_current, geotile_extent,
+      geotile_hypsometry, geotiles_golden_test, geotiles_mask_hyps,
+      geotiles_mutually_exclusive_rgi!, intersectindices, meters2lonlat_distance, model1_trend,
+      offset_trend, offset_trend_acceleration_seasonal2, offset_trend_p, offset_trend_seasonal2,
+      p1, p3, p_offset_trend_seasonal, p_trend, project_height_bins, seasonal_peak_fraction, slope,
+      validrange, within
 
    # this is where the local paths are defined
    include("local_paths.jl")
 
    # add utilities
    include("utilities_project.jl")
-   include("utilities_build_archive.jl")
-   include("utilities_sliderule.jl")
-   include("utilities_hugonnet.jl")
    include("utilities_gemb.jl")
    include("utilities_gemb_tiles.jl")
-   include("utilities_main.jl")
-   include("utilities_binning.jl")
-   include("utilities_binning_lowlevel.jl")
    include("utilities_routing.jl")
    include("utilities_synthesis.jl")
    include("utilities_postprocessing.jl")
    include("utilities.jl")
    include("utilities_plotting.jl")
    include("utilities_readers.jl")
-   include("mapzonal.jl")
 
-   # Makie defines `_register_argument_conversions!` itself (Makie/src/compute-plots.jl), so this
-   # override is a method overwrite. Done in the module body it makes the package unprecompilable
-   # ("Method overwriting is not permitted during Module precompilation"), which forces a
-   # from-source load in every process -- painful when the geotile build runs as N parallel
-   # shells. Defining it in `__init__` instead keeps the override (the `force_dimconverts &&
-   # status == true` gate below is what upstream lacks) and lets the package precompile. The cost
-   # is a method-overwrite warning at load and some invalidation of Makie's cached code.
-   function __init__()
-   @eval function Makie._register_argument_conversions!(::Type{P}, attr::Makie.ComputeGraph, user_kw) where {P}
-      dim_converts = to_value(get!(() -> Makie.DimConversions(), user_kw, :dim_conversions))
-      args = attr.args[]
-      Makie.add_convert_kwargs!(attr, user_kw, P, args)
-      kw = attr.convert_kwargs[]
-      args_converted = Makie.convert_arguments(P, args...; kw...)
-      status = Makie.got_converted(P, Makie.conversion_trait(P, args...), args_converted)
-      force_dimconverts = Makie.needs_dimconvert(dim_converts)
-      if force_dimconverts && status == true
-         Makie.add_dim_converts!(attr, dim_converts, args)
-      elseif (status === true || status === Makie.SpecApi)
-         # Nothing needs to be done, since we can just use convert_arguments without dim_converts
-         # And just pass the arguments through
-         map!(attr, :args, :dim_converted) do args
-               return Ref{Any}(args)
-         end
-      elseif isnothing(status) || status == true # we don't know (e.g. recipes)
-         Makie.add_dim_converts!(attr, dim_converts, args)
-      elseif status === false
-         if args_converted !== args
-               # Not at target conversion, but something got converted
-               # This means we need to convert the args before doing a dim conversion
-               map!(attr, :args, :recursive_convert) do args
-                  return Makie.convert_arguments(P, args...)
-               end
-               Makie.add_dim_converts!(attr, dim_converts, args_converted, :recursive_convert)
-         else
-               Makie.add_dim_converts!(attr, dim_converts, args)
-         end
-      end
-      #  backwards compatibility for plot.converted (and not only compatibility, but it's just convenient to have)
-
-      map!(attr, [:dim_converted, :convert_kwargs], :converted) do dim_converted, convert_kwargs
-         x = Makie.convert_arguments(P, dim_converted...; convert_kwargs...)
-         if x isa Tuple
-               return x
-         elseif x isa Union{Makie.PlotSpec, AbstractVector{Makie.PlotSpec}, Makie.GridLayoutSpec}
-               return (x,)
-         else
-               error("Result needs to be Tuple or SpecApi")
-         end
-      end
-      converted = attr[:converted][]
-      n_args = length(converted)
-      map!(attr, :converted, [Makie.argument_names(P, n_args)...]) do converted
-         return converted # destructure
-      end
-
-      Makie.add_input!((k, v) -> Ref{Any}(v), attr, :transform_func, identity)
-
-      Makie.add_input!(attr, :f32c, :uninitialized)
-
-      return
-   end
-   end # __init__
 end

@@ -17,7 +17,7 @@ Pkg.add("https://github.com/alex-s-gardner/GlobalGlacierAnalysis.jl")
 
 ### 1. Data Requirements
 
-**Note:** This package is designed for use on JPL servers (bylot, devon, baffin) and expects data at specific locations. If running elsewhere, adapt `src/local_paths.jl` to point to your data directories.
+**Note:** This package is designed for use on JPL servers (bylot, devon, baffin) and expects data at specific locations. If running elsewhere, adapt `src/local_paths.jl` (paths used only here) and `src/config/paths.jl` in [GlacierVolumeChange.jl](https://github.com/alex-s-gardner/GlacierVolumeChange.jl) (the altimetry chain and the paths both packages use). `local_paths.jl` merges the two tables.
 
 **Required datasets:**
 - Satellite altimetry data (GEDI, ICESat, ICESat-2)
@@ -30,24 +30,14 @@ Pkg.add("https://github.com/alex-s-gardner/GlobalGlacierAnalysis.jl")
 
 ### 2. Run the Workflow
 
-The main workflow is orchestrated by `src/run_all.jl`:
+The glacier volume-change dataset is built first, by [GlacierVolumeChange.jl](https://github.com/alex-s-gardner/GlacierVolumeChange.jl) (`GlacierVolumeChange.create_dataset`): altimetry archives, ancillary data, binning, filling, synthesis, and one volume product (NetCDF) per ensemble member. The workflow here is orchestrated by `src/run_all.jl` and reads those products:
 
 ```bash
 julia --project src/run_all.jl
 ```
 
-This executes the complete pipeline in the following sequence:
+It executes the following sequence (numbered as in `run_all.jl`; steps 1–10 are the volume dataset):
 
-1. **Build satellite altimetry archives** - Processes GEDI, ICESat-2, ICESat data
-2. **Process Hugonnet glacier elevation change data** - Extracts and validates glacier change datasets
-3. **Validate existing ancillary data** - Checks existing DEMs, masks for geotiles
-4. **Extract DEM data** - Processes elevation data for each geotile with slope/curvature calculations
-5. **Extract mask data** - Processes glacier, land ice, and other surface masks
-6. **Extract canopy height data** - Processes vegetation height information
-7. **Perform hypsometric analysis** - Analyzes elevation distribution patterns
-8. **Perform statistical binning** - Applies statistical methods to elevation change data
-9. **Fill, extrapolate, and adjust binned data** - Completes missing data using interpolation methods
-10. **Synthesize processed geotile data** - Combines multiple altimetry missions with error corrections
 11. **Create glacier model (GEMB) classes** - Generates glacier energy and mass balance classifications
 12. **Calculate global glacier discharge** - Computes ice discharge with filled Antarctic data using modeled SMB
 13. **Calibrate GEMB model to altimetry data** - Optimizes glacier model parameters for grouped geotiles
@@ -63,11 +53,7 @@ This executes the complete pipeline in the following sequence:
 23. **Analyze population affected by glacier-fed river changes** - Quantifies population impact using buffer analysis
 24. **Create output files for the manuscript** - Generates submission-ready data and figures
 
-**Processing times (on RAID @ 100 MB/s):**
-- GEDI: ~4 days
-- ICESat-2: ~1 week  
-- ICESat: ~3 hours
-- Full workflow: several days depending on data and hardware
+Building the full workflow takes several days, depending on data and hardware.
 
 ### 3. Configuration
 
@@ -97,42 +83,28 @@ The workflow implements checkpoint logic to avoid redundant processing:
 
 ### Utility Modules
 
-The package includes 15 utility modules that provide specialized functionality:
+The altimetry chain (archives, ancillary extraction, binning, filling, synthesis), the height-to-volume conversion, its diagnostic plots and the archive maintenance scripts are in [GlacierVolumeChange.jl](https://github.com/alex-s-gardner/GlacierVolumeChange.jl). This package reads volume change from its products (`GlacierVolumeChange.read_volume(GlacierVolumeChange.volume_product_path(member))`) and imports a short list of its utilities (`using GlacierVolumeChange: …` in `src/GlobalGlacierAnalysis.jl`); scripts call the rest as `GVC.<name>` after `import GlacierVolumeChange as GVC`.
 
-**Core Utilities:**
+**This package:**
+- `local_paths.jl` — Data locations (`setpaths`, `pathlocal`), merged with GlacierVolumeChange's
 - `utilities.jl` — General utility functions and helpers
-- `utilities_project.jl` — Project management and configuration utilities
-- `utilities_main.jl` — Main workflow and orchestration functions
-
-**Data Processing:**
-- `utilities_build_archive.jl` — Satellite altimetry archive building functions
-- `utilities_hugonnet.jl` — Hugonnet glacier elevation change data processing
-- `utilities_readers.jl` — Data reading and input/output functions
-- `utilities_binning.jl` — Statistical binning and data aggregation utilities
-- `utilities_binning_lowlevel.jl` — Low-level binning algorithms and functions
-
-**Analysis & Synthesis:**
-- `utilities_gemb.jl` — Glacier Energy and Mass Balance (GEMB) model utilities
-- `utilities_synthesis.jl` — Data synthesis and combination functions
+- `utilities_project.jl` — GEMB calibration constants and project configuration
+- `utilities_readers.jl` — Readers for comparison datasets (GRACE, GlaMBIE, discharge, runoff)
+- `utilities_gemb.jl`, `utilities_gemb_tiles.jl` — Glacier Energy and Mass Balance (GEMB) model utilities
+- `utilities_synthesis.jl` — Geotile grouping, discharge, and GEMB fits to the synthesized altimetry
 - `utilities_routing.jl` — River routing and hydrological analysis utilities
-
-**Output & Visualization:**
 - `utilities_postprocessing.jl` — Post-processing and data export functions
 - `utilities_plotting.jl` — Visualization and plotting utilities
-- `utilities_manuscript.jl` — Manuscript figure and table utilities
 - `utilities_response2reviewers.jl` — Response-to-reviewers analysis and outputs
-
-**Geospatial:**
-- `mapzonal.jl` — Zonal statistics and spatial analysis functions
 
 ## Dependencies
 
 Core dependencies include:
-- **Geospatial:** Proj, GeoArrays, SpaceLiDAR, Geodesy, Rasters, Shapefile, LibGEOS, GeoInterface
+- **Geospatial:** Proj, GeoArrays, SpaceAltimetry, Geodesy, Rasters, Shapefile, LibGEOS, GeoInterface
 - **Data Processing:** DataFrames, Statistics, FileIO, Arrow, HTTP, MAT, CSV, NCDatasets, JLD2
 - **Visualization:** CairoMakie, ColorSchemes
 - **Scientific Computing:** NonlinearSolve, LsqFit, Distributions, LinearAlgebra
-- **Custom Packages:** RangeExtractor, GeoTiles, BinStatistics
+- **Custom Packages:** GlacierVolumeChange, RangeExtractor, GeoTiles, BinStatistics
 
 Install all dependencies with:
 ```julia

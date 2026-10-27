@@ -1,20 +1,11 @@
 # run_all.jl
 #
-# Main workflow script for the GlobalGlacierAnalysis glacier and river analysis pipeline.
+# Glacier mass fluxes, river routing and population analyses, built on the glacier volume-change
+# dataset of GlacierVolumeChange.jl. Each major step is numbered below.
 #
-# This script orchestrates the entire data processing workflow by executing component scripts in sequence.
-# Each major step is numbered below for clarity and reproducibility.
-#
-#  1.  Build satellite altimetry archives (GEDI, ICESat-2, ICESat)
-#  2.  Process Hugonnet glacier elevation change data
-#  3.  Validate existing ancillary data (DEMs, masks) for geotiles
-#  4.  Extract DEM data for each geotile
-#  5.  Extract mask data (glacier, land ice) for each geotile
-#  6.  Extract canopy height data for each geotile
-#  7.  Perform hypsometric analysis of elevation data
-#  8.  Perform statistical binning of elevation data
-#  9.  Fill, extrapolate, and adjust binned data
-# 10.  Synthesize processed geotile data into global/regional datasets
+#  1-10. Glacier volume change: GlacierVolumeChange.jl `create_dataset` (archives, ancillary data,
+#        binning, filling, synthesis) and its volume product for every ensemble member. Run it first;
+#        this script reads the products.
 # 11.  Create glacier model (GEMB) classes for each geotile
 # 12.  Calculate global glacier discharge, including filled Antarctic data with modeled SMB
 # 13.  Calibrate GEMB model to altimetry data for grouped geotiles
@@ -31,235 +22,28 @@
 # 24.  Create output files for the manuscript
 #
 # Implements checkpoint logic to avoid redundant processing, allowing efficient restarts.
-#
-# Approximate processing times (on old RAID @ 100 MB/s):
-#   - GEDI: ~4 days
-#   - ICESat-2: ~1 week
-#   - ICESat: ~3 hours
 begin
     import GlobalGlacierAnalysis as GGA
+    import GlacierVolumeChange as GVC
     using Unitful
     using CairoMakie
-    Unitful.register(GGA.MyUnits)    
+    Unitful.register(GGA.MyUnits)
     using Dates
     using DimensionalData
 
-    # Downloading and preprocessing elevation data
-    force_remake=false # it is best practice to delete files than to use force_remake
-    project_id=:v01
-    geotile_width=2
-    domain=:glacier # :glacier -or- :landice
-    missions= (:icesat2, :icesat, :gedi, :hugonnet,) # (:icesat2, :icesat, :gedi, :hugonnet)
-    hugonnet_datasets = ["unfiltered", "filtered"]
-    hugonnet_unfiltered=true
-    slope=true
-    curvature=true
-    dems2extract= [:rema_v2_10m, :cop30_v2, :arcticdem_v4_10m, :nasadem_v1]
-    masks2extract = [:floatingice, :inlandwater, :landice, :ocean]
-    masks2extract_highres = [:glacier, :glacier_rgi7, :land]
-    single_geotile_test = nothing
-
-    # Binning parameters
-    force_remake_before = DateTime(2025, 7, 1, 0, 0, 0)
-    update_geotile = true # Update select missions from previous results
-    missions2update = ["icesat2",  "gedi"] # ["icesat2", "icesat", "gedi", "hugonnet   "]
-    warnings = false
-    max_canopy_height = 1
-    dh_max = 200
-
-    # Filling parameters
-    mission_reference_for_amplitude_normalization = "icesat2"
-    all_permutations_for_glacier_only = true
-    surface_masks = [:glacier, :glacier_rgi7] #[:glacier, :land, :glacier_rgi7, :glacier_b1km, :glacier_b10km]
-    binned_folders = [GGA.analysis_paths(; geotile_width).binned, replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")]
-    binning_methods =["nmad3", "nmad5", "median"]
-    dem_ids = [:best, :cop30_v2]
-    curvature_corrects = [true, false]
-    fill_params = [5, 6, 7, 8] # sets 1-4 with the residual seasonal climatology; see binned_filling_parameters
-    amplitude_corrects = [true]
-    remove_land_surface_trend = GGA.mission_land_trend()
-    regions2replace_with_model = ["rgi19"]
-    missions2replace_with_model = ["hugonnet"]
-    missions2align2 = ["icesat2", "icesat"]
-    plots_show = false
-    plots_save = false
-    plot_save_format = ".png"
-    geotiles2plot = nothing; #GGA.geotiles_golden_test
-    single_geotile_test = nothing #GGA.geotiles_golden_test[1] # nothing 
-
-    # Synthesis parameters
+    geotile_width = 2
+    single_geotile_test = nothing #GGA.geotiles_golden_test[1]
     gemb_run_id = 8
-    path2runs_filled, params = GGA.binned_filled_filepaths(;
-        project_id,
-        surface_masks=["glacier", "glacier_rgi7"],
-        dem_ids=["best", "cop30_v2"],
-        curvature_corrects=[false, true],
-        amplitude_corrects=[true],
-        binning_methods=["median", "nmad3", "nmad5"],
-        fill_params,
-        binned_folders=[GGA.analysis_paths(; geotile_width).binned, replace(GGA.analysis_paths(; geotile_width).binned, "binned" => "binned_unfiltered")],
-        include_existing_files_only=true
-    )
 
-    reference_ensemble_file = GGA.reference_ensemble_file;
-
-    if false
-        using Random
-        N = 2;
-        @warn "running subset of ensemble"
-        path2runs_filled = rand(path2runs_filled, N)
-        path2runs_filled = vcat(path2runs_filled, reference_ensemble_file)
-    end
-
+    # Glacier volume change: one product per ensemble member, written by GVC.create_dataset
+    volume_dataset = GVC.VolumeDatasetConfig(; geotile_width)
+    path2runs_filled = GVC.ensemble_members(volume_dataset)
+    reference_ensemble_file = GVC.reference_member()
 
     path2runs_synthesized = replace.(path2runs_filled, "aligned.jld2" => "synthesized.jld2")
-
-    binned_file_for_over_land_mission_error = "/mnt/bylot-r3/data/binned_unfiltered/2deg/land_dh_best_cc_nmad5_v01.jld2"
-
     binned_synthesized_dv_files = replace.(path2runs_synthesized, ".jld2" => "_gembfit_dv.jld2")
     binned_synthesized_dv_file_ref = replace.(reference_ensemble_file, "_aligned.jld2" => "_synthesized_gembfit_dv.jld2")
-    #GGA.match_rgi6_rgi7_attribute_names(GGA.pathlocal.glacier_rgi7_individual)
 end
-
-# 1. Build archives from satellite altimetry data (GEDI, ICESat-2, ICESat)
-GGA.geotile_build_archive(;
-    force_remake,
-    project_id,
-    geotile_width,
-    domain, # :glacier -or- :landice
-    missions, # (:icesat2, :icesat, :gedi, :hugonnet)
-    single_geotile_test,
-)
-
-# 2. Process Hugonnet glacier elevation change data
-GGA.geotile_build_hugonnet(;
-    # Parameters: user defined 
-    hugonnet_datasets,
-    force_remake,
-    project_id,
-    geotile_width,
-    domain, # :glacier -or- :landice
-    single_geotile_test,
-)
-
-# 3. Validate ancillary data that might already exist (DEMs, masks, etc.) for geotiles
-GGA.geotile_ancillary_check(;
-    project_id,
-    missions,
-)
-
-# 4. Extract DEM data for each geotile
-GGA.geotile_dem_extract(;
-    # Parameters: user defined 
-    force_remake,
-    project_id,
-    geotile_width,
-    domain, # :glacier -or- :landice
-    missions, # (:icesat2, :icesat, :gedi, :hugonnet)
-    hugonnet_unfiltered, 
-    slope,
-    curvature,
-    dems2extract,
-    single_geotile_test,
-)
-
-# 5. Extract mask data (glacier, land ice, etc.) for each geotile
-GGA.geotile_mask_extract(;
-    # Parameters: user defined 
-    force_remake,
-    project_id,
-    geotile_width,
-    domain, # :glacier -or- :landice
-    missions, # (:icesat2, :icesat, :gedi, :hugonnet)
-    hugonnet_unfiltered,
-    masks2extract,
-    masks2extract_highres,
-    single_geotile_test,
-)
-
-# 6. Extract canopy height data for each geotile
-GGA.geotile_canopyh_extract(;
-    # Parameters: user defined 
-    force_remake,
-    project_id,
-    geotile_width,
-    domain, # :glacier -or- :landice
-    missions, # (:icesat2, :icesat, :gedi, :hugonnet)
-    hugonnet_unfiltered,
-    single_geotile_test,
-)
-
-# 7. Perform hypsometric analysis of elevation data for each geotile
-GGA.geotile_hyps_extract(;
-    force_remake = true,
-    geotile_width,
-    raster_file = :cop30_v2, #, :nasadem_v1, :rema_v2_10m, :arcticdem_v3_10m]
-    domain, # :glacier -or- :landice
-    masks=[:glacier_rgi7] #[:glacier, :land, :glacier_rgi7]
-)
-
-# 8. Perform statistical binning of elevation data for each geotile
-GGA.geotile_binning(;
-    project_id,
-    geotile_width,
-    warnings,
-    plots_show,
-
-    # run parameters
-    force_remake_before, # = Date(2026, 9, 1), # this will force remake of all binned files before this date
-    missions2update,# this will load in prevous results to update select geotiles or missions
-
-    # run parameters
-    all_permutations_for_glacier_only,
-    surface_masks,
-    binned_folders,
-    dem_ids,
-    binning_methods,
-    curvature_corrects,
-
-    max_canopy_height, # do not change
-
-    # filter parameters
-    dh_max,
-    single_geotile_test, #GGA.geotiles_golden_test[2],
-)
-
-# 9. Fill, extrapolate, and adjust binned data
-GGA.geotile_binned_fill(; project_id,
-    geotile_width,
-    missions2update = nothing, # All missions must update if ICESat-2 updates
-
-    mission_reference_for_amplitude_normalization,
-    all_permutations_for_glacier_only, 
-    surface_masks,
-    binned_folders,
-    binning_methods,
-    dem_ids,
-    curvature_corrects,
-
-    fill_params,
-    amplitude_corrects, remove_land_surface_trend,
-    regions2replace_with_model,
-    missions2replace_with_model,
-    missions2align2,
-    plots_show,
-    plots_save,
-    plot_save_format,
-    geotiles2plot,
-    
-    single_geotile_test,
-
-    force_remake_before=DateTime("2026-09-07T01:00:00") + GGA.local2utc
-)
-
-# 10. Synthesize geotile data by combining multiple altimetry missions and applying error corrections
-# ~36 min for 192 runs 
-GGA.geotile_synthesize(path2runs_filled;
-    error_file="/mnt/bylot-r3/data/binned/2deg/geotile_synthesis_error_fillsets5to8.jld2",
-    mission_error=GGA.binned_mad_mission(binned_file_for_over_land_mission_error),
-    missions2update=nothing,
-    force_remake_before =DateTime("2026-09-07T01:00:00") + GGA.local2utc,
-)
 
 # 11. Create glacier model (GEMB) classes for each geotile
 include("gemb_tiles_binning.jl")
@@ -267,7 +51,7 @@ include("gemb_tiles_binning.jl")
 # parms_ref = GGA.binned_filled_fileparts(binned_synthesized_dv_file_ref)
 # Steps 12-14 all descend from the GEMB ensemble step 11 rebuilds, so they share one cutoff: anything
 # predating the current GEMB tile sweep is stale. Step 11 itself has no cutoff -- it always rebuilds.
-force_remake_before_gemb = DateTime("2026-10-04T19:00:00") + GGA.local2utc
+force_remake_before_gemb = DateTime("2026-10-04T19:00:00") + GVC.local2utc
 
 gemb = GGA.gemb_ensemble_dv(; gemb_run_id);
 
